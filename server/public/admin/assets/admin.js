@@ -5,6 +5,7 @@ const state = {
   site: {},
   articles: [],
   products: [],
+  orders: [],
   categories: [],
   productCategories: [],
   media: [],
@@ -12,7 +13,8 @@ const state = {
   versions: [],
   moduleRegistry: { scopes: [], modules: [] },
   pagePlan: null,
-  selectedFormId: null
+  selectedFormId: null,
+  selectedOrderId: null
 };
 
 const titles = {
@@ -20,6 +22,7 @@ const titles = {
   settings: ['站点', '维护企业信息、SEO、首页首屏和首页模块文案。'],
   articles: ['文章', '发布行业资讯、知识库文章和 SEO 内容。'],
   products: ['商品', '维护产品展示和询盘型独立站内容。'],
+  orders: ['订单', '处理独立站商城订单、支付状态和履约跟进。'],
   media: ['媒体库', '上传图片和文件，供文章、商品、页面使用。'],
   forms: ['留言', '处理前台联系表单和商品询盘。'],
   publish: ['发布', '生成静态网站并查看发布版本。']
@@ -144,6 +147,19 @@ function getDefaultSite(site = {}) {
       model: site.ai?.model || '',
       endpoint: site.ai?.endpoint || '',
       api_key: site.ai?.api_key || ''
+    },
+    payment: {
+      mode: site.payment?.mode || 'manual',
+      currency: site.payment?.currency || 'CNY',
+      merchant_id: site.payment?.merchant_id || '',
+      webhook_url: site.payment?.webhook_url || ''
+    },
+    deploy: {
+      bt_panel_url: site.deploy?.bt_panel_url || '',
+      site_path: site.deploy?.site_path || '',
+      mode: site.deploy?.mode || 'manual',
+      after_action: site.deploy?.after_action || '',
+      note: site.deploy?.note || ''
     },
     global_modules: {
       search_nav: site.global_modules?.search_nav ?? true,
@@ -644,6 +660,15 @@ function fillSiteForm(site) {
   form.ai_model.value = data.ai.model;
   form.ai_endpoint.value = data.ai.endpoint;
   form.ai_api_key.value = data.ai.api_key;
+  form.payment_mode.value = data.payment.mode;
+  form.payment_currency.value = data.payment.currency;
+  form.payment_merchant_id.value = data.payment.merchant_id;
+  form.payment_webhook_url.value = data.payment.webhook_url;
+  form.deploy_bt_panel_url.value = data.deploy.bt_panel_url;
+  form.deploy_site_path.value = data.deploy.site_path;
+  form.deploy_mode.value = data.deploy.mode;
+  form.deploy_after_action.value = data.deploy.after_action;
+  form.deploy_note.value = data.deploy.note;
   form.global_search_nav.checked = Boolean(data.global_modules.search_nav);
   form.global_breadcrumbs.checked = Boolean(data.global_modules.breadcrumbs);
   form.global_related.checked = Boolean(data.global_modules.related);
@@ -696,6 +721,19 @@ function collectSiteForm() {
       model: form.ai_model.value.trim(),
       endpoint: form.ai_endpoint.value.trim(),
       api_key: form.ai_api_key.value.trim()
+    },
+    payment: {
+      mode: form.payment_mode.value,
+      currency: form.payment_currency.value.trim() || 'CNY',
+      merchant_id: form.payment_merchant_id.value.trim(),
+      webhook_url: form.payment_webhook_url.value.trim()
+    },
+    deploy: {
+      bt_panel_url: form.deploy_bt_panel_url.value.trim(),
+      site_path: form.deploy_site_path.value.trim(),
+      mode: form.deploy_mode.value,
+      after_action: form.deploy_after_action.value.trim(),
+      note: form.deploy_note.value.trim()
     },
     global_modules: {
       search_nav: form.global_search_nav.checked,
@@ -767,16 +805,18 @@ async function saveSiteSettings(event, options = {}) {
 }
 
 async function loadDashboard() {
-  const [site, articles, products, media, forms] = await Promise.all([
+  const [site, articles, products, orders, media, forms] = await Promise.all([
     request('/api/site/settings'),
     request('/api/articles?page_size=1'),
     request('/api/products?page_size=1'),
+    request('/api/orders?page_size=1'),
     request('/api/media?page_size=1'),
     request('/api/forms/submissions?page_size=1')
   ]);
   state.site = getDefaultSite(site);
   $('#statArticles').textContent = articles.pagination.total;
   $('#statProducts').textContent = products.pagination.total;
+  $('#statOrders').textContent = orders.pagination.total;
   $('#statMedia').textContent = media.pagination.total;
   $('#statForms').textContent = forms.pagination.total;
   $('#siteInfo').innerHTML = [
@@ -830,6 +870,92 @@ async function loadProducts() {
       </div></td>
     </tr>
   `).join('');
+}
+
+function paymentStatusLabel(status) {
+  return {
+    pending: '待支付',
+    paid: '已支付',
+    failed: '支付失败',
+    refunded: '已退款'
+  }[status] || status || '待支付';
+}
+
+function fulfillmentStatusLabel(status) {
+  return {
+    new: '新订单',
+    confirmed: '已确认',
+    shipped: '已发货',
+    finished: '已完成',
+    closed: '已关闭'
+  }[status] || status || '新订单';
+}
+
+function renderOrderItems(items) {
+  if (!Array.isArray(items) || !items.length) {
+    return '<span class="muted">暂无商品明细</span>';
+  }
+  return items.map((item) => `
+    <div class="form-detail-item">
+      <small>${escapeHtml(item.sku || item.product_id || '商品')}</small>
+      <span>${escapeHtml(item.title || '未命名商品')} × ${escapeHtml(item.quantity || 1)}，${escapeHtml(item.price || 0)}</span>
+    </div>
+  `).join('');
+}
+
+function fillOrderDetail(item) {
+  const form = $('#orderDetailForm');
+  const detailBox = $('#orderDetailBox');
+  if (!item) {
+    state.selectedOrderId = null;
+    form.reset();
+    form.elements.id.value = '';
+    detailBox.innerHTML = '选择一条订单查看明细。';
+    return;
+  }
+
+  let items = [];
+  try { items = JSON.parse(item.items || '[]'); } catch {}
+  state.selectedOrderId = item.id;
+  form.elements.id.value = item.id;
+  form.payment_status.value = item.payment_status || 'pending';
+  form.fulfillment_status.value = item.fulfillment_status || 'new';
+  form.remark.value = item.remark || '';
+  detailBox.innerHTML = `
+    <div class="form-detail-meta">
+      <div><strong>${escapeHtml(item.order_no)}</strong><br><small>${escapeHtml(item.customer_name)} / ${escapeHtml(item.phone)}</small></div>
+      <span>${escapeHtml(item.created_at || '')}</span>
+    </div>
+    <div class="form-detail-list">
+      ${renderOrderItems(items)}
+      <div class="form-detail-item"><small>金额</small><span>${escapeHtml(item.currency || 'CNY')} ${escapeHtml(item.total_amount || 0)}</span></div>
+      <div class="form-detail-item"><small>地址</small><span>${escapeHtml(item.address || '-')}</span></div>
+      <div class="form-detail-item"><small>邮箱</small><span>${escapeHtml(item.email || '-')}</span></div>
+    </div>
+  `;
+}
+
+async function loadOrders() {
+  const data = await request('/api/orders?page_size=50');
+  state.orders = data.items;
+  $('#orderRows').innerHTML = data.items.map((item) => `
+    <tr class="${String(state.selectedOrderId) === String(item.id) ? 'selected-row' : ''}">
+      <td><strong>${escapeHtml(item.order_no)}</strong><br><small>${escapeHtml(item.payment_method || 'manual')}</small></td>
+      <td>${escapeHtml(item.customer_name)}<br><small>${escapeHtml(item.phone)}</small></td>
+      <td>${escapeHtml(item.currency || 'CNY')} ${escapeHtml(item.total_amount || 0)}</td>
+      <td><span class="tag ${item.payment_status}">${paymentStatusLabel(item.payment_status)}</span><br><span class="tag ${item.fulfillment_status}">${fulfillmentStatusLabel(item.fulfillment_status)}</span></td>
+      <td>${escapeHtml(item.created_at)}</td>
+      <td><div class="row-actions">
+        <button class="text-btn" data-view-order="${item.id}">详情</button>
+        <button class="text-btn" data-confirm-order="${item.id}">确认</button>
+        <button class="danger-btn" data-delete-order="${item.id}">删除</button>
+      </div></td>
+    </tr>
+  `).join('');
+  if (state.selectedOrderId) {
+    const selected = state.orders.find((item) => String(item.id) === String(state.selectedOrderId));
+    fillOrderDetail(selected || null);
+  }
 }
 
 async function loadMedia() {
@@ -1021,7 +1147,7 @@ async function loadVersions() {
 
 async function loadAll() {
   await Promise.all([loadSiteSettings(), loadCategories(), loadModuleRegistry()]);
-  await Promise.all([loadDashboard(), loadArticles(), loadProducts(), loadMedia(), loadForms(), loadVersions()]);
+  await Promise.all([loadDashboard(), loadArticles(), loadProducts(), loadOrders(), loadMedia(), loadForms(), loadVersions()]);
 }
 
 function resetArticleForm() {
@@ -1286,6 +1412,7 @@ document.addEventListener('click', async (event) => {
 
   if (target.matches('[data-refresh="articles"]')) loadArticles().catch((error) => toast(error.message));
   if (target.matches('[data-refresh="products"]')) loadProducts().catch((error) => toast(error.message));
+  if (target.matches('[data-refresh="orders"]')) loadOrders().catch((error) => toast(error.message));
   if (target.matches('[data-refresh="media"]')) loadMedia().catch((error) => toast(error.message));
   if (target.matches('[data-refresh="forms"]')) loadForms().catch((error) => toast(error.message));
   if (target.matches('[data-refresh="versions"]')) loadVersions().catch((error) => toast(error.message));
@@ -1382,6 +1509,38 @@ document.addEventListener('click', async (event) => {
     await Promise.all([loadProducts(), loadDashboard()]);
   }
 
+  const orderView = target.closest('[data-view-order]');
+  if (orderView) {
+    const item = state.orders.find((row) => String(row.id) === String(orderView.dataset.viewOrder));
+    fillOrderDetail(item || null);
+    await loadOrders();
+  }
+
+  const orderConfirm = target.closest('[data-confirm-order]');
+  if (orderConfirm) {
+    const current = state.orders.find((row) => String(row.id) === String(orderConfirm.dataset.confirmOrder));
+    await request(`/api/orders/${orderConfirm.dataset.confirmOrder}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        payment_status: current?.payment_status || 'pending',
+        fulfillment_status: 'confirmed',
+        remark: current?.remark || '后台已确认订单'
+      })
+    });
+    toast('订单已确认');
+    await Promise.all([loadOrders(), loadDashboard()]);
+  }
+
+  const orderDelete = target.closest('[data-delete-order]');
+  if (orderDelete && confirm('确定删除这条订单？')) {
+    await request(`/api/orders/${orderDelete.dataset.deleteOrder}`, { method: 'DELETE' });
+    toast('订单已删除');
+    if (String(state.selectedOrderId) === String(orderDelete.dataset.deleteOrder)) {
+      fillOrderDetail(null);
+    }
+    await Promise.all([loadOrders(), loadDashboard()]);
+  }
+
   const mediaDelete = target.closest('[data-delete-media]');
   if (mediaDelete && confirm('确定删除这个媒体文件？')) {
     await request(`/api/media/${mediaDelete.dataset.deleteMedia}`, { method: 'DELETE' });
@@ -1475,6 +1634,27 @@ $('#chooseProductCoverBtn').addEventListener('click', () => chooseLatestMediaCov
 $('#generateProductCoverBtn').addEventListener('click', () => generateCover('product').catch((error) => toast(error.message)));
 $('#articleForm').addEventListener('submit', (event) => saveArticle(event).catch((error) => toast(error.message)));
 $('#productForm').addEventListener('submit', (event) => saveProduct(event).catch((error) => toast(error.message)));
+$('#orderDetailForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const id = form.elements.id.value;
+  if (!id) {
+    toast('请先选择一条订单');
+    return;
+  }
+  const data = formToObject(form);
+  await request(`/api/orders/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      payment_status: data.payment_status || 'pending',
+      fulfillment_status: data.fulfillment_status || 'new',
+      remark: data.remark || ''
+    })
+  });
+  toast('订单已保存');
+  await Promise.all([loadOrders(), loadDashboard()]);
+});
+$('#clearOrderDetailBtn').addEventListener('click', () => fillOrderDetail(null));
 $('#mediaForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
@@ -1511,6 +1691,18 @@ $('#resetArticleBtn').addEventListener('click', resetArticleForm);
 $('#resetProductBtn').addEventListener('click', resetProductForm);
 $('#generateBtn').addEventListener('click', () => generateSite().catch((error) => toast(error.message)));
 $('#generateTopBtn').addEventListener('click', () => generateSite().catch((error) => toast(error.message)));
+$('#deployCheckBtn').addEventListener('click', async () => {
+  try {
+    $('#publishStatus').textContent = '正在检查部署配置...';
+    const data = await request('/api/site/deploy-test', { method: 'POST' });
+    $('#publishStatus').textContent = data.message || '部署配置检查完成';
+    toast('部署配置检查完成');
+    await Promise.all([loadVersions(), loadDashboard()]);
+  } catch (error) {
+    $('#publishStatus').textContent = error.message;
+    toast(error.message);
+  }
+});
 $('#reloadDashboardBtn').addEventListener('click', () => loadDashboard().catch((error) => toast(error.message)));
 
 (async function boot() {

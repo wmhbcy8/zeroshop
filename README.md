@@ -102,6 +102,7 @@ http://127.0.0.1:8000/
 - 首页询盘表单字段支持可视化配置字段名、类型、占位提示、必填和排序
 - 站点设置支持“保存并生成”，修改模块后可直接同步到前台静态页
 - 文章、商品、媒体、留言和发布记录管理
+- 订单管理支持订单列表、商品明细、支付状态、履约状态和后台备注
 - 留言列表会按询盘字段配置显示字段标题，便于客服快速识别客户需求
 - 留言支持详情查看、跟进状态、客户等级和跟进备注，适合作为轻量客服线索池
 - 站点设置包含 AI 服务配置占位，文章和商品支持 AI 草稿生成入口
@@ -114,6 +115,7 @@ http://127.0.0.1:8000/
 - 文章和商品支持从媒体库选择封面，媒体卡片也可直接设为文章或商品封面
 - 文章和商品保存、AI 批量生成后可自动同步静态站，前台页面立即更新
 - 一键生成静态首页、列表页、详情页、联系页、站点地图和搜索索引
+- 站点设置支持支付配置和宝塔部署配置占位，发布页可先检查部署参数是否完整
 
 ## 前台静态搜索
 
@@ -148,6 +150,8 @@ GET/POST         /api/articles
 GET/PUT/DELETE   /api/articles/{id}
 GET/POST         /api/products
 GET/PUT/DELETE   /api/products/{id}
+GET/PUT/DELETE   /api/orders/{id}
+GET              /api/orders
 GET/POST         /api/categories
 PUT/DELETE       /api/categories/{id}
 GET/POST         /api/product-categories
@@ -163,6 +167,7 @@ POST             /api/ai/batch-articles
 POST             /api/ai/batch-products
 POST             /api/ai/generate-image
 POST             /api/site/generate
+POST             /api/site/deploy-test
 GET              /api/site/publish-versions
 ```
 
@@ -170,6 +175,7 @@ GET              /api/site/publish-versions
 
 ```text
 POST /api/forms/submit
+POST /api/orders
 ```
 
 ## 安全提醒

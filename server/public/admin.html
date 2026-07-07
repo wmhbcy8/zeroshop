@@ -37,6 +37,7 @@
         <button class="nav-item" data-view="settings">站点</button>
         <button class="nav-item" data-view="articles">文章</button>
         <button class="nav-item" data-view="products">商品</button>
+        <button class="nav-item" data-view="orders">订单</button>
         <button class="nav-item" data-view="media">媒体库</button>
         <button class="nav-item" data-view="forms">留言</button>
         <button class="nav-item" data-view="publish">发布</button>
@@ -60,6 +61,7 @@
         <div class="stats-grid">
           <article class="stat-card"><span>文章</span><strong id="statArticles">-</strong></article>
           <article class="stat-card"><span>商品</span><strong id="statProducts">-</strong></article>
+          <article class="stat-card"><span>订单</span><strong id="statOrders">-</strong></article>
           <article class="stat-card"><span>媒体</span><strong id="statMedia">-</strong></article>
           <article class="stat-card"><span>留言</span><strong id="statForms">-</strong></article>
         </div>
@@ -104,6 +106,25 @@
           </div>
           <label>API 地址<input name="ai_endpoint" placeholder="https://api.example.com/v1/chat/completions"></label>
           <label>API Key<input name="ai_api_key" type="password" placeholder="保存到数据库前请确认部署安全策略"></label>
+
+          <div class="subhead">支付配置</div>
+          <div class="form-grid">
+            <label>支付模式<select name="payment_mode"><option value="manual">人工确认</option><option value="wechat">微信支付</option><option value="alipay">支付宝</option><option value="stripe">Stripe</option></select></label>
+            <label>默认币种<input name="payment_currency" placeholder="CNY"></label>
+          </div>
+          <label>支付商户号<input name="payment_merchant_id" placeholder="后续接入真实支付时填写"></label>
+          <label>支付回调地址<input name="payment_webhook_url" placeholder="https://example.com/api/payment/webhook"></label>
+
+          <div class="subhead">宝塔部署配置</div>
+          <div class="form-grid">
+            <label>面板地址<input name="deploy_bt_panel_url" placeholder="https://server:8888"></label>
+            <label>站点目录<input name="deploy_site_path" placeholder="/www/wwwroot/example.com"></label>
+          </div>
+          <div class="form-grid">
+            <label>部署模式<select name="deploy_mode"><option value="manual">手动确认</option><option value="bt_api">宝塔 API</option><option value="ftp">FTP/SFTP</option></select></label>
+            <label>发布后动作<input name="deploy_after_action" placeholder="reload_nginx"></label>
+          </div>
+          <label>部署备注<textarea name="deploy_note" rows="2" placeholder="记录服务器、站点、证书和备份策略"></textarea></label>
 
           <div class="subhead">AI 页面搭建</div>
           <div class="ai-draft-box">
@@ -281,7 +302,7 @@
               <button class="text-btn" type="button" id="batchGenerateProductsBtn">AI 批量生成商品</button>
             </div>
             <div class="table-wrap">
-              <table>
+              <table class="order-table">
                 <thead><tr><th>商品</th><th>价格</th><th>库存</th><th>操作</th></tr></thead>
                 <tbody id="productRows"></tbody>
               </table>
@@ -336,6 +357,48 @@
         </div>
       </section>
 
+      <section class="view" id="view-orders">
+        <div class="split-layout forms-layout">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>订单列表</h2>
+              <button class="text-btn" data-refresh="orders">刷新</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>订单</th><th>客户</th><th>金额</th><th>状态</th><th>时间</th><th>操作</th></tr></thead>
+                <tbody id="orderRows"></tbody>
+              </table>
+            </div>
+          </div>
+          <form class="panel form-panel" id="orderDetailForm">
+            <div class="panel-head">
+              <h2>订单跟进</h2>
+              <button type="button" class="text-btn" id="clearOrderDetailBtn">清空</button>
+            </div>
+            <input type="hidden" name="id">
+            <div class="form-detail-box" id="orderDetailBox">选择一条订单查看明细。</div>
+            <div class="form-grid">
+              <label>支付状态<select name="payment_status">
+                <option value="pending">待支付</option>
+                <option value="paid">已支付</option>
+                <option value="failed">支付失败</option>
+                <option value="refunded">已退款</option>
+              </select></label>
+              <label>履约状态<select name="fulfillment_status">
+                <option value="new">新订单</option>
+                <option value="confirmed">已确认</option>
+                <option value="shipped">已发货</option>
+                <option value="finished">已完成</option>
+                <option value="closed">已关闭</option>
+              </select></label>
+            </div>
+            <label>订单备注<textarea name="remark" rows="5" placeholder="记录收款、发货、售后或客户沟通信息"></textarea></label>
+            <button class="primary-btn" type="submit">保存订单</button>
+          </form>
+        </div>
+      </section>
+
       <section class="view" id="view-forms">
         <div class="split-layout forms-layout">
           <div class="panel">
@@ -381,7 +444,10 @@
         <div class="panel">
           <div class="panel-head">
             <h2>发布管理</h2>
-            <button class="primary-btn" id="generateBtn">生成静态站</button>
+            <div class="panel-actions">
+              <button class="ghost-btn" id="deployCheckBtn">检查部署配置</button>
+              <button class="primary-btn" id="generateBtn">生成静态站</button>
+            </div>
           </div>
           <div class="status-box" id="publishStatus">等待操作</div>
         </div>

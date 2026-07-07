@@ -125,7 +125,7 @@ h2 { font-size: 18px; }
 .view.active { display: block; }
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 16px;
   margin-bottom: 16px;
 }
@@ -157,6 +157,9 @@ h2 { font-size: 18px; }
 }
 .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
 table { width: 100%; border-collapse: collapse; min-width: 680px; }
+.order-table { min-width: 560px; }
+.order-table th, .order-table td { padding: 10px; }
+.order-table .tag { margin: 2px 0; white-space: nowrap; }
 th, td { padding: 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 th { color: var(--muted); font-weight: 600; background: #f8fafc; font-size: 13px; }
 td { font-size: 14px; }
@@ -173,6 +176,9 @@ tr.selected-row td { background: #f0f7ff; }
   color: var(--primary);
 }
 .tag.published, .tag.processed { background: #f0fff4; color: var(--success); }
+.tag.paid, .tag.finished { background: #f0fff4; color: var(--success); }
+.tag.confirmed, .tag.shipped { background: #e6fffb; color: #08979c; }
+.tag.pending, .tag.failed { background: #fff7e6; color: var(--warning); }
 .tag.contacted { background: #e6fffb; color: #08979c; }
 .tag.closed { background: #f1f5f9; color: #64748b; }
 .tag.draft, .tag.new { background: #fff7e6; color: var(--warning); }

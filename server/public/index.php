@@ -656,6 +656,30 @@ function ensure_auth_tables(PDO $pdo): void
         INDEX idx_expires_at (expires_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+    $pdo->exec("CREATE TABLE IF NOT EXISTS orders (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        order_no VARCHAR(40) NOT NULL UNIQUE,
+        customer_name VARCHAR(100) NOT NULL,
+        phone VARCHAR(60) NOT NULL,
+        email VARCHAR(120),
+        address VARCHAR(255),
+        items TEXT,
+        total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        currency VARCHAR(10) NOT NULL DEFAULT 'CNY',
+        payment_method VARCHAR(50) NOT NULL DEFAULT 'manual',
+        payment_status VARCHAR(30) NOT NULL DEFAULT 'pending',
+        fulfillment_status VARCHAR(30) NOT NULL DEFAULT 'new',
+        remark TEXT,
+        source_url VARCHAR(255),
+        ip_address VARCHAR(80),
+        user_agent VARCHAR(255),
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_order_no (order_no),
+        INDEX idx_payment_status (payment_status),
+        INDEX idx_fulfillment_status (fulfillment_status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
     $exists = (int)$pdo->query('SELECT COUNT(*) FROM admin_users')->fetchColumn();
     if ($exists === 0) {
         $username = env_value('HJ_ADMIN_USERNAME', 'admin');
@@ -670,6 +694,32 @@ function ensure_auth_tables(PDO $pdo): void
             'updated_at' => $time,
         ]);
     }
+}
+
+function create_order_no(): string
+{
+    return 'ZS' . date('YmdHis') . strtoupper(bin2hex(random_bytes(3)));
+}
+
+function normalize_order_items(array $items): array
+{
+    $normalized = [];
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $quantity = max(1, (int)($item['quantity'] ?? 1));
+        $price = max(0, (float)($item['price'] ?? 0));
+        $normalized[] = [
+            'product_id' => (int)($item['product_id'] ?? 0),
+            'title' => trim((string)($item['title'] ?? '')),
+            'sku' => trim((string)($item['sku'] ?? '')),
+            'quantity' => $quantity,
+            'price' => $price,
+            'amount' => round($quantity * $price, 2),
+        ];
+    }
+    return $normalized;
 }
 
 function bearer_token(): string
@@ -783,6 +833,40 @@ try {
             'updated_at' => $time,
         ]);
         ok(['id' => (int)$pdo->lastInsertId()], '提交成功');
+    }
+
+    if ($method === 'POST' && $path === '/orders') {
+        $data = body_json();
+        require_fields($data, ['customer_name', 'phone', 'items']);
+        if (!is_array($data['items'])) {
+            fail('订单商品格式错误', 'VALIDATION_ERROR', 422);
+        }
+        $items = normalize_order_items($data['items']);
+        if (!$items) {
+            fail('订单至少需要一个商品', 'VALIDATION_ERROR', 422);
+        }
+        $total = array_reduce($items, fn($sum, $item) => $sum + (float)$item['amount'], 0.0);
+        $time = now();
+        $stmt = $pdo->prepare("INSERT INTO orders (order_no, customer_name, phone, email, address, items, total_amount, currency, payment_method, payment_status, fulfillment_status, remark, source_url, ip_address, user_agent, created_at, updated_at)
+            VALUES (:order_no, :customer_name, :phone, :email, :address, :items, :total_amount, :currency, :payment_method, 'pending', 'new', :remark, :source_url, :ip_address, :user_agent, :created_at, :updated_at)");
+        $stmt->execute([
+            'order_no' => create_order_no(),
+            'customer_name' => trim((string)$data['customer_name']),
+            'phone' => trim((string)$data['phone']),
+            'email' => trim((string)($data['email'] ?? '')),
+            'address' => trim((string)($data['address'] ?? '')),
+            'items' => json_encode($items, JSON_UNESCAPED_UNICODE),
+            'total_amount' => round($total, 2),
+            'currency' => trim((string)($data['currency'] ?? 'CNY')) ?: 'CNY',
+            'payment_method' => trim((string)($data['payment_method'] ?? 'manual')) ?: 'manual',
+            'remark' => trim((string)($data['remark'] ?? '')),
+            'source_url' => trim((string)($data['source_url'] ?? '')),
+            'ip_address' => $_SERVER['REMOTE_ADDR'] ?? '',
+            'user_agent' => substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255),
+            'created_at' => $time,
+            'updated_at' => $time,
+        ]);
+        ok(fetch_one($pdo, 'orders', (int)$pdo->lastInsertId()), '订单已创建');
     }
 
     require_login($pdo);
@@ -1082,6 +1166,34 @@ try {
         }
     }
 
+    if ($method === 'GET' && $path === '/orders') {
+        ok(paginate($pdo, 'orders', [], 'id DESC', 'order_no'));
+    }
+
+    if ($params = route_param('/orders/{id}', $path)) {
+        $id = (int)$params['id'];
+        if ($method === 'GET') {
+            $item = fetch_one($pdo, 'orders', $id);
+            $item ? ok($item) : fail('订单不存在', 'NOT_FOUND', 404);
+        }
+        if ($method === 'PUT') {
+            $data = body_json();
+            $stmt = $pdo->prepare("UPDATE orders SET payment_status=:payment_status, fulfillment_status=:fulfillment_status, remark=:remark, updated_at=:updated_at WHERE id=:id");
+            $stmt->execute([
+                'id' => $id,
+                'payment_status' => $data['payment_status'] ?? 'pending',
+                'fulfillment_status' => $data['fulfillment_status'] ?? 'new',
+                'remark' => $data['remark'] ?? '',
+                'updated_at' => now(),
+            ]);
+            ok(fetch_one($pdo, 'orders', $id), '订单已更新');
+        }
+        if ($method === 'DELETE') {
+            $pdo->prepare('DELETE FROM orders WHERE id = ?')->execute([$id]);
+            ok([], '订单已删除');
+        }
+    }
+
     if ($method === 'GET' && $path === '/media') {
         $fileType = trim((string)($_GET['file_type'] ?? ''));
         $where = [];
@@ -1241,6 +1353,30 @@ try {
             'created_at' => now(),
         ]);
         ok(['version_no' => $versionNo, 'file_count' => $fileCount, 'output' => $output], '生成成功');
+    }
+
+    if ($method === 'POST' && $path === '/site/deploy-test') {
+        $site = site_settings($pdo);
+        $deploy = $site['deploy'] ?? [];
+        $configured = !empty($deploy['bt_panel_url']) && !empty($deploy['site_path']);
+        $status = $configured ? 'ready' : 'pending';
+        $summary = [
+            'configured' => $configured,
+            'panel_url' => $deploy['bt_panel_url'] ?? '',
+            'site_path' => $deploy['site_path'] ?? '',
+            'mode' => $deploy['mode'] ?? 'manual',
+            'message' => $configured ? '部署参数已填写，后续可接入宝塔 API 执行上传发布。' : '请先填写宝塔面板地址和站点目录。',
+        ];
+        $stmt = $pdo->prepare("INSERT INTO publish_versions (version_no, publish_type, file_path, status, summary, created_at)
+            VALUES (:version_no, 'deploy-check', :file_path, :status, :summary, :created_at)");
+        $stmt->execute([
+            'version_no' => 'deploy_' . date('Ymd_His'),
+            'file_path' => 'sites/site_10001/public',
+            'status' => $status,
+            'summary' => json_encode($summary, JSON_UNESCAPED_UNICODE),
+            'created_at' => now(),
+        ]);
+        ok($summary, '部署配置检查完成');
     }
 
     if ($method === 'GET' && $path === '/site/publish-versions') {
