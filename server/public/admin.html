@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>化简站点后台 MVP</title>
-  <link rel="stylesheet" href="/admin/assets/admin.css">
+  <link rel="stylesheet" href="/admin/assets/admin.css?v=orders-ops-4">
 </head>
 <body>
   <section class="login-screen" id="loginScreen">
@@ -364,6 +364,27 @@
               <h2>订单列表</h2>
               <button class="text-btn" data-refresh="orders">刷新</button>
             </div>
+            <div class="mini-stats" id="orderStats"></div>
+            <form class="filter-bar" id="orderFilterForm">
+              <input type="search" name="keyword" placeholder="搜索订单号、客户、电话、商品、备注">
+              <select name="payment_status">
+                <option value="">全部支付</option>
+                <option value="pending">待支付</option>
+                <option value="paid">已支付</option>
+                <option value="failed">支付失败</option>
+                <option value="refunded">已退款</option>
+              </select>
+              <select name="fulfillment_status">
+                <option value="">全部履约</option>
+                <option value="new">新订单</option>
+                <option value="confirmed">已确认</option>
+                <option value="shipped">已发货</option>
+                <option value="finished">已完成</option>
+                <option value="closed">已关闭</option>
+              </select>
+              <button class="primary-btn" type="submit" data-apply-order-filter>筛选</button>
+              <button class="ghost-btn" type="button" id="resetOrderFilterBtn">重置</button>
+            </form>
             <div class="table-wrap">
               <table>
                 <thead><tr><th>订单</th><th>客户</th><th>金额</th><th>状态</th><th>时间</th><th>操作</th></tr></thead>
@@ -468,6 +489,6 @@
   </div>
 
   <div class="toast" id="toast"></div>
-  <script src="/admin/assets/admin.js"></script>
+  <script src="/admin/assets/admin.js?v=orders-ops-4"></script>
 </body>
 </html>

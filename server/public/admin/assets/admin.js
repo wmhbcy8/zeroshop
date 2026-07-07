@@ -14,7 +14,9 @@ const state = {
   moduleRegistry: { scopes: [], modules: [] },
   pagePlan: null,
   selectedFormId: null,
-  selectedOrderId: null
+  selectedOrderId: null,
+  orderFilters: { keyword: '', payment_status: '', fulfillment_status: '' },
+  orderFilterTimer: null
 };
 
 const titles = {
@@ -891,6 +893,60 @@ function fulfillmentStatusLabel(status) {
   }[status] || status || '新订单';
 }
 
+function buildOrderQuery() {
+  const params = new URLSearchParams({ page_size: '50' });
+  Object.entries(state.orderFilters).forEach(([key, value]) => {
+    if (value) params.set(key, value);
+  });
+  return params.toString();
+}
+
+function renderOrderStats(stats = {}) {
+  const amount = Number(stats.total_amount || 0).toFixed(2);
+  $('#orderStats').innerHTML = [
+    ['订单总数', stats.total || 0],
+    ['待支付', stats.pending_payment || 0],
+    ['待处理', stats.open_orders || 0],
+    ['已完成', stats.finished || 0],
+    ['累计金额', `CNY ${amount}`]
+  ].map(([label, value]) => `
+    <div class="mini-stat">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `).join('');
+}
+
+async function applyOrderFilters(form = $('#orderFilterForm')) {
+  const data = formToObject(form);
+  state.orderFilters = {
+    keyword: data.keyword || '',
+    payment_status: data.payment_status || '',
+    fulfillment_status: data.fulfillment_status || ''
+  };
+  await loadOrders();
+}
+
+function scheduleOrderFilters() {
+  clearTimeout(state.orderFilterTimer);
+  state.orderFilterTimer = setTimeout(() => {
+    applyOrderFilters().catch((error) => toast(error.message));
+  }, 300);
+}
+
+function syncOrderFilterForm() {
+  const form = $('#orderFilterForm');
+  form.keyword.value = state.orderFilters.keyword;
+  form.payment_status.value = state.orderFilters.payment_status;
+  form.fulfillment_status.value = state.orderFilters.fulfillment_status;
+}
+
+async function resetOrderFilters() {
+  state.orderFilters = { keyword: '', payment_status: '', fulfillment_status: '' };
+  syncOrderFilterForm();
+  await loadOrders();
+}
+
 function renderOrderItems(items) {
   if (!Array.isArray(items) || !items.length) {
     return '<span class="muted">暂无商品明细</span>';
@@ -938,9 +994,10 @@ function fillOrderDetail(item) {
 }
 
 async function loadOrders() {
-  const data = await request('/api/orders?page_size=50');
+  const data = await request(`/api/orders?${buildOrderQuery()}`);
   state.orders = data.items;
-  $('#orderRows').innerHTML = data.items.map((item) => `
+  renderOrderStats(data.stats || {});
+  $('#orderRows').innerHTML = data.items.length ? data.items.map((item) => `
     <tr class="${String(state.selectedOrderId) === String(item.id) ? 'selected-row' : ''}">
       <td><strong>${escapeHtml(item.order_no)}</strong><br><small>${escapeHtml(item.payment_method || 'manual')}</small></td>
       <td>${escapeHtml(item.customer_name)}<br><small>${escapeHtml(item.phone)}</small></td>
@@ -953,7 +1010,7 @@ async function loadOrders() {
         <button class="danger-btn" data-delete-order="${item.id}">删除</button>
       </div></td>
     </tr>
-  `).join('');
+  `).join('') : '<tr><td colspan="6" class="empty-cell">暂无匹配订单</td></tr>';
   if (state.selectedOrderId) {
     const selected = state.orders.find((item) => String(item.id) === String(state.selectedOrderId));
     fillOrderDetail(selected || null);
@@ -1419,6 +1476,11 @@ document.addEventListener('click', async (event) => {
   if (target.matches('[data-refresh="forms"]')) loadForms().catch((error) => toast(error.message));
   if (target.matches('[data-refresh="versions"]')) loadVersions().catch((error) => toast(error.message));
 
+  if (target.closest('[data-apply-order-filter]')) {
+    event.preventDefault();
+    await applyOrderFilters();
+  }
+
   const navDelete = target.closest('[data-delete-nav]');
   if (navDelete) {
     navDelete.closest('[data-nav-index]')?.remove();
@@ -1584,6 +1646,18 @@ document.addEventListener('click', async (event) => {
   }
 });
 
+document.addEventListener('pointerdown', (event) => {
+  const target = event.target;
+  if (target.closest('[data-apply-order-filter]')) {
+    event.preventDefault();
+    applyOrderFilters().catch((error) => toast(error.message));
+  }
+  if (target.closest('#resetOrderFilterBtn')) {
+    event.preventDefault();
+    resetOrderFilters().catch((error) => toast(error.message));
+  }
+});
+
 $('#loginForm').addEventListener('submit', (event) => login(event).catch((error) => toast(error.message)));
 $('#logoutBtn').addEventListener('click', logout);
 $('#addNavItemBtn').addEventListener('click', () => {
@@ -1657,6 +1731,15 @@ $('#orderDetailForm').addEventListener('submit', async (event) => {
   await Promise.all([loadOrders(), loadDashboard()]);
 });
 $('#clearOrderDetailBtn').addEventListener('click', () => fillOrderDetail(null));
+$('#orderFilterForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  await applyOrderFilters(event.currentTarget);
+});
+$('#orderFilterForm').addEventListener('input', scheduleOrderFilters);
+$('#orderFilterForm').addEventListener('change', scheduleOrderFilters);
+$('#resetOrderFilterBtn').addEventListener('click', async () => {
+  await resetOrderFilters();
+});
 $('#mediaForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {

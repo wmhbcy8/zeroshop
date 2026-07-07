@@ -224,6 +224,77 @@ function paginate(PDO $pdo, string $table, array $where = [], string $order = 'i
     ];
 }
 
+function list_orders(PDO $pdo): array
+{
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $offset = ($page - 1) * $pageSize;
+    $keyword = trim((string)($_GET['keyword'] ?? ''));
+    $paymentStatus = trim((string)($_GET['payment_status'] ?? ''));
+    $fulfillmentStatus = trim((string)($_GET['fulfillment_status'] ?? ''));
+
+    $keywordClause = '';
+    $keywordParams = [];
+    if ($keyword !== '') {
+        $keywordClause = '(order_no LIKE :keyword OR customer_name LIKE :keyword OR phone LIKE :keyword OR email LIKE :keyword OR source_url LIKE :keyword OR remark LIKE :keyword OR items LIKE :keyword)';
+        $keywordParams['keyword'] = '%' . $keyword . '%';
+    }
+
+    $clauses = [];
+    $params = [];
+    if ($keywordClause !== '') {
+        $clauses[] = $keywordClause;
+        $params = array_merge($params, $keywordParams);
+    }
+    if ($paymentStatus !== '') {
+        $clauses[] = 'payment_status = :payment_status';
+        $params['payment_status'] = $paymentStatus;
+    }
+    if ($fulfillmentStatus !== '') {
+        $clauses[] = 'fulfillment_status = :fulfillment_status';
+        $params['fulfillment_status'] = $fulfillmentStatus;
+    }
+
+    $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
+    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM orders{$whereSql}");
+    $countStmt->execute($params);
+    $total = (int)$countStmt->fetchColumn();
+
+    $stmt = $pdo->prepare("SELECT * FROM orders{$whereSql} ORDER BY id DESC LIMIT {$pageSize} OFFSET {$offset}");
+    $stmt->execute($params);
+
+    $statsStmt = $pdo->prepare("SELECT
+        COUNT(*) AS total,
+        SUM(payment_status = 'pending') AS pending_payment,
+        SUM(payment_status = 'paid') AS paid,
+        SUM(fulfillment_status = 'new') AS new_orders,
+        SUM(fulfillment_status IN ('new', 'confirmed')) AS open_orders,
+        SUM(fulfillment_status = 'finished') AS finished,
+        SUM(total_amount) AS total_amount
+        FROM orders{$whereSql}");
+    $statsStmt->execute($params);
+    $stats = $statsStmt->fetch() ?: [];
+
+    return [
+        'items' => $stmt->fetchAll(),
+        'pagination' => [
+            'page' => $page,
+            'page_size' => $pageSize,
+            'total' => $total,
+            'total_pages' => (int)ceil($total / $pageSize),
+        ],
+        'stats' => [
+            'total' => (int)($stats['total'] ?? 0),
+            'pending_payment' => (int)($stats['pending_payment'] ?? 0),
+            'paid' => (int)($stats['paid'] ?? 0),
+            'new_orders' => (int)($stats['new_orders'] ?? 0),
+            'open_orders' => (int)($stats['open_orders'] ?? 0),
+            'finished' => (int)($stats['finished'] ?? 0),
+            'total_amount' => (float)($stats['total_amount'] ?? 0),
+        ],
+    ];
+}
+
 function site_settings(PDO $pdo): array
 {
     $value = $pdo->query("SELECT setting_value FROM site_settings WHERE setting_key = 'site'")->fetchColumn();
@@ -1167,7 +1238,7 @@ try {
     }
 
     if ($method === 'GET' && $path === '/orders') {
-        ok(paginate($pdo, 'orders', [], 'id DESC', 'order_no'));
+        ok(list_orders($pdo));
     }
 
     if ($params = route_param('/orders/{id}', $path)) {
