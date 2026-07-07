@@ -245,6 +245,12 @@ function site_for(array $site, string $rootBase): array
         'floating_inquiry' => true,
         'floating_text' => '立即咨询',
     ], $site['global_modules'] ?? []);
+    $site['payment'] = array_replace([
+        'mode' => 'manual',
+        'currency' => 'CNY',
+        'merchant_id' => '',
+        'webhook_url' => '',
+    ], $site['payment'] ?? []);
     $site['home_content'] = array_replace([
         'advantages' => [
             ['title' => '静态化发布', 'description' => '前台页面生成 HTML 文件，访问速度快，部署成本低，也更利于搜索引擎抓取。'],

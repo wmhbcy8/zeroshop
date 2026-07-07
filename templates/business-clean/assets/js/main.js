@@ -1,5 +1,11 @@
 document.addEventListener('submit', function (event) {
   const form = event.target;
+  if (form.matches('.order-form')) {
+    event.preventDefault();
+    submitOrderForm(form);
+    return;
+  }
+
   if (!form.matches('.inquiry-form')) return;
   event.preventDefault();
 
@@ -37,6 +43,63 @@ document.addEventListener('submit', function (event) {
       alert(error.message || '提交失败，请稍后再试。');
     });
 });
+
+function submitOrderForm(form) {
+  const api = form.getAttribute('data-api');
+  const status = form.querySelector('[data-order-status]');
+  if (!api || location.protocol === 'file:') {
+    alert('演示站已收到订单。部署后会提交到后台订单列表。');
+    return;
+  }
+
+  const formData = new FormData(form);
+  const quantity = Math.max(1, Number(formData.get('quantity') || 1));
+  const price = Math.max(0, Number(formData.get('price') || 0));
+  const payload = {
+    customer_name: formData.get('customer_name') || '',
+    phone: formData.get('phone') || '',
+    email: formData.get('email') || '',
+    address: formData.get('address') || '',
+    currency: formData.get('currency') || 'CNY',
+    payment_method: 'manual',
+    source_url: location.pathname,
+    remark: formData.get('remark') || '',
+    items: [{
+      product_id: Number(formData.get('product_id') || 0),
+      title: formData.get('title') || '',
+      sku: formData.get('sku') || '',
+      quantity: quantity,
+      price: price
+    }]
+  };
+
+  if (status) status.textContent = '正在提交订单...';
+  form.querySelectorAll('button, input, textarea').forEach(function (item) {
+    item.disabled = true;
+  });
+
+  fetch(api, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(function (response) { return response.json(); })
+    .then(function (result) {
+      if (!result.success) throw new Error(result.message || '订单提交失败');
+      form.reset();
+      if (status) status.textContent = '订单提交成功，订单号：' + (result.data.order_no || result.data.id || '-');
+      alert('订单提交成功，我们会尽快联系你确认支付和交付。');
+    })
+    .catch(function (error) {
+      if (status) status.textContent = error.message || '订单提交失败，请稍后再试。';
+      alert(error.message || '订单提交失败，请稍后再试。');
+    })
+    .finally(function () {
+      form.querySelectorAll('button, input, textarea').forEach(function (item) {
+        item.disabled = false;
+      });
+    });
+}
 
 function escapeHtml(value) {
   return String(value || '').replace(/[&<>"']/g, function (char) {

@@ -931,6 +931,8 @@ function fillOrderDetail(item) {
       <div class="form-detail-item"><small>金额</small><span>${escapeHtml(item.currency || 'CNY')} ${escapeHtml(item.total_amount || 0)}</span></div>
       <div class="form-detail-item"><small>地址</small><span>${escapeHtml(item.address || '-')}</span></div>
       <div class="form-detail-item"><small>邮箱</small><span>${escapeHtml(item.email || '-')}</span></div>
+      <div class="form-detail-item"><small>来源</small><span>${escapeHtml(item.source_url || '-')}</span></div>
+      <div class="form-detail-item"><small>备注</small><span>${escapeHtml(item.remark || '-')}</span></div>
     </div>
   `;
 }
