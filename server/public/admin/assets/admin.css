@@ -247,6 +247,70 @@ tr.selected-row td { background: #f0f7ff; }
   word-break: break-word;
 }
 .timeline-text { white-space: pre-wrap; }
+.order-copy-actions, .quick-note-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.quick-note-row {
+  margin-top: -4px;
+}
+.inline-copy {
+  border: 0;
+  background: #eef5ff;
+  color: var(--primary);
+  border-radius: 6px;
+  padding: 2px 7px;
+  margin-left: 6px;
+  font-size: 12px;
+}
+.order-timeline-row {
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+.order-timeline {
+  display: grid;
+  gap: 10px;
+}
+.order-timeline-item {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+.timeline-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-top: 7px;
+  background: var(--primary);
+  box-shadow: 0 0 0 4px rgba(22,119,255,.10);
+}
+.order-timeline-item.customer .timeline-dot { background: var(--cyan); box-shadow: 0 0 0 4px rgba(19,194,194,.12); }
+.order-timeline-item.staff .timeline-dot { background: var(--primary); }
+.order-timeline-item.system .timeline-dot { background: var(--success); box-shadow: 0 0 0 4px rgba(82,196,26,.12); }
+.order-timeline-item.note .timeline-dot { background: #94a3b8; box-shadow: 0 0 0 4px rgba(148,163,184,.14); }
+.timeline-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+  margin-bottom: 3px;
+}
+.timeline-head strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.timeline-head small {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.order-timeline-item p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.6;
+  word-break: break-word;
+}
 
 .form-panel { display: grid; gap: 12px; }
 .wide-form { max-width: 980px; }

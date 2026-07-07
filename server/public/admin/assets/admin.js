@@ -970,7 +970,7 @@ async function updateSelectedOrder(patch, message) {
   await Promise.all([loadOrders(), loadDashboard()]);
 }
 
-function renderOrderItems(items) {
+function renderOrderItemsLegacy(items) {
   if (!Array.isArray(items) || !items.length) {
     return '<span class="muted">暂无商品明细</span>';
   }
@@ -982,7 +982,7 @@ function renderOrderItems(items) {
   `).join('');
 }
 
-function fillOrderDetail(item) {
+function fillOrderDetailLegacy(item) {
   const form = $('#orderDetailForm');
   const detailBox = $('#orderDetailBox');
   if (!item) {
@@ -1018,6 +1018,145 @@ function fillOrderDetail(item) {
       <div class="form-detail-item"><small>邮箱</small><span>${escapeHtml(item.email || '-')}</span></div>
       <div class="form-detail-item"><small>来源</small><span>${escapeHtml(item.source_url || '-')}</span></div>
       <div class="form-detail-item"><small>时间线</small><span class="timeline-text">${escapeHtml(item.remark || '-')}</span></div>
+    </div>
+  `;
+}
+
+function orderLookupUrl(item) {
+  const params = new URLSearchParams();
+  if (item?.order_no) params.set('order_no', item.order_no);
+  if (item?.phone) params.set('phone', item.phone);
+  return `${location.origin}/order.html${params.toString() ? `?${params.toString()}` : ''}`;
+}
+
+function orderTimelineType(text) {
+  if (text.includes('客户提交')) return ['customer', '客户'];
+  if (text.includes('客服') || text.includes('后台')) return ['staff', '客服'];
+  if (text.includes('支付') || text.includes('发货') || text.includes('确认')) return ['system', '状态'];
+  return ['note', '备注'];
+}
+
+function parseOrderTimeline(remark) {
+  return String(remark || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^\[(.+?)\]\s*(.+)$/);
+      const text = match ? match[2] : line;
+      const [type, label] = orderTimelineType(text);
+      return {
+        time: match ? match[1] : '初始备注',
+        text,
+        type,
+        label
+      };
+    });
+}
+
+function renderOrderTimeline(remark) {
+  const items = parseOrderTimeline(remark);
+  if (!items.length) return '<span class="muted">暂无订单时间线</span>';
+  return `
+    <div class="order-timeline">
+      ${items.map((item) => `
+        <div class="order-timeline-item ${escapeHtml(item.type)}">
+          <span class="timeline-dot"></span>
+          <div>
+            <div class="timeline-head">
+              <strong>${escapeHtml(item.label)}</strong>
+              <small>${escapeHtml(item.time)}</small>
+            </div>
+            <p>${escapeHtml(item.text)}</p>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function copyText(value, label = '内容') {
+  const text = String(value || '').trim();
+  if (!text || text === '-') {
+    toast('暂无可复制内容');
+    return;
+  }
+  const fallback = () => {
+    const input = document.createElement('textarea');
+    input.value = text;
+    input.setAttribute('readonly', 'readonly');
+    input.style.position = 'fixed';
+    input.style.left = '-9999px';
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand('copy');
+    input.remove();
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => toast(`${label}已复制`)).catch(() => {
+      fallback();
+      toast(`${label}已复制`);
+    });
+    return;
+  }
+  fallback();
+  toast(`${label}已复制`);
+}
+
+function renderOrderItems(items) {
+  if (!Array.isArray(items) || !items.length) {
+    return '<span class="muted">暂无商品明细</span>';
+  }
+  return items.map((item) => `
+    <div class="form-detail-item">
+      <small>${escapeHtml(item.sku || item.product_id || '商品')}</small>
+      <span>${escapeHtml(item.title || '未命名商品')} x ${escapeHtml(item.quantity || 1)}，${escapeHtml(item.price || 0)}</span>
+    </div>
+  `).join('');
+}
+
+function fillOrderDetail(item) {
+  const form = $('#orderDetailForm');
+  const detailBox = $('#orderDetailBox');
+  if (!item) {
+    state.selectedOrderId = null;
+    form.reset();
+    form.elements.id.value = '';
+    detailBox.innerHTML = '选择一条订单查看明细。';
+    return;
+  }
+
+  let items = [];
+  try { items = JSON.parse(item.items || '[]'); } catch {}
+  state.selectedOrderId = item.id;
+  form.elements.id.value = item.id;
+  form.payment_status.value = item.payment_status || 'pending';
+  form.fulfillment_status.value = item.fulfillment_status || 'new';
+  form.tracking_company.value = item.tracking_company || '';
+  form.tracking_no.value = item.tracking_no || '';
+  form.followup_note.value = '';
+  form.remark.value = item.remark || '';
+  const trackingText = [item.tracking_company, item.tracking_no].filter(Boolean).join(' / ') || '-';
+  detailBox.innerHTML = `
+    <div class="form-detail-meta">
+      <div><strong>${escapeHtml(item.order_no)}</strong><br><small>${escapeHtml(item.customer_name)} / ${escapeHtml(item.phone)}</small></div>
+      <span>${escapeHtml(item.created_at || '')}</span>
+    </div>
+    <div class="order-copy-actions">
+      <button type="button" class="text-btn" data-copy-value="${escapeHtml(item.order_no || '')}" data-copy-label="订单号">复制订单号</button>
+      <button type="button" class="text-btn" data-copy-value="${escapeHtml(item.phone || '')}" data-copy-label="手机号">复制手机</button>
+      <button type="button" class="text-btn" data-copy-value="${escapeHtml(orderLookupUrl(item))}" data-copy-label="查单链接">复制查单链接</button>
+    </div>
+    <div class="form-detail-list">
+      ${renderOrderItems(items)}
+      <div class="form-detail-item"><small>金额</small><span>${escapeHtml(item.currency || 'CNY')} ${escapeHtml(item.total_amount || 0)}</span></div>
+      <div class="form-detail-item"><small>支付时间</small><span>${escapeHtml(item.paid_at || '-')}</span></div>
+      <div class="form-detail-item"><small>发货时间</small><span>${escapeHtml(item.shipped_at || '-')}</span></div>
+      <div class="form-detail-item"><small>物流</small><span>${escapeHtml(trackingText)} ${item.tracking_no ? `<button type="button" class="inline-copy" data-copy-value="${escapeHtml(item.tracking_no)}" data-copy-label="物流单号">复制</button>` : ''}</span></div>
+      <div class="form-detail-item"><small>地址</small><span>${escapeHtml(item.address || '-')}</span></div>
+      <div class="form-detail-item"><small>邮箱</small><span>${escapeHtml(item.email || '-')} ${item.email ? `<button type="button" class="inline-copy" data-copy-value="${escapeHtml(item.email)}" data-copy-label="邮箱">复制</button>` : ''}</span></div>
+      <div class="form-detail-item"><small>来源</small><span>${escapeHtml(item.source_url || '-')}</span></div>
+      <div class="form-detail-item order-timeline-row"><small>时间线</small><span>${renderOrderTimeline(item.remark)}</span></div>
     </div>
   `;
 }
@@ -1493,10 +1632,39 @@ async function logout() {
   showLogin();
 }
 
+function initOrderQuickNotes() {
+  const field = $('#orderDetailForm textarea[name="followup_note"]');
+  if (!field || $('#orderQuickNotes')) return;
+  const row = document.createElement('div');
+  row.id = 'orderQuickNotes';
+  row.className = 'quick-note-row';
+  row.innerHTML = [
+    ['确认需求', '已联系客户确认需求，等待客户补充资料。'],
+    ['待财务核对', '客户已提交付款说明，待财务核对到账。'],
+    ['同步备货', '已同步仓库备货，等待物流单号回填。'],
+    ['售后跟进', '已处理售后说明，等待客户确认结果。']
+  ].map(([label, note]) => `<button class="ghost-btn" type="button" data-order-quick-note="${escapeHtml(note)}">${escapeHtml(label)}</button>`).join('');
+  field.closest('label').after(row);
+}
+
 document.addEventListener('click', async (event) => {
   const target = event.target;
   const nav = target.closest('.nav-item');
   if (nav) setView(nav.dataset.view);
+
+  const copyButton = target.closest('[data-copy-value]');
+  if (copyButton) {
+    copyText(copyButton.dataset.copyValue, copyButton.dataset.copyLabel || '内容');
+  }
+
+  const quickNote = target.closest('[data-order-quick-note]');
+  if (quickNote) {
+    const field = $('#orderDetailForm textarea[name="followup_note"]');
+    if (field) {
+      field.value = quickNote.dataset.orderQuickNote || '';
+      field.focus();
+    }
+  }
 
   if (target.matches('[data-refresh="articles"]')) loadArticles().catch((error) => toast(error.message));
   if (target.matches('[data-refresh="products"]')) loadProducts().catch((error) => toast(error.message));
@@ -1831,6 +1999,7 @@ $('#deployCheckBtn').addEventListener('click', async () => {
 $('#reloadDashboardBtn').addEventListener('click', () => loadDashboard().catch((error) => toast(error.message)));
 
 (async function boot() {
+  initOrderQuickNotes();
   if (!token()) {
     showLogin();
     return;
