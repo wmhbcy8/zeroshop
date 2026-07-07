@@ -16,13 +16,13 @@
 
 ## 启动 API 和后台
 
-项目已经包含便携版 PHP：
+本地开发目录可以放置便携版 PHP，仓库默认不提交 `tools/` 目录：
 
 ```text
 tools/php/php.exe
 ```
 
-推荐使用启动脚本：
+如果本机已经安装 PHP，也可以把下面命令里的 `tools/php/php.exe` 换成 `php`。推荐使用启动脚本：
 
 ```powershell
 scripts/start-api.ps1
