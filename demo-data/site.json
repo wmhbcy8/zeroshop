@@ -1,0 +1,77 @@
+{
+  "id": 10001,
+  "name": "楚云数航",
+  "slogan": "低空经济数字化解决方案",
+  "domain": "demo.local",
+  "language": "zh-CN",
+  "logo": "",
+  "description": "楚云数航提供无人机、低空经济、行业数字化平台和企业官网解决方案。",
+  "keywords": "低空经济,无人机,数字化,企业官网",
+  "phone": "13800000000",
+  "email": "hello@example.com",
+  "address": "湖北武汉",
+  "whatsapp": "",
+  "wechat_qrcode": "",
+  "hero": {
+    "eyebrow": "化简静态建站 MVP",
+    "title": "低空经济数字化解决方案",
+    "subtitle": "用后台管理内容，用静态 HTML 承载官网、知识库和商品展示，兼顾 SEO、速度与低成本部署。",
+    "primary_text": "查看产品",
+    "secondary_text": "阅读资讯",
+    "panel_label": "静态页面",
+    "panel_title": "HTML + CSS + JS",
+    "panel_description": "发布时生成，访问时无需数据库。"
+  },
+  "home_sections": {
+    "products_title": "推荐产品",
+    "products_link_text": "全部产品",
+    "articles_title": "行业资讯",
+    "articles_link_text": "全部文章",
+    "about_title": "关于楚云数航",
+    "about_subtitle": "用轻量化系统连接低空设备、行业场景和数字化运营。",
+    "about_body": "我们围绕无人机应用、低空经济场景和企业数字化展示，提供产品展示、行业内容、客户询盘和静态化官网的一体化解决方案。",
+    "advantages_title": "核心优势",
+    "cases_title": "应用案例",
+    "faq_title": "常见问题",
+    "inquiry_title": "获取方案与报价",
+    "inquiry_subtitle": "留下需求，我们会根据行业场景、产品类型和部署方式给出建站建议。"
+  },
+  "home_content": {
+    "advantages": [
+      { "title": "静态化发布", "description": "前台页面生成 HTML 文件，访问速度快，部署成本低，也更利于搜索引擎抓取。" },
+      { "title": "内容可运营", "description": "文章、商品、媒体和留言都在后台统一管理，适合长期做行业关键词沉淀。" },
+      { "title": "模块化搭建", "description": "首页结构由模块配置驱动，后续可由 AI 根据客户行业自动组合页面。" }
+    ],
+    "cases": [
+      { "title": "农业植保设备展示站", "description": "围绕产品参数、应用场景和询盘表单搭建静态独立站，承接搜索流量。", "tag": "农业无人机" },
+      { "title": "低空经济解决方案官网", "description": "用资讯、案例和产品模块呈现企业能力，适合做行业关键词长期沉淀。", "tag": "企业官网" },
+      { "title": "行业知识库内容站", "description": "通过文章聚合和搜索索引生成大量静态内容页面，提升收录和转化路径。", "tag": "SEO 内容站" }
+    ],
+    "inquiry_fields": [
+      { "label": "姓名", "name": "name", "type": "text", "placeholder": "姓名", "required": false, "sort_order": 10 },
+      { "label": "电话", "name": "phone", "type": "tel", "placeholder": "电话", "required": false, "sort_order": 20 },
+      { "label": "邮箱", "name": "email", "type": "email", "placeholder": "邮箱", "required": false, "sort_order": 30 },
+      { "label": "需求", "name": "message", "type": "textarea", "placeholder": "请简单描述你的产品、行业或建站需求", "required": false, "sort_order": 40 }
+    ],
+    "faqs": [
+      { "question": "静态站还能管理商品吗？", "answer": "可以。商品在后台维护，发布时生成商品列表页和详情页；询盘、订单、支付等动态能力通过 API 承接。" },
+      { "question": "客户修改内容后需要手动改代码吗？", "answer": "不需要。客户在后台保存内容后，点击生成静态站即可同步到前台页面。" },
+      { "question": "这种方式适合批量独立站吗？", "answer": "适合。每个站点可以独立数据库或独立配置，前台产物是静态文件，便于批量部署和缓存。" }
+    ]
+  },
+  "home_modules": [
+    { "key": "about", "title": "图文介绍", "enabled": true, "sort_order": 10 },
+    { "key": "advantages", "title": "优势卖点", "enabled": true, "sort_order": 20 },
+    { "key": "cases", "title": "案例展示", "enabled": true, "sort_order": 30 },
+    { "key": "products", "title": "产品模块", "enabled": true, "sort_order": 40 },
+    { "key": "articles", "title": "文章模块", "enabled": true, "sort_order": 50 },
+    { "key": "faq", "title": "FAQ", "enabled": true, "sort_order": 60 },
+    { "key": "inquiry", "title": "询盘表单", "enabled": true, "sort_order": 70 }
+  ],
+  "nav": [
+    { "title": "首页", "url": "index.html" },
+    { "title": "行业资讯", "url": "news/index.html" },
+    { "title": "产品中心", "url": "products/index.html" },
+    { "title": "联系我们", "url": "contact.html" }
+  ]
+}

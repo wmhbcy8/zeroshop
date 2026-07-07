@@ -1,0 +1,121 @@
+{
+  "version": "0.1",
+  "scopes": [
+    {
+      "key": "global",
+      "title": "全站模块",
+      "description": "跨页面生效的基础体验模块，适合导航、客服、询盘、搜索和辅助操作。"
+    },
+    {
+      "key": "home",
+      "title": "首页模块",
+      "description": "用于首页搭积木的内容区块，适合品牌介绍、产品、文章、案例和 FAQ。"
+    },
+    {
+      "key": "detail",
+      "title": "详情页模块",
+      "description": "用于文章详情和商品详情的结构化增强模块，适合 SEO、转化和内部链接。"
+    }
+  ],
+  "modules": [
+    {
+      "key": "search_nav",
+      "title": "搜索入口",
+      "scope": "global",
+      "enabled_by_default": true,
+      "config_path": "global_modules.search_nav",
+      "render_slot": "header.nav.after",
+      "description": "在主导航中显示站内搜索入口，读取静态 search.json，不依赖数据库。"
+    },
+    {
+      "key": "floating_inquiry",
+      "title": "浮动询盘按钮",
+      "scope": "global",
+      "enabled_by_default": true,
+      "config_path": "global_modules.floating_inquiry",
+      "render_slot": "footer.before_scripts",
+      "description": "在前台页面右下角显示咨询按钮，引导客户进入联系页或后续客服系统。"
+    },
+    {
+      "key": "about",
+      "title": "图文介绍",
+      "scope": "home",
+      "enabled_by_default": true,
+      "config_path": "home_modules.about",
+      "render_slot": "home.content",
+      "description": "展示企业介绍、业务定位、品牌说明和关键能力。"
+    },
+    {
+      "key": "advantages",
+      "title": "优势卖点",
+      "scope": "home",
+      "enabled_by_default": true,
+      "config_path": "home_modules.advantages",
+      "render_slot": "home.content",
+      "description": "用卡片展示服务优势、产品卖点、技术能力或交付能力。"
+    },
+    {
+      "key": "cases",
+      "title": "案例展示",
+      "scope": "home",
+      "enabled_by_default": true,
+      "config_path": "home_modules.cases",
+      "render_slot": "home.content",
+      "description": "展示客户案例、应用场景或解决方案成果。"
+    },
+    {
+      "key": "products",
+      "title": "产品模块",
+      "scope": "home",
+      "enabled_by_default": true,
+      "config_path": "home_modules.products",
+      "render_slot": "home.content",
+      "description": "聚合已发布商品，适合企业官网和独立站商城。"
+    },
+    {
+      "key": "articles",
+      "title": "文章模块",
+      "scope": "home",
+      "enabled_by_default": true,
+      "config_path": "home_modules.articles",
+      "render_slot": "home.content",
+      "description": "聚合行业资讯和知识库文章，用于 SEO 内容沉淀。"
+    },
+    {
+      "key": "faq",
+      "title": "FAQ",
+      "scope": "home",
+      "enabled_by_default": true,
+      "config_path": "home_modules.faq",
+      "render_slot": "home.content",
+      "description": "展示常见问题，降低咨询成本并补充长尾关键词。"
+    },
+    {
+      "key": "inquiry",
+      "title": "询盘表单",
+      "scope": "home",
+      "enabled_by_default": true,
+      "config_path": "home_modules.inquiry",
+      "render_slot": "home.content",
+      "description": "在首页收集客户姓名、电话、邮箱和需求。"
+    },
+    {
+      "key": "breadcrumbs",
+      "title": "面包屑导航",
+      "scope": "detail",
+      "enabled_by_default": true,
+      "config_path": "global_modules.breadcrumbs",
+      "render_slot": "detail.before_content",
+      "description": "在文章和商品详情页展示层级路径，增强 SEO 和用户返回路径。"
+    },
+    {
+      "key": "related",
+      "title": "相关推荐",
+      "scope": "detail",
+      "enabled_by_default": true,
+      "config_path": "global_modules.related",
+      "render_slot": "detail.after_content",
+      "description": "在详情页展示相关文章或相关产品，提升内链和继续浏览率。"
+    }
+  ]
+}

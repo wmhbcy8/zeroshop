@@ -1,0 +1,15 @@
+[
+  {
+    "id": 1,
+    "name": "无人机产品",
+    "slug": "drones",
+    "description": "农业、巡检、测绘等无人机产品。"
+  },
+  {
+    "id": 2,
+    "name": "数字化系统",
+    "slug": "digital-systems",
+    "description": "低空经济和企业数字化平台。"
+  }
+]
+

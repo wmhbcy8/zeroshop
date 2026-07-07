@@ -1,0 +1,27 @@
+{{ include "partials/header.html" }}
+
+<main class="page">
+  <section class="page-title search-title">
+    <span class="eyebrow">Search</span>
+    <h1>站内搜索</h1>
+    <p>搜索文章、产品和页面摘要，前台只读取静态 search.json，不依赖数据库。</p>
+  </section>
+
+  <section class="search-panel" data-search-page>
+    <form class="search-form" role="search">
+      <input type="search" name="q" placeholder="输入关键词，例如：产品、方案、行业资讯" autocomplete="off">
+      <button type="submit">搜索</button>
+    </form>
+
+    <div class="search-filters" aria-label="搜索类型">
+      <button type="button" class="active" data-type="all">全部</button>
+      <button type="button" data-type="article">文章</button>
+      <button type="button" data-type="product">产品</button>
+    </div>
+
+    <div class="search-status" data-search-status>请输入关键词开始搜索。</div>
+    <div class="search-results" data-search-results></div>
+  </section>
+</main>
+
+{{ include "partials/footer.html" }}

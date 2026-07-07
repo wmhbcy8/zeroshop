@@ -1,0 +1,32 @@
+{{ include "partials/header.html" }}
+
+<main class="page product-page">
+  {{{ breadcrumb_html }}}
+  <section class="product-detail">
+    <div>
+      <img class="product-image" src="{{ product.cover }}" alt="{{ product.title }}">
+    </div>
+    <div>
+      <a class="back-link" href="index.html">返回产品列表</a>
+      <h1>{{ product.title }}</h1>
+      <p class="sku">SKU：{{ product.sku }}</p>
+      <p class="summary">{{ product.summary }}</p>
+      <p class="price large">¥{{ product.price }}</p>
+      <div class="richtext">
+        {{{ product.description }}}
+      </div>
+      <form class="inquiry-form" data-api="/api/forms/submit">
+        <input type="hidden" name="form_key" value="product_inquiry">
+        <input type="hidden" name="product_id" value="{{ product.id }}">
+        <input type="text" name="name" placeholder="姓名">
+        <input type="tel" name="phone" placeholder="电话">
+        <input type="email" name="email" placeholder="邮箱">
+        <textarea name="message" placeholder="请留下您的采购需求"></textarea>
+        <button type="submit">提交询盘</button>
+      </form>
+    </div>
+  </section>
+  {{{ related_html }}}
+</main>
+
+{{ include "partials/footer.html" }}

@@ -1,0 +1,15 @@
+[
+  {
+    "id": 1,
+    "name": "行业资讯",
+    "slug": "industry-news",
+    "description": "低空经济、无人机和数字化转型相关资讯。"
+  },
+  {
+    "id": 2,
+    "name": "产品知识",
+    "slug": "product-knowledge",
+    "description": "产品选型、部署和维护知识。"
+  }
+]
+

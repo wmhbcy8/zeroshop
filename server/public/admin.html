@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>化简站点后台 MVP</title>
+  <link rel="stylesheet" href="/admin/assets/admin.css">
+</head>
+<body>
+  <section class="login-screen" id="loginScreen">
+    <form class="login-card" id="loginForm">
+      <div class="brand login-brand">
+        <span class="brand-mark">简</span>
+        <div>
+          <strong>化简</strong>
+          <small>站点后台 MVP</small>
+        </div>
+      </div>
+      <label>账号<input name="username" value="admin" autocomplete="username" required></label>
+      <label>密码<input name="password" type="password" value="admin123456" autocomplete="current-password" required></label>
+      <button class="primary-btn" type="submit">登录后台</button>
+      <p class="muted">默认账号来自 API 环境变量，首次试用可使用 admin / admin123456。</p>
+    </form>
+  </section>
+
+  <div class="app-shell hidden" id="appShell">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">简</span>
+        <div>
+          <strong>化简</strong>
+          <small>站点后台 MVP</small>
+        </div>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-view="dashboard">概览</button>
+        <button class="nav-item" data-view="settings">站点</button>
+        <button class="nav-item" data-view="articles">文章</button>
+        <button class="nav-item" data-view="products">商品</button>
+        <button class="nav-item" data-view="media">媒体库</button>
+        <button class="nav-item" data-view="forms">留言</button>
+        <button class="nav-item" data-view="publish">发布</button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="pageTitle">概览</h1>
+          <p id="pageHint">查看站点内容、商品、媒体、留言和发布状态。</p>
+        </div>
+        <div class="top-actions">
+          <a class="ghost-btn" href="/" target="_blank">预览站点</a>
+          <button class="primary-btn" id="generateTopBtn">生成静态站</button>
+          <button class="ghost-btn" id="logoutBtn">退出</button>
+        </div>
+      </header>
+
+      <section class="view active" id="view-dashboard">
+        <div class="stats-grid">
+          <article class="stat-card"><span>文章</span><strong id="statArticles">-</strong></article>
+          <article class="stat-card"><span>商品</span><strong id="statProducts">-</strong></article>
+          <article class="stat-card"><span>媒体</span><strong id="statMedia">-</strong></article>
+          <article class="stat-card"><span>留言</span><strong id="statForms">-</strong></article>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>站点信息</h2>
+            <button class="text-btn" id="reloadDashboardBtn">刷新</button>
+          </div>
+          <dl class="site-info" id="siteInfo"></dl>
+        </div>
+      </section>
+
+      <section class="view" id="view-settings">
+        <form class="panel form-panel wide-form" id="siteSettingsForm">
+          <div class="panel-head">
+            <h2>站点设置</h2>
+            <div class="panel-actions">
+              <button class="ghost-btn" type="button" id="saveGenerateBtn">保存并生成</button>
+              <button class="primary-btn" type="submit">保存设置</button>
+            </div>
+          </div>
+          <div class="form-grid">
+            <label>站点名称<input name="name" required></label>
+            <label>品牌标语<input name="slogan"></label>
+          </div>
+          <div class="form-grid">
+            <label>域名<input name="domain" placeholder="example.com"></label>
+            <label>语言<input name="language" value="zh-CN"></label>
+          </div>
+          <label>网站描述<textarea name="description" rows="3"></textarea></label>
+          <label>SEO 关键词<input name="keywords"></label>
+          <div class="form-grid">
+            <label>电话<input name="phone"></label>
+            <label>邮箱<input name="email"></label>
+          </div>
+          <label>地址<input name="address"></label>
+
+          <div class="subhead">AI 生成配置</div>
+          <div class="form-grid">
+            <label>模型服务商<input name="ai_provider" placeholder="openai / deepseek / qwen"></label>
+            <label>模型名称<input name="ai_model" placeholder="gpt-4.1 / deepseek-chat"></label>
+          </div>
+          <label>API 地址<input name="ai_endpoint" placeholder="https://api.example.com/v1/chat/completions"></label>
+          <label>API Key<input name="ai_api_key" type="password" placeholder="保存到数据库前请确认部署安全策略"></label>
+
+          <div class="subhead">AI 页面搭建</div>
+          <div class="ai-draft-box">
+            <label>页面搭建要求<textarea id="pagePlanPrompt" rows="3" placeholder="例如：帮我搭一个农业无人机品牌官网首页，突出产品、案例、SEO文章和询盘转化"></textarea></label>
+            <div class="row-actions">
+              <button class="text-btn" type="button" id="generatePagePlanBtn">生成首页搭建草案</button>
+              <button class="ghost-btn" type="button" id="applyPagePlanBtn" disabled>应用到当前表单</button>
+              <button class="primary-btn" type="button" id="applyGeneratePagePlanBtn" disabled>应用并生成静态站</button>
+            </div>
+            <div class="page-plan-preview" id="pagePlanPreview">等待生成页面草案</div>
+          </div>
+
+          <div class="subhead">全站通用模块</div>
+          <div class="toggle-grid">
+            <label class="check-label"><input name="global_search_nav" type="checkbox"> 导航显示搜索入口</label>
+            <label class="check-label"><input name="global_breadcrumbs" type="checkbox"> 详情页显示面包屑</label>
+            <label class="check-label"><input name="global_related" type="checkbox"> 详情页显示相关推荐</label>
+            <label class="check-label"><input name="global_floating_inquiry" type="checkbox"> 显示浮动询盘按钮</label>
+          </div>
+          <label>浮动按钮文案<input name="global_floating_text" placeholder="立即咨询"></label>
+
+          <div class="subhead">首页首屏</div>
+          <div class="form-grid">
+            <label>眉标<input name="hero_eyebrow"></label>
+            <label>主标题<input name="hero_title"></label>
+          </div>
+          <label>副标题<textarea name="hero_subtitle" rows="3"></textarea></label>
+          <div class="form-grid">
+            <label>主按钮<input name="hero_primary_text"></label>
+            <label>副按钮<input name="hero_secondary_text"></label>
+          </div>
+          <div class="form-grid">
+            <label>右侧标签<input name="hero_panel_label"></label>
+            <label>右侧标题<input name="hero_panel_title"></label>
+          </div>
+          <label>右侧说明<input name="hero_panel_description"></label>
+
+          <div class="subhead">首页区块</div>
+          <div class="form-grid">
+            <label>产品区标题<input name="products_title"></label>
+            <label>产品区链接文案<input name="products_link_text"></label>
+          </div>
+          <div class="form-grid">
+            <label>文章区标题<input name="articles_title"></label>
+            <label>文章区链接文案<input name="articles_link_text"></label>
+          </div>
+          <div class="form-grid">
+            <label>关于模块标题<input name="about_title"></label>
+            <label>关于模块副标题<input name="about_subtitle"></label>
+          </div>
+          <label>关于模块正文<textarea name="about_body" rows="3"></textarea></label>
+          <div class="form-grid">
+            <label>优势模块标题<input name="advantages_title"></label>
+            <label>FAQ 模块标题<input name="faq_title"></label>
+          </div>
+          <div class="form-grid">
+            <label>案例模块标题<input name="cases_title"></label>
+            <label>询盘模块标题<input name="inquiry_title"></label>
+          </div>
+          <label>询盘模块副标题<textarea name="inquiry_subtitle" rows="3"></textarea></label>
+          <div class="list-head">
+            <strong>询盘字段</strong>
+            <button class="text-btn" type="button" id="addInquiryFieldBtn">添加字段</button>
+          </div>
+          <div class="content-list" id="inquiryFieldRows"></div>
+
+          <div class="list-head">
+            <strong>优势列表</strong>
+            <button class="text-btn" type="button" id="addAdvantageBtn">添加优势</button>
+          </div>
+          <div class="content-list" id="advantageRows"></div>
+
+          <div class="list-head">
+            <strong>案例列表</strong>
+            <button class="text-btn" type="button" id="addCaseBtn">添加案例</button>
+          </div>
+          <div class="content-list" id="caseRows"></div>
+
+          <div class="list-head">
+            <strong>FAQ 列表</strong>
+            <button class="text-btn" type="button" id="addFaqBtn">添加问题</button>
+          </div>
+          <div class="content-list" id="faqRows"></div>
+
+          <div class="subhead">首页模块</div>
+          <div class="module-list" id="homeModuleRows"></div>
+          <div class="preset-panel">
+            <div class="list-head">
+              <strong>模块预设库</strong>
+              <span class="muted">选择需要加入首页的标准模块</span>
+            </div>
+            <div class="preset-grid" id="modulePresetRows"></div>
+          </div>
+          <div class="preset-panel">
+            <div class="list-head">
+              <strong>模块注册表</strong>
+              <span class="muted">系统已登记的标准模块，供模板和 AI 搭积木调用</span>
+            </div>
+            <div class="registry-grid" id="moduleRegistryRows"></div>
+          </div>
+
+          <div class="subhead">导航菜单</div>
+          <div class="nav-editor" id="navRows"></div>
+          <button class="text-btn" type="button" id="addNavItemBtn">添加导航</button>
+        </form>
+      </section>
+
+      <section class="view" id="view-articles">
+        <div class="split-layout">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>文章列表</h2>
+              <button class="text-btn" data-refresh="articles">刷新</button>
+            </div>
+            <div class="ai-draft-box batch-draft-box">
+              <label>批量文章要求<textarea id="batchArticlePrompt" rows="3" placeholder="例如：围绕自主品牌农业无人机，生成 10 篇适合 SEO 的行业文章草稿"></textarea></label>
+              <div class="form-grid">
+                <label>生成数量<input id="batchArticleCount" type="number" min="1" max="20" value="5"></label>
+                <label>状态<select id="batchArticleStatus"><option value="draft">草稿</option><option value="published">已发布</option></select></label>
+              </div>
+              <label class="check-label"><input id="batchArticleAutoPublish" type="checkbox" checked> 生成后同步静态站</label>
+              <button class="text-btn" type="button" id="batchGenerateArticlesBtn">AI 批量生成文章</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>标题</th><th>状态</th><th>发布时间</th><th>操作</th></tr></thead>
+                <tbody id="articleRows"></tbody>
+              </table>
+            </div>
+          </div>
+          <form class="panel form-panel" id="articleForm">
+            <div class="panel-head">
+              <h2 id="articleFormTitle">新建文章</h2>
+              <button type="button" class="text-btn" id="resetArticleBtn">清空</button>
+            </div>
+            <input type="hidden" name="id">
+            <div class="ai-draft-box">
+              <label>AI 文章要求<textarea name="ai_prompt" rows="3" placeholder="例如：围绕农业无人机独立站，写一篇适合 SEO 的行业文章"></textarea></label>
+              <button class="text-btn" type="button" id="generateArticleDraftBtn">AI 生成文章草稿</button>
+            </div>
+            <label>标题<input name="title" required placeholder="例如：低空经济行业趋势"></label>
+            <label>Slug<input name="slug" required placeholder="low-altitude-trend"></label>
+            <label>分类<select name="category_id" id="articleCategorySelect"></select></label>
+            <div class="field-action-row">
+              <label>封面路径<input name="cover" placeholder="assets/images/ai-cover.svg"></label>
+              <div class="row-actions field-buttons">
+                <button class="text-btn" type="button" id="chooseArticleCoverBtn">选择媒体</button>
+                <button class="text-btn" type="button" id="generateArticleCoverBtn">AI 生成封面</button>
+              </div>
+            </div>
+            <label>摘要<textarea name="summary" rows="3"></textarea></label>
+            <label>正文<textarea name="content" rows="7" placeholder="<p>正文内容</p>"></textarea></label>
+            <label>SEO 关键词<input name="seo_keywords"></label>
+            <label>状态<select name="status"><option value="draft">草稿</option><option value="published">已发布</option></select></label>
+            <label class="check-label"><input name="auto_publish" type="checkbox" checked> 保存后同步静态站</label>
+            <button class="primary-btn" type="submit">保存文章</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="view" id="view-products">
+        <div class="split-layout">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>商品列表</h2>
+              <button class="text-btn" data-refresh="products">刷新</button>
+            </div>
+            <div class="ai-draft-box batch-draft-box">
+              <label>批量商品要求<textarea id="batchProductPrompt" rows="3" placeholder="例如：围绕农业无人机、低空巡检设备，生成 8 个商品草稿"></textarea></label>
+              <div class="form-grid">
+                <label>生成数量<input id="batchProductCount" type="number" min="1" max="20" value="5"></label>
+                <label>状态<select id="batchProductStatus"><option value="draft">草稿</option><option value="published">已发布</option></select></label>
+              </div>
+              <label class="check-label"><input id="batchProductAutoPublish" type="checkbox" checked> 生成后同步静态站</label>
+              <button class="text-btn" type="button" id="batchGenerateProductsBtn">AI 批量生成商品</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>商品</th><th>价格</th><th>库存</th><th>操作</th></tr></thead>
+                <tbody id="productRows"></tbody>
+              </table>
+            </div>
+          </div>
+          <form class="panel form-panel" id="productForm">
+            <div class="panel-head">
+              <h2 id="productFormTitle">新建商品</h2>
+              <button type="button" class="text-btn" id="resetProductBtn">清空</button>
+            </div>
+            <input type="hidden" name="id">
+            <div class="ai-draft-box">
+              <label>AI 商品要求<textarea name="ai_prompt" rows="3" placeholder="例如：生成一款适合低空巡检场景的无人机商品介绍"></textarea></label>
+              <button class="text-btn" type="button" id="generateProductDraftBtn">AI 生成商品草稿</button>
+            </div>
+            <label>商品名称<input name="title" required placeholder="农业植保无人机 X1"></label>
+            <label>Slug<input name="slug" required placeholder="drone-x1"></label>
+            <label>SKU<input name="sku"></label>
+            <label>分类<select name="category_id" id="productCategorySelect"></select></label>
+            <div class="field-action-row">
+              <label>封面路径<input name="cover" placeholder="assets/images/product-1.svg"></label>
+              <div class="row-actions field-buttons">
+                <button class="text-btn" type="button" id="chooseProductCoverBtn">选择媒体</button>
+                <button class="text-btn" type="button" id="generateProductCoverBtn">AI 生成封面</button>
+              </div>
+            </div>
+            <label>摘要<textarea name="summary" rows="3"></textarea></label>
+            <label>详情<textarea name="description" rows="6" placeholder="<p>商品详情</p>"></textarea></label>
+            <div class="form-grid">
+              <label>价格<input name="price" type="number" step="0.01" value="0"></label>
+              <label>库存<input name="stock" type="number" value="0"></label>
+            </div>
+            <label>状态<select name="status"><option value="draft">草稿</option><option value="published">已发布</option></select></label>
+            <label class="check-label"><input name="auto_publish" type="checkbox" checked> 保存后同步静态站</label>
+            <button class="primary-btn" type="submit">保存商品</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="view" id="view-media">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>媒体上传</h2>
+            <button class="text-btn" data-refresh="media">刷新</button>
+          </div>
+          <form class="upload-row" id="mediaForm">
+            <input type="file" name="file" required>
+            <input type="text" name="alt_text" placeholder="图片 Alt 文本">
+            <button class="primary-btn" type="submit">上传</button>
+          </form>
+          <div class="media-grid" id="mediaGrid"></div>
+        </div>
+      </section>
+
+      <section class="view" id="view-forms">
+        <div class="split-layout forms-layout">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>表单留言</h2>
+              <button class="text-btn" data-refresh="forms">刷新</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>来源</th><th>内容</th><th>状态</th><th>提交时间</th><th>操作</th></tr></thead>
+                <tbody id="formRows"></tbody>
+              </table>
+            </div>
+          </div>
+          <form class="panel form-panel" id="formDetailForm">
+            <div class="panel-head">
+              <h2>留言详情</h2>
+              <button type="button" class="text-btn" id="clearFormDetailBtn">清空</button>
+            </div>
+            <input type="hidden" name="id">
+            <div class="form-detail-box" id="formDetailBox">选择一条留言查看详情。</div>
+            <div class="form-grid">
+              <label>跟进状态<select name="status">
+                <option value="new">新留言</option>
+                <option value="contacted">已联系</option>
+                <option value="processed">已处理</option>
+                <option value="closed">已关闭</option>
+              </select></label>
+              <label>客户等级<select name="level">
+                <option value="normal">普通</option>
+                <option value="important">重点</option>
+                <option value="high">高意向</option>
+                <option value="low">低意向</option>
+              </select></label>
+            </div>
+            <label>跟进备注<textarea name="note" rows="5" placeholder="记录电话沟通、报价进度、客户关注点等"></textarea></label>
+            <button class="primary-btn" type="submit">保存跟进</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="view" id="view-publish">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>发布管理</h2>
+            <button class="primary-btn" id="generateBtn">生成静态站</button>
+          </div>
+          <div class="status-box" id="publishStatus">等待操作</div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>发布记录</h2>
+            <button class="text-btn" data-refresh="versions">刷新</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>版本号</th><th>类型</th><th>状态</th><th>时间</th></tr></thead>
+              <tbody id="versionRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="/admin/assets/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "name": "商务官网简洁模板",
+  "key": "business-clean",
+  "version": "0.1.0",
+  "author": "化简",
+  "type": ["company", "blog", "shop"],
+  "supports": ["page", "article", "product", "seo", "form"],
+  "entry": "pages/index.html"
+}
+

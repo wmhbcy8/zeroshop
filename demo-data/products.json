@@ -1,0 +1,51 @@
+[
+  {
+    "id": 1,
+    "category_id": 1,
+    "title": "农业植保无人机 X1",
+    "slug": "agricultural-spraying-drone-x1",
+    "sku": "DRONE-X1",
+    "cover": "assets/images/product-1.svg",
+    "summary": "适合大面积农田喷洒的智能无人机。",
+    "description": "<p>X1 支持大容量药箱、智能航线和稳定喷洒，适合农业合作社和规模化农场。</p>",
+    "price": "6999.00",
+    "market_price": "7999.00",
+    "stock": 100,
+    "seo_title": "农业植保无人机 X1",
+    "seo_keywords": "农业无人机,植保无人机",
+    "seo_description": "农业植保无人机 X1 产品介绍。"
+  },
+  {
+    "id": 2,
+    "category_id": 1,
+    "title": "低空巡检无人机 P2",
+    "slug": "inspection-drone-p2",
+    "sku": "DRONE-P2",
+    "cover": "assets/images/product-2.svg",
+    "summary": "面向园区、管线、屋顶和基础设施巡检。",
+    "description": "<p>P2 适合低空巡检场景，支持高清图像采集和远程任务记录。</p>",
+    "price": "8999.00",
+    "market_price": "9999.00",
+    "stock": 60,
+    "seo_title": "低空巡检无人机 P2",
+    "seo_keywords": "巡检无人机,低空巡检",
+    "seo_description": "低空巡检无人机 P2 产品介绍。"
+  },
+  {
+    "id": 3,
+    "category_id": 2,
+    "title": "低空经济数据管理平台",
+    "slug": "low-altitude-data-platform",
+    "sku": "SYS-LA-01",
+    "cover": "assets/images/product-3.svg",
+    "summary": "帮助企业管理无人机设备、任务、数据和客户项目。",
+    "description": "<p>平台支持设备档案、任务记录、数据看板和客户项目管理。</p>",
+    "price": "19999.00",
+    "market_price": "29999.00",
+    "stock": 20,
+    "seo_title": "低空经济数据管理平台",
+    "seo_keywords": "低空经济平台,无人机管理系统",
+    "seo_description": "低空经济数据管理平台产品介绍。"
+  }
+]
+

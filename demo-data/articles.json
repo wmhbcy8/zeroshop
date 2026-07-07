@@ -1,0 +1,42 @@
+[
+  {
+    "id": 1,
+    "category_id": 1,
+    "title": "低空经济企业官网为什么需要静态化架构",
+    "slug": "low-altitude-website-static-architecture",
+    "cover": "assets/images/article-1.svg",
+    "summary": "静态化网站能提升访问速度、降低维护成本，并帮助搜索引擎更稳定地抓取页面。",
+    "content": "<p>对低空经济和无人机企业来说，官网不只是展示窗口，也是搜索引擎获取企业信息的重要入口。</p><p>化简采用发布时生成 HTML 的方式，让文章、产品和栏目页都成为真实静态文件，访问速度更快，迁移和备份也更简单。</p>",
+    "seo_title": "低空经济企业官网为什么需要静态化架构",
+    "seo_keywords": "低空经济官网,静态化网站,SEO",
+    "seo_description": "了解低空经济企业官网采用静态化架构的优势。",
+    "published_at": "2026-07-07 10:00:00"
+  },
+  {
+    "id": 2,
+    "category_id": 2,
+    "title": "农业无人机产品页应该展示哪些核心信息",
+    "slug": "agricultural-drone-product-page",
+    "cover": "assets/images/article-2.svg",
+    "summary": "好的产品页要清楚展示应用场景、参数、优势、售后和询盘入口。",
+    "content": "<p>农业无人机产品页不应该只有几张图片，而要围绕客户采购决策组织内容。</p><p>建议重点展示喷洒效率、载重、续航、适用场景、售后服务和配件支持。</p>",
+    "seo_title": "农业无人机产品页应该展示哪些核心信息",
+    "seo_keywords": "农业无人机,产品详情页,询盘",
+    "seo_description": "农业无人机产品详情页的信息结构建议。",
+    "published_at": "2026-07-07 11:00:00"
+  },
+  {
+    "id": 3,
+    "category_id": 1,
+    "title": "AI 内容助手如何帮助企业持续更新行业资讯",
+    "slug": "ai-content-assistant-industry-news",
+    "cover": "assets/images/article-3.svg",
+    "summary": "AI 可以根据产品、关键词和采集源生成草稿，帮助企业保持内容更新频率。",
+    "content": "<p>很多企业官网建好之后长期不更新，导致搜索引擎抓取频率下降。</p><p>化简计划通过 AI 生成文章、采集行业资讯、自动生成 SEO 信息，让客户用对话的方式维护网站内容。</p>",
+    "seo_title": "AI 内容助手如何帮助企业持续更新行业资讯",
+    "seo_keywords": "AI生成文章,行业资讯,企业官网",
+    "seo_description": "AI 内容助手在企业官网运营中的作用。",
+    "published_at": "2026-07-07 12:00:00"
+  }
+]
+

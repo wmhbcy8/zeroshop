@@ -1,0 +1,14 @@
+/.agents/
+/.codex/
+/powershell-safe-invocation/
+/tools/
+/sites/
+/storage-api-*.log
+/*.png
+
+config/database.local.php
+*.local.php
+*.log
+
+.DS_Store
+Thumbs.db
