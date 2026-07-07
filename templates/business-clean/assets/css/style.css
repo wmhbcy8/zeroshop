@@ -389,6 +389,18 @@ p { color: var(--muted); margin: 0 0 12px; }
   color: var(--primary);
   font-size: 14px;
 }
+.order-receipt {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #a7e3c2;
+  border-radius: var(--radius);
+  background: #f0fff4;
+  padding: 14px;
+}
+.order-receipt[hidden] { display: none; }
+.order-receipt strong { color: #15803d; font-size: 18px; }
+.order-receipt p { margin: 0; }
+.order-receipt .btn { width: fit-content; margin-top: 4px; }
 input, textarea {
   width: 100%;
   border: 1px solid var(--line);

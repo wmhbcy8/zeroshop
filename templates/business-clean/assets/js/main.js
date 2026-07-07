@@ -1,3 +1,5 @@
+const latestOrderStorageKey = 'huajian_latest_order';
+
 document.addEventListener('submit', function (event) {
   const form = event.target;
   if (form.matches('.order-form')) {
@@ -50,6 +52,46 @@ document.addEventListener('submit', function (event) {
     });
 });
 
+function getOrderLookupHref(orderNo, phone) {
+  const params = new URLSearchParams();
+  if (orderNo) params.set('order_no', orderNo);
+  if (phone) params.set('phone', phone);
+  return '/order.html' + (params.toString() ? '?' + params.toString() : '');
+}
+
+function saveLatestOrder(orderNo, phone) {
+  if (!orderNo || !phone) return;
+  try {
+    localStorage.setItem(latestOrderStorageKey, JSON.stringify({
+      order_no: orderNo,
+      phone: phone,
+      saved_at: new Date().toISOString()
+    }));
+  } catch {}
+}
+
+function readLatestOrder() {
+  try {
+    return JSON.parse(localStorage.getItem(latestOrderStorageKey) || '{}') || {};
+  } catch {
+    return {};
+  }
+}
+
+function renderOrderReceipt(form, order, phone) {
+  const receipt = form.querySelector('[data-order-receipt]');
+  if (!receipt) return;
+  const orderNo = order.order_no || order.id || '';
+  const href = getOrderLookupHref(orderNo, phone);
+  receipt.hidden = false;
+  receipt.innerHTML = [
+    '<strong>订单提交成功</strong>',
+    '<p>订单号：' + escapeHtml(orderNo || '-') + '</p>',
+    '<p>金额：' + escapeHtml(order.currency || 'CNY') + ' ' + escapeHtml(order.total_amount || '-') + '</p>',
+    '<a class="btn primary" href="' + escapeHtml(href) + '">查看订单状态</a>'
+  ].join('');
+}
+
 function submitOrderForm(form) {
   const api = form.getAttribute('data-api');
   const status = form.querySelector('[data-order-status]');
@@ -92,9 +134,12 @@ function submitOrderForm(form) {
     .then(function (response) { return response.json(); })
     .then(function (result) {
       if (!result.success) throw new Error(result.message || '订单提交失败');
+      const order = result.data || {};
+      const orderNo = order.order_no || order.id || '';
+      saveLatestOrder(orderNo, payload.phone);
       form.reset();
-      if (status) status.textContent = '订单提交成功，订单号：' + (result.data.order_no || result.data.id || '-');
-      alert('订单提交成功，我们会尽快联系你确认支付和交付。');
+      renderOrderReceipt(form, order, payload.phone);
+      if (status) status.textContent = '订单提交成功，订单号：' + (orderNo || '-');
     })
     .catch(function (error) {
       if (status) status.textContent = error.message || '订单提交失败，请稍后再试。';
@@ -174,12 +219,29 @@ function submitOrderLookup(form) {
     .then(function (response) { return response.json(); })
     .then(function (result) {
       if (!result.success) throw new Error(result.message || '订单查询失败');
+      saveLatestOrder(payload.order_no, payload.phone);
       if (status) status.textContent = '查询成功';
       if (resultBox) resultBox.innerHTML = renderOrderLookup(result.data || {});
     })
     .catch(function (error) {
       if (status) status.textContent = error.message || '订单查询失败，请检查订单号和手机号。';
     });
+}
+
+function initOrderLookup() {
+  const page = document.querySelector('[data-order-lookup-page]');
+  if (!page) return;
+
+  const form = page.querySelector('.order-lookup-form');
+  const params = new URLSearchParams(location.search);
+  const latest = readLatestOrder();
+  const orderNo = params.get('order_no') || latest.order_no || '';
+  const phone = params.get('phone') || latest.phone || '';
+  if (orderNo) form.order_no.value = orderNo;
+  if (phone) form.phone.value = phone;
+  if (orderNo && phone) {
+    submitOrderLookup(form);
+  }
 }
 
 function escapeHtml(value) {
@@ -266,4 +328,7 @@ function initStaticSearch() {
     });
 }
 
-document.addEventListener('DOMContentLoaded', initStaticSearch);
+document.addEventListener('DOMContentLoaded', function () {
+  initStaticSearch();
+  initOrderLookup();
+});
