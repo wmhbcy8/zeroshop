@@ -14,6 +14,12 @@ document.addEventListener('submit', function (event) {
     return;
   }
 
+  if (form.matches('.customer-note-form')) {
+    event.preventDefault();
+    submitCustomerNote(form);
+    return;
+  }
+
   if (!form.matches('.inquiry-form')) return;
   event.preventDefault();
 
@@ -174,6 +180,8 @@ function orderStatusLabel(type, status) {
 function renderOrderLookup(order) {
   const items = Array.isArray(order.items) ? order.items : [];
   const tracking = [order.tracking_company, order.tracking_no].filter(Boolean).join(' / ') || '暂无物流信息';
+  const latest = readLatestOrder();
+  const phone = latest.phone || new URLSearchParams(location.search).get('phone') || '';
   return [
     '<div class="order-status-grid">',
     '<div><span>订单号</span><strong>' + escapeHtml(order.order_no) + '</strong></div>',
@@ -190,8 +198,63 @@ function renderOrderLookup(order) {
     '<p>' + escapeHtml(tracking) + '</p>',
     '<p>支付时间：' + escapeHtml(order.paid_at || '-') + '</p>',
     '<p>发货时间：' + escapeHtml(order.shipped_at || '-') + '</p>',
-    '</div>'
+    '</div>',
+    '<form class="customer-note-form order-lookup-block" data-api="/api/orders/customer-note">',
+    '<h2>补充说明</h2>',
+    '<input type="hidden" name="order_no" value="' + escapeHtml(order.order_no || '') + '">',
+    '<input type="hidden" name="phone" value="' + escapeHtml(phone) + '">',
+    '<select name="type">',
+    '<option value="付款说明">付款说明</option>',
+    '<option value="开票需求">开票需求</option>',
+    '<option value="售后说明">售后说明</option>',
+    '<option value="补充说明">补充说明</option>',
+    '</select>',
+    '<textarea name="note" maxlength="500" placeholder="填写付款截图编号、开票抬头、售后问题或其他补充说明" required></textarea>',
+    '<button type="submit">提交说明</button>',
+    '<p class="form-status" data-customer-note-status></p>',
+    '</form>'
   ].join('');
+}
+
+function submitCustomerNote(form) {
+  const api = form.getAttribute('data-api');
+  const status = form.querySelector('[data-customer-note-status]');
+  if (!api || location.protocol === 'file:') {
+    if (status) status.textContent = '演示站暂不能提交说明，部署后会同步到后台订单时间线。';
+    return;
+  }
+
+  const formData = new FormData(form);
+  const payload = {
+    order_no: formData.get('order_no') || '',
+    phone: formData.get('phone') || '',
+    type: formData.get('type') || '补充说明',
+    note: formData.get('note') || ''
+  };
+  if (status) status.textContent = '正在提交说明...';
+  form.querySelectorAll('button, textarea, select').forEach(function (item) {
+    item.disabled = true;
+  });
+
+  fetch(api, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(function (response) { return response.json(); })
+    .then(function (result) {
+      if (!result.success) throw new Error(result.message || '说明提交失败');
+      form.note.value = '';
+      if (status) status.textContent = '说明已提交，客服会在后台订单时间线中查看。';
+    })
+    .catch(function (error) {
+      if (status) status.textContent = error.message || '说明提交失败，请稍后再试。';
+    })
+    .finally(function () {
+      form.querySelectorAll('button, textarea, select').forEach(function (item) {
+        item.disabled = false;
+      });
+    });
 }
 
 function submitOrderLookup(form) {

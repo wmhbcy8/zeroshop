@@ -1006,6 +1006,40 @@ try {
         $order ? ok(public_order_view($order), '查询成功') : fail('未找到匹配订单，请检查订单号和手机号', 'NOT_FOUND', 404);
     }
 
+    if ($method === 'POST' && $path === '/orders/customer-note') {
+        $data = body_json();
+        require_fields($data, ['order_no', 'phone', 'note']);
+        $stmt = $pdo->prepare('SELECT * FROM orders WHERE order_no = :order_no AND phone = :phone LIMIT 1');
+        $stmt->execute([
+            'order_no' => trim((string)$data['order_no']),
+            'phone' => trim((string)$data['phone']),
+        ]);
+        $order = $stmt->fetch();
+        if (!$order) {
+            fail('未找到匹配订单，请检查订单号和手机号', 'NOT_FOUND', 404);
+        }
+        $type = trim((string)($data['type'] ?? '补充说明'));
+        $allowedTypes = ['付款说明', '开票需求', '售后说明', '补充说明'];
+        if (!in_array($type, $allowedTypes, true)) {
+            $type = '补充说明';
+        }
+        $note = trim((string)$data['note']);
+        if ($note === '') {
+            fail('请填写说明内容', 'VALIDATION_ERROR', 422);
+        }
+        if (mb_strlen($note, 'UTF-8') > 500) {
+            fail('说明内容不能超过 500 个字', 'VALIDATION_ERROR', 422);
+        }
+        $remark = append_order_note((string)($order['remark'] ?? ''), '客户提交' . $type . '：' . $note);
+        $update = $pdo->prepare('UPDATE orders SET remark = :remark, updated_at = :updated_at WHERE id = :id');
+        $update->execute([
+            'id' => (int)$order['id'],
+            'remark' => $remark,
+            'updated_at' => now(),
+        ]);
+        ok(public_order_view(fetch_one($pdo, 'orders', (int)$order['id']) ?: $order), '说明已提交');
+    }
+
     require_login($pdo);
 
     if ($method === 'GET' && $path === '/site/settings') {

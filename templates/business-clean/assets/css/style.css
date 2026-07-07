@@ -280,6 +280,19 @@ p { color: var(--muted); margin: 0 0 12px; }
   font-size: 18px;
   margin-bottom: 10px;
 }
+.customer-note-form {
+  display: grid;
+  gap: 10px;
+}
+.customer-note-form textarea { min-height: 88px; }
+.customer-note-form select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 11px 12px;
+  font: inherit;
+  background: #fff;
+}
 .search-result {
   display: block;
   border: 1px solid var(--line);
