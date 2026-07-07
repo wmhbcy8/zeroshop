@@ -166,6 +166,12 @@ td { font-size: 14px; }
 tr:last-child td { border-bottom: 0; }
 tr.selected-row td { background: #f0f7ff; }
 .row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.form-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
 .filter-bar {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(120px, .45fr) minmax(120px, .45fr) auto auto;
@@ -240,6 +246,7 @@ tr.selected-row td { background: #f0f7ff; }
   line-height: 1.5;
   word-break: break-word;
 }
+.timeline-text { white-space: pre-wrap; }
 
 .form-panel { display: grid; gap: 12px; }
 .wide-form { max-width: 980px; }

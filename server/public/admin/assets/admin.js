@@ -947,6 +947,29 @@ async function resetOrderFilters() {
   await loadOrders();
 }
 
+async function updateSelectedOrder(patch, message) {
+  const form = $('#orderDetailForm');
+  const id = form.elements.id.value;
+  if (!id) {
+    toast('请先选择一条订单');
+    return;
+  }
+  const data = formToObject(form);
+  await request(`/api/orders/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      payment_status: data.payment_status || 'pending',
+      fulfillment_status: data.fulfillment_status || 'new',
+      tracking_company: data.tracking_company || '',
+      tracking_no: data.tracking_no || '',
+      remark: data.remark || '',
+      ...patch
+    })
+  });
+  toast(message);
+  await Promise.all([loadOrders(), loadDashboard()]);
+}
+
 function renderOrderItems(items) {
   if (!Array.isArray(items) || !items.length) {
     return '<span class="muted">暂无商品明细</span>';
@@ -976,6 +999,9 @@ function fillOrderDetail(item) {
   form.elements.id.value = item.id;
   form.payment_status.value = item.payment_status || 'pending';
   form.fulfillment_status.value = item.fulfillment_status || 'new';
+  form.tracking_company.value = item.tracking_company || '';
+  form.tracking_no.value = item.tracking_no || '';
+  form.followup_note.value = '';
   form.remark.value = item.remark || '';
   detailBox.innerHTML = `
     <div class="form-detail-meta">
@@ -985,10 +1011,13 @@ function fillOrderDetail(item) {
     <div class="form-detail-list">
       ${renderOrderItems(items)}
       <div class="form-detail-item"><small>金额</small><span>${escapeHtml(item.currency || 'CNY')} ${escapeHtml(item.total_amount || 0)}</span></div>
+      <div class="form-detail-item"><small>支付时间</small><span>${escapeHtml(item.paid_at || '-')}</span></div>
+      <div class="form-detail-item"><small>发货时间</small><span>${escapeHtml(item.shipped_at || '-')}</span></div>
+      <div class="form-detail-item"><small>物流</small><span>${escapeHtml([item.tracking_company, item.tracking_no].filter(Boolean).join(' / ') || '-')}</span></div>
       <div class="form-detail-item"><small>地址</small><span>${escapeHtml(item.address || '-')}</span></div>
       <div class="form-detail-item"><small>邮箱</small><span>${escapeHtml(item.email || '-')}</span></div>
       <div class="form-detail-item"><small>来源</small><span>${escapeHtml(item.source_url || '-')}</span></div>
-      <div class="form-detail-item"><small>备注</small><span>${escapeHtml(item.remark || '-')}</span></div>
+      <div class="form-detail-item"><small>时间线</small><span class="timeline-text">${escapeHtml(item.remark || '-')}</span></div>
     </div>
   `;
 }
@@ -1724,6 +1753,9 @@ $('#orderDetailForm').addEventListener('submit', async (event) => {
     body: JSON.stringify({
       payment_status: data.payment_status || 'pending',
       fulfillment_status: data.fulfillment_status || 'new',
+      tracking_company: data.tracking_company || '',
+      tracking_no: data.tracking_no || '',
+      followup_note: data.followup_note || '',
       remark: data.remark || ''
     })
   });
@@ -1731,6 +1763,14 @@ $('#orderDetailForm').addEventListener('submit', async (event) => {
   await Promise.all([loadOrders(), loadDashboard()]);
 });
 $('#clearOrderDetailBtn').addEventListener('click', () => fillOrderDetail(null));
+$('#markOrderPaidBtn').addEventListener('click', () => updateSelectedOrder({
+  payment_status: 'paid',
+  followup_note: '客服标记订单已支付'
+}, '订单已标记为已支付').catch((error) => toast(error.message)));
+$('#markOrderShippedBtn').addEventListener('click', () => updateSelectedOrder({
+  fulfillment_status: 'shipped',
+  followup_note: '客服标记订单已发货'
+}, '订单已标记为已发货').catch((error) => toast(error.message)));
 $('#orderFilterForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   await applyOrderFilters(event.currentTarget);

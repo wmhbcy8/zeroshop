@@ -224,6 +224,25 @@ function paginate(PDO $pdo, string $table, array $where = [], string $order = 'i
     ];
 }
 
+function ensure_column(PDO $pdo, string $table, string $column, string $definition): void
+{
+    $stmt = $pdo->prepare("SHOW COLUMNS FROM {$table} LIKE ?");
+    $stmt->execute([$column]);
+    if (!$stmt->fetch()) {
+        $pdo->exec("ALTER TABLE {$table} ADD COLUMN {$column} {$definition}");
+    }
+}
+
+function append_order_note(string $remark, string $note): string
+{
+    $note = trim($note);
+    if ($note === '') {
+        return $remark;
+    }
+    $line = '[' . now() . '] ' . $note;
+    return trim($remark) === '' ? $line : rtrim($remark) . "\n" . $line;
+}
+
 function list_orders(PDO $pdo): array
 {
     $page = max(1, (int)($_GET['page'] ?? 1));
@@ -236,7 +255,7 @@ function list_orders(PDO $pdo): array
     $keywordClause = '';
     $keywordParams = [];
     if ($keyword !== '') {
-        $keywordClause = '(order_no LIKE :keyword OR customer_name LIKE :keyword OR phone LIKE :keyword OR email LIKE :keyword OR source_url LIKE :keyword OR remark LIKE :keyword OR items LIKE :keyword)';
+        $keywordClause = '(order_no LIKE :keyword OR customer_name LIKE :keyword OR phone LIKE :keyword OR email LIKE :keyword OR tracking_company LIKE :keyword OR tracking_no LIKE :keyword OR source_url LIKE :keyword OR remark LIKE :keyword OR items LIKE :keyword)';
         $keywordParams['keyword'] = '%' . $keyword . '%';
     }
 
@@ -740,6 +759,10 @@ function ensure_auth_tables(PDO $pdo): void
         payment_method VARCHAR(50) NOT NULL DEFAULT 'manual',
         payment_status VARCHAR(30) NOT NULL DEFAULT 'pending',
         fulfillment_status VARCHAR(30) NOT NULL DEFAULT 'new',
+        tracking_company VARCHAR(100),
+        tracking_no VARCHAR(100),
+        paid_at DATETIME,
+        shipped_at DATETIME,
         remark TEXT,
         source_url VARCHAR(255),
         ip_address VARCHAR(80),
@@ -750,6 +773,11 @@ function ensure_auth_tables(PDO $pdo): void
         INDEX idx_payment_status (payment_status),
         INDEX idx_fulfillment_status (fulfillment_status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    ensure_column($pdo, 'orders', 'tracking_company', 'VARCHAR(100)');
+    ensure_column($pdo, 'orders', 'tracking_no', 'VARCHAR(100)');
+    ensure_column($pdo, 'orders', 'paid_at', 'DATETIME');
+    ensure_column($pdo, 'orders', 'shipped_at', 'DATETIME');
 
     $exists = (int)$pdo->query('SELECT COUNT(*) FROM admin_users')->fetchColumn();
     if ($exists === 0) {
@@ -1249,12 +1277,40 @@ try {
         }
         if ($method === 'PUT') {
             $data = body_json();
-            $stmt = $pdo->prepare("UPDATE orders SET payment_status=:payment_status, fulfillment_status=:fulfillment_status, remark=:remark, updated_at=:updated_at WHERE id=:id");
+            $current = fetch_one($pdo, 'orders', $id);
+            if (!$current) {
+                fail('订单不存在', 'NOT_FOUND', 404);
+            }
+            $paymentStatus = $data['payment_status'] ?? ($current['payment_status'] ?? 'pending');
+            $fulfillmentStatus = $data['fulfillment_status'] ?? ($current['fulfillment_status'] ?? 'new');
+            $trackingCompany = trim((string)($data['tracking_company'] ?? ($current['tracking_company'] ?? '')));
+            $trackingNo = trim((string)($data['tracking_no'] ?? ($current['tracking_no'] ?? '')));
+            $remark = (string)($data['remark'] ?? ($current['remark'] ?? ''));
+            $followupNote = trim((string)($data['followup_note'] ?? ''));
+            if ($followupNote !== '') {
+                $remark = append_order_note($remark, $followupNote);
+            }
+            $paidAt = $current['paid_at'] ?? null;
+            if ($paymentStatus === 'paid' && empty($paidAt)) {
+                $paidAt = now();
+                $remark = append_order_note($remark, '订单标记为已支付');
+            }
+            $shippedAt = $current['shipped_at'] ?? null;
+            if ($fulfillmentStatus === 'shipped' && empty($shippedAt)) {
+                $shippedAt = now();
+                $shipmentText = $trackingNo ? "订单标记为已发货，物流单号：{$trackingNo}" : '订单标记为已发货';
+                $remark = append_order_note($remark, $shipmentText);
+            }
+            $stmt = $pdo->prepare("UPDATE orders SET payment_status=:payment_status, fulfillment_status=:fulfillment_status, tracking_company=:tracking_company, tracking_no=:tracking_no, paid_at=:paid_at, shipped_at=:shipped_at, remark=:remark, updated_at=:updated_at WHERE id=:id");
             $stmt->execute([
                 'id' => $id,
-                'payment_status' => $data['payment_status'] ?? 'pending',
-                'fulfillment_status' => $data['fulfillment_status'] ?? 'new',
-                'remark' => $data['remark'] ?? '',
+                'payment_status' => $paymentStatus,
+                'fulfillment_status' => $fulfillmentStatus,
+                'tracking_company' => $trackingCompany,
+                'tracking_no' => $trackingNo,
+                'paid_at' => $paidAt ?: null,
+                'shipped_at' => $shippedAt ?: null,
+                'remark' => $remark,
                 'updated_at' => now(),
             ]);
             ok(fetch_one($pdo, 'orders', $id), '订单已更新');
