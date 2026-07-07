@@ -340,6 +340,60 @@ function list_orders(PDO $pdo): array
     ];
 }
 
+function export_orders_csv(PDO $pdo): void
+{
+    $keyword = trim((string)($_GET['keyword'] ?? ''));
+    $paymentStatus = trim((string)($_GET['payment_status'] ?? ''));
+    $fulfillmentStatus = trim((string)($_GET['fulfillment_status'] ?? ''));
+
+    $clauses = [];
+    $params = [];
+    if ($keyword !== '') {
+        $clauses[] = '(order_no LIKE :keyword OR customer_name LIKE :keyword OR phone LIKE :keyword OR email LIKE :keyword OR tracking_company LIKE :keyword OR tracking_no LIKE :keyword OR source_url LIKE :keyword OR remark LIKE :keyword OR items LIKE :keyword)';
+        $params['keyword'] = '%' . $keyword . '%';
+    }
+    if ($paymentStatus !== '') {
+        $clauses[] = 'payment_status = :payment_status';
+        $params['payment_status'] = $paymentStatus;
+    }
+    if ($fulfillmentStatus !== '') {
+        $clauses[] = 'fulfillment_status = :fulfillment_status';
+        $params['fulfillment_status'] = $fulfillmentStatus;
+    }
+
+    $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
+    $stmt = $pdo->prepare("SELECT * FROM orders{$whereSql} ORDER BY id DESC LIMIT 1000");
+    $stmt->execute($params);
+
+    header_remove('Content-Type');
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="orders-' . date('Ymd-His') . '.csv"');
+    echo "\xEF\xBB\xBF";
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['订单号', '客户', '手机', '邮箱', '金额', '币种', '支付状态', '履约状态', '物流公司', '物流单号', '地址', '来源', '创建时间', '更新时间', '备注']);
+    while ($row = $stmt->fetch()) {
+        fputcsv($out, [
+            $row['order_no'] ?? '',
+            $row['customer_name'] ?? '',
+            $row['phone'] ?? '',
+            $row['email'] ?? '',
+            $row['total_amount'] ?? '',
+            $row['currency'] ?? '',
+            $row['payment_status'] ?? '',
+            $row['fulfillment_status'] ?? '',
+            $row['tracking_company'] ?? '',
+            $row['tracking_no'] ?? '',
+            $row['address'] ?? '',
+            $row['source_url'] ?? '',
+            $row['created_at'] ?? '',
+            $row['updated_at'] ?? '',
+            preg_replace('/\s+/', ' ', (string)($row['remark'] ?? '')),
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
 function site_settings(PDO $pdo): array
 {
     $value = $pdo->query("SELECT setting_value FROM site_settings WHERE setting_key = 'site'")->fetchColumn();
@@ -1339,6 +1393,10 @@ try {
 
     if ($method === 'GET' && $path === '/orders') {
         ok(list_orders($pdo));
+    }
+
+    if ($method === 'GET' && $path === '/orders/export') {
+        export_orders_csv($pdo);
     }
 
     if ($params = route_param('/orders/{id}', $path)) {

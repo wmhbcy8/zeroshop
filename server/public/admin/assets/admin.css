@@ -191,8 +191,25 @@ tr.selected-row td { background: #f0f7ff; }
   padding: 10px 12px;
   background: #f8fafc;
 }
+.mini-stat.order-stat-button {
+  min-height: 0;
+  display: block;
+  width: 100%;
+  text-align: left;
+  color: var(--text);
+}
+.mini-stat.order-stat-button:hover {
+  border-color: #b9d7ff;
+  background: #f0f7ff;
+}
 .mini-stat span { display: block; color: var(--muted); font-size: 12px; }
 .mini-stat strong { display: block; margin-top: 4px; font-size: 18px; }
+.order-quick-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -2px 0 12px;
+}
 .empty-cell { color: var(--muted); text-align: center; padding: 28px 12px; }
 .tag {
   display: inline-flex;

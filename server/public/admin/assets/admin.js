@@ -901,7 +901,7 @@ function buildOrderQuery() {
   return params.toString();
 }
 
-function renderOrderStats(stats = {}) {
+function renderOrderStatsLegacy(stats = {}) {
   const amount = Number(stats.total_amount || 0).toFixed(2);
   $('#orderStats').innerHTML = [
     ['订单总数', stats.total || 0],
@@ -1221,6 +1221,82 @@ async function chooseLatestMediaCover(type) {
     return;
   }
   setCoverFromMedia(type, item.file_path);
+}
+
+function orderQuickFilterItems() {
+  return [
+    { label: '全部订单', payment_status: '', fulfillment_status: '' },
+    { label: '待支付', payment_status: 'pending', fulfillment_status: '' },
+    { label: '已支付待发货', payment_status: 'paid', fulfillment_status: 'confirmed' },
+    { label: '待处理', payment_status: '', fulfillment_status: 'new' },
+    { label: '已发货', payment_status: '', fulfillment_status: 'shipped' },
+    { label: '已完成', payment_status: '', fulfillment_status: 'finished' }
+  ];
+}
+
+function initOrderOpsTools() {
+  const stats = $('#orderStats');
+  const filterForm = $('#orderFilterForm');
+  if (stats && !$('#orderQuickFilters')) {
+    const row = document.createElement('div');
+    row.id = 'orderQuickFilters';
+    row.className = 'order-quick-filters';
+    row.innerHTML = orderQuickFilterItems().map((item) => `
+      <button type="button" class="ghost-btn" data-order-payment="${escapeHtml(item.payment_status)}" data-order-fulfillment="${escapeHtml(item.fulfillment_status)}">${escapeHtml(item.label)}</button>
+    `).join('');
+    stats.after(row);
+  }
+  if (filterForm && !$('#exportOrdersBtn')) {
+    const button = document.createElement('button');
+    button.id = 'exportOrdersBtn';
+    button.type = 'button';
+    button.className = 'ghost-btn';
+    button.textContent = '导出当前订单';
+    filterForm.append(button);
+  }
+}
+
+function renderOrderStats(stats = {}) {
+  const amount = Number(stats.total_amount || 0).toFixed(2);
+  const cards = [
+    { label: '订单总数', value: stats.total || 0, payment_status: '', fulfillment_status: '' },
+    { label: '待支付', value: stats.pending_payment || 0, payment_status: 'pending', fulfillment_status: '' },
+    { label: '待处理', value: stats.open_orders || 0, payment_status: '', fulfillment_status: 'new' },
+    { label: '已支付', value: stats.paid || 0, payment_status: 'paid', fulfillment_status: '' },
+    { label: '累计金额', value: `CNY ${amount}`, payment_status: '', fulfillment_status: '' }
+  ];
+  $('#orderStats').innerHTML = cards.map((item) => `
+    <button class="mini-stat order-stat-button" type="button" data-order-payment="${escapeHtml(item.payment_status)}" data-order-fulfillment="${escapeHtml(item.fulfillment_status)}">
+      <span>${escapeHtml(item.label)}</span>
+      <strong>${escapeHtml(item.value)}</strong>
+    </button>
+  `).join('');
+}
+
+async function setOrderStatusFilter(paymentStatus = '', fulfillmentStatus = '') {
+  state.orderFilters.payment_status = paymentStatus;
+  state.orderFilters.fulfillment_status = fulfillmentStatus;
+  syncOrderFilterForm();
+  await loadOrders();
+}
+
+async function exportOrdersCsv() {
+  const response = await fetch(`/api/orders/export?${buildOrderQuery()}`, {
+    headers: { Authorization: `Bearer ${token()}` }
+  });
+  if (!response.ok) {
+    throw new Error('订单导出失败');
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `orders-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  toast('订单 CSV 已导出');
 }
 
 function formFieldLabels() {
@@ -1666,6 +1742,15 @@ document.addEventListener('click', async (event) => {
     }
   }
 
+  const orderStatusFilter = target.closest('[data-order-payment][data-order-fulfillment]');
+  if (orderStatusFilter) {
+    await setOrderStatusFilter(orderStatusFilter.dataset.orderPayment || '', orderStatusFilter.dataset.orderFulfillment || '');
+  }
+
+  if (target.closest('#exportOrdersBtn')) {
+    await exportOrdersCsv();
+  }
+
   if (target.matches('[data-refresh="articles"]')) loadArticles().catch((error) => toast(error.message));
   if (target.matches('[data-refresh="products"]')) loadProducts().catch((error) => toast(error.message));
   if (target.matches('[data-refresh="orders"]')) loadOrders().catch((error) => toast(error.message));
@@ -2000,6 +2085,7 @@ $('#reloadDashboardBtn').addEventListener('click', () => loadDashboard().catch((
 
 (async function boot() {
   initOrderQuickNotes();
+  initOrderOpsTools();
   if (!token()) {
     showLogin();
     return;
