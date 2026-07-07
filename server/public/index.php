@@ -243,6 +243,32 @@ function append_order_note(string $remark, string $note): string
     return trim($remark) === '' ? $line : rtrim($remark) . "\n" . $line;
 }
 
+function public_order_view(array $order): array
+{
+    $items = [];
+    try {
+        $items = json_decode((string)($order['items'] ?? '[]'), true, 512, JSON_THROW_ON_ERROR);
+    } catch (Throwable $error) {
+        $items = [];
+    }
+
+    return [
+        'order_no' => $order['order_no'] ?? '',
+        'customer_name' => $order['customer_name'] ?? '',
+        'items' => is_array($items) ? $items : [],
+        'total_amount' => $order['total_amount'] ?? '0.00',
+        'currency' => $order['currency'] ?? 'CNY',
+        'payment_status' => $order['payment_status'] ?? 'pending',
+        'fulfillment_status' => $order['fulfillment_status'] ?? 'new',
+        'tracking_company' => $order['tracking_company'] ?? '',
+        'tracking_no' => $order['tracking_no'] ?? '',
+        'paid_at' => $order['paid_at'] ?? '',
+        'shipped_at' => $order['shipped_at'] ?? '',
+        'created_at' => $order['created_at'] ?? '',
+        'updated_at' => $order['updated_at'] ?? '',
+    ];
+}
+
 function list_orders(PDO $pdo): array
 {
     $page = max(1, (int)($_GET['page'] ?? 1));
@@ -966,6 +992,18 @@ try {
             'updated_at' => $time,
         ]);
         ok(fetch_one($pdo, 'orders', (int)$pdo->lastInsertId()), '订单已创建');
+    }
+
+    if ($method === 'POST' && $path === '/orders/lookup') {
+        $data = body_json();
+        require_fields($data, ['order_no', 'phone']);
+        $stmt = $pdo->prepare('SELECT * FROM orders WHERE order_no = :order_no AND phone = :phone LIMIT 1');
+        $stmt->execute([
+            'order_no' => trim((string)$data['order_no']),
+            'phone' => trim((string)$data['phone']),
+        ]);
+        $order = $stmt->fetch();
+        $order ? ok(public_order_view($order), '查询成功') : fail('未找到匹配订单，请检查订单号和手机号', 'NOT_FOUND', 404);
     }
 
     require_login($pdo);

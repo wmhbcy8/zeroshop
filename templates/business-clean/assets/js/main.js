@@ -6,6 +6,12 @@ document.addEventListener('submit', function (event) {
     return;
   }
 
+  if (form.matches('.order-lookup-form')) {
+    event.preventDefault();
+    submitOrderLookup(form);
+    return;
+  }
+
   if (!form.matches('.inquiry-form')) return;
   event.preventDefault();
 
@@ -98,6 +104,81 @@ function submitOrderForm(form) {
       form.querySelectorAll('button, input, textarea').forEach(function (item) {
         item.disabled = false;
       });
+    });
+}
+
+function orderStatusLabel(type, status) {
+  const labels = {
+    payment: {
+      pending: '待支付',
+      paid: '已支付',
+      failed: '支付失败',
+      refunded: '已退款'
+    },
+    fulfillment: {
+      new: '新订单',
+      confirmed: '已确认',
+      shipped: '已发货',
+      finished: '已完成',
+      closed: '已关闭'
+    }
+  };
+  return (labels[type] && labels[type][status]) || status || '-';
+}
+
+function renderOrderLookup(order) {
+  const items = Array.isArray(order.items) ? order.items : [];
+  const tracking = [order.tracking_company, order.tracking_no].filter(Boolean).join(' / ') || '暂无物流信息';
+  return [
+    '<div class="order-status-grid">',
+    '<div><span>订单号</span><strong>' + escapeHtml(order.order_no) + '</strong></div>',
+    '<div><span>支付状态</span><strong>' + escapeHtml(orderStatusLabel('payment', order.payment_status)) + '</strong></div>',
+    '<div><span>履约状态</span><strong>' + escapeHtml(orderStatusLabel('fulfillment', order.fulfillment_status)) + '</strong></div>',
+    '<div><span>订单金额</span><strong>' + escapeHtml(order.currency || 'CNY') + ' ' + escapeHtml(order.total_amount || '0.00') + '</strong></div>',
+    '</div>',
+    '<div class="order-lookup-block"><h2>商品明细</h2>',
+    items.map(function (item) {
+      return '<p>' + escapeHtml(item.title || '未命名商品') + ' × ' + escapeHtml(item.quantity || 1) + '，' + escapeHtml(item.price || 0) + '</p>';
+    }).join('') || '<p>暂无商品明细</p>',
+    '</div>',
+    '<div class="order-lookup-block"><h2>物流信息</h2>',
+    '<p>' + escapeHtml(tracking) + '</p>',
+    '<p>支付时间：' + escapeHtml(order.paid_at || '-') + '</p>',
+    '<p>发货时间：' + escapeHtml(order.shipped_at || '-') + '</p>',
+    '</div>'
+  ].join('');
+}
+
+function submitOrderLookup(form) {
+  const api = form.getAttribute('data-api');
+  const status = document.querySelector('[data-order-lookup-status]');
+  const resultBox = document.querySelector('[data-order-lookup-result]');
+  if (!api || location.protocol === 'file:') {
+    if (status) status.textContent = '演示站暂不能查询订单，部署后会连接后台订单系统。';
+    return;
+  }
+
+  const formData = new FormData(form);
+  const payload = {
+    order_no: formData.get('order_no') || '',
+    phone: formData.get('phone') || ''
+  };
+  if (status) status.textContent = '正在查询订单...';
+  if (resultBox) resultBox.innerHTML = '';
+
+  fetch(api, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(function (response) { return response.json(); })
+    .then(function (result) {
+      if (!result.success) throw new Error(result.message || '订单查询失败');
+      if (status) status.textContent = '查询成功';
+      if (resultBox) resultBox.innerHTML = renderOrderLookup(result.data || {});
+    })
+    .catch(function (error) {
+      if (status) status.textContent = error.message || '订单查询失败，请检查订单号和手机号。';
     });
 }
 

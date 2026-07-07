@@ -582,6 +582,14 @@ write_file($publicRoot . DIRECTORY_SEPARATOR . 'search.html', $engine->renderFil
     ],
 ]));
 
+write_file($publicRoot . DIRECTORY_SEPARATOR . 'order.html', $engine->renderFile('pages/order.html', base_context($site, $categories, $productCategories, $articles, $products) + [
+    'seo' => [
+        'title' => '订单查询 - ' . ($site['name'] ?? ''),
+        'description' => '查询' . ($site['name'] ?? '') . '商城订单的支付、发货和物流状态。',
+        'keywords' => $site['keywords'] ?? '',
+    ],
+]));
+
 write_file($publicRoot . DIRECTORY_SEPARATOR . 'news' . DIRECTORY_SEPARATOR . 'index.html', $engine->renderFile('pages/article-list.html', base_context($site, $categories, $productCategories, $articles, $products, '../', '../') + [
     'articles' => with_urls($articles, ''),
     'seo' => [
@@ -651,6 +659,7 @@ $sitemap = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www
 $sitemap[] = '  <url><loc>https://' . $domain . '/index.html</loc></url>';
 $sitemap[] = '  <url><loc>https://' . $domain . '/contact.html</loc></url>';
 $sitemap[] = '  <url><loc>https://' . $domain . '/search.html</loc></url>';
+$sitemap[] = '  <url><loc>https://' . $domain . '/order.html</loc></url>';
 foreach ($articles as $article) {
     $sitemap[] = '  <url><loc>https://' . $domain . '/news/' . $article['slug'] . '.html</loc></url>';
 }
