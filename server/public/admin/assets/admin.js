@@ -1036,7 +1036,7 @@ function orderLookupUrl(item) {
 }
 
 function orderTimelineType(text) {
-  if (text.includes('客户提交')) return ['customer', '客户'];
+  if (text.includes('客户提交') || text.includes('客户服务请求')) return ['customer', '客户'];
   if (text.includes('客服') || text.includes('后台')) return ['staff', '客服'];
   if (text.includes('支付') || text.includes('发货') || text.includes('确认')) return ['system', '状态'];
   return ['note', '备注'];
@@ -1279,6 +1279,9 @@ function orderQuickFilterItems() {
     { label: '待支付', keyword: '', payment_status: 'pending', fulfillment_status: '' },
     { label: '待核款', keyword: '付款凭证', payment_status: 'pending', fulfillment_status: '' },
     { label: '待发货', keyword: '', payment_status: 'paid', fulfillment_status: 'confirmed' },
+    { label: '催发货', keyword: '客户服务请求-催发货', payment_status: '', fulfillment_status: '' },
+    { label: '改地址', keyword: '客户服务请求-修改收货信息', payment_status: '', fulfillment_status: '' },
+    { label: '售后', keyword: '客户服务请求-售后问题', payment_status: '', fulfillment_status: '' },
     { label: '待处理', keyword: '', payment_status: '', fulfillment_status: 'new' },
     { label: '已发货', keyword: '', payment_status: '', fulfillment_status: 'shipped' },
     { label: '已完成', keyword: '', payment_status: '', fulfillment_status: 'finished' }

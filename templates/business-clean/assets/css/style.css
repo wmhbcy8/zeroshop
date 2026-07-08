@@ -280,12 +280,12 @@ p { color: var(--muted); margin: 0 0 12px; }
   font-size: 18px;
   margin-bottom: 10px;
 }
-.customer-note-form, .payment-proof-form {
+.customer-note-form, .payment-proof-form, .service-request-form {
   display: grid;
   gap: 10px;
 }
-.customer-note-form textarea, .payment-proof-form textarea { min-height: 88px; }
-.customer-note-form select {
+.customer-note-form textarea, .payment-proof-form textarea, .service-request-form textarea { min-height: 88px; }
+.customer-note-form select, .service-request-form select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 6px;

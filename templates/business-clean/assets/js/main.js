@@ -26,6 +26,12 @@ document.addEventListener('submit', function (event) {
     return;
   }
 
+  if (form.matches('.service-request-form')) {
+    event.preventDefault();
+    submitServiceRequest(form);
+    return;
+  }
+
   if (!form.matches('.inquiry-form')) return;
   event.preventDefault();
 
@@ -279,6 +285,25 @@ function renderPaymentProofForm(order, phone) {
   ].join('');
 }
 
+function renderServiceRequestForm(order, phone) {
+  return [
+    '<form class="service-request-form order-lookup-block" data-api="/api/orders/service-request">',
+    '<h2>订单服务</h2>',
+    '<input type="hidden" name="order_no" value="' + escapeHtml(order.order_no || '') + '">',
+    '<input type="hidden" name="phone" value="' + escapeHtml(phone || '') + '">',
+    '<select name="type">',
+    '<option value="催发货">催发货</option>',
+    '<option value="修改收货信息">修改收货信息</option>',
+    '<option value="售后问题">售后问题</option>',
+    '<option value="其他服务">其他服务</option>',
+    '</select>',
+    '<textarea name="message" maxlength="500" placeholder="请填写需要客服处理的内容，例如新的收货地址、售后问题或催发货说明" required></textarea>',
+    '<button type="submit">提交服务请求</button>',
+    '<p class="form-status" data-service-request-status></p>',
+    '</form>'
+  ].join('');
+}
+
 function renderShipmentCard(order) {
   const tracking = [order.tracking_company, order.tracking_no].filter(Boolean).join(' / ') || '';
   let title = '等待付款确认';
@@ -313,6 +338,7 @@ function renderOrderLookup(order) {
   const phone = latest.phone || new URLSearchParams(location.search).get('phone') || '';
   const guideHtml = order.payment_status === 'pending' ? renderPaymentGuide(readPaymentGuide(document), order) : '';
   const proofHtml = renderPaymentProofForm(order, phone);
+  const serviceHtml = renderServiceRequestForm(order, phone);
   return [
     '<div class="order-status-grid">',
     '<div><span>订单号</span><strong>' + escapeHtml(order.order_no) + '</strong></div>',
@@ -333,6 +359,7 @@ function renderOrderLookup(order) {
     renderShipmentCard(order),
     guideHtml,
     proofHtml,
+    serviceHtml,
     '<form class="customer-note-form order-lookup-block" data-api="/api/orders/customer-note">',
     '<h2>补充说明</h2>',
     '<input type="hidden" name="order_no" value="' + escapeHtml(order.order_no || '') + '">',
@@ -430,6 +457,47 @@ function submitPaymentProof(form) {
     })
     .finally(function () {
       form.querySelectorAll('button, input, textarea').forEach(function (item) {
+        item.disabled = false;
+      });
+    });
+}
+
+function submitServiceRequest(form) {
+  const api = form.getAttribute('data-api');
+  const status = form.querySelector('[data-service-request-status]');
+  if (!api || location.protocol === 'file:') {
+    if (status) status.textContent = '演示站暂不能提交服务请求，部署后会同步到后台订单时间线。';
+    return;
+  }
+
+  const formData = new FormData(form);
+  const payload = {
+    order_no: formData.get('order_no') || '',
+    phone: formData.get('phone') || '',
+    type: formData.get('type') || '其他服务',
+    message: formData.get('message') || ''
+  };
+  if (status) status.textContent = '正在提交服务请求...';
+  form.querySelectorAll('button, select, textarea').forEach(function (item) {
+    item.disabled = true;
+  });
+
+  fetch(api, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(function (response) { return response.json(); })
+    .then(function (result) {
+      if (!result.success) throw new Error(result.message || '服务请求提交失败');
+      form.message.value = '';
+      if (status) status.textContent = '服务请求已提交，客服会在后台订单时间线中处理。';
+    })
+    .catch(function (error) {
+      if (status) status.textContent = error.message || '服务请求提交失败，请稍后再试。';
+    })
+    .finally(function () {
+      form.querySelectorAll('button, select, textarea').forEach(function (item) {
         item.disabled = false;
       });
     });
