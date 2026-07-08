@@ -39,6 +39,11 @@
         <div>
           <h1>{{ currentNav?.label }}</h1>
           <p>{{ currentNav?.hint }}</p>
+          <div class="work-tabs">
+            <el-tag effect="plain">{{ currentNav?.label || '工作台' }}</el-tag>
+            <el-button link type="primary" @click="refreshCurrentView">刷新当前页</el-button>
+            <el-button link @click="openLegacyAdmin">旧版后台</el-button>
+          </div>
         </div>
         <div class="top-actions">
           <el-button @click="previewSite">预览站点</el-button>
@@ -107,62 +112,83 @@
         </section>
 
         <section v-if="view === 'articles'">
-          <ContentEditor type="article" :items="articles" :form="articleForm" @new="newArticle" @edit="editArticle" @save="saveArticle" @delete="deleteArticle" @ai="generateArticleDraft" />
+          <ContentEditor
+            type="article"
+            :items="articles"
+            :form="articleForm"
+            :page="articlePager.page"
+            :page-size="articlePager.page_size"
+            :total="articlePager.total"
+            @new="newArticle"
+            @edit="editArticle"
+            @save="saveArticle"
+            @delete="deleteArticle"
+            @ai="generateArticleDraft"
+            @page-change="changeArticlePage"
+          />
         </section>
 
         <section v-if="view === 'products'">
-          <ContentEditor type="product" :items="products" :form="productForm" @new="newProduct" @edit="editProduct" @save="saveProduct" @delete="deleteProduct" @ai="generateProductDraft" />
+          <ContentEditor
+            type="product"
+            :items="products"
+            :form="productForm"
+            :page="productPager.page"
+            :page-size="productPager.page_size"
+            :total="productPager.total"
+            @new="newProduct"
+            @edit="editProduct"
+            @save="saveProduct"
+            @delete="deleteProduct"
+            @ai="generateProductDraft"
+            @page-change="changeProductPage"
+          />
         </section>
 
         <section v-if="view === 'orders'">
-          <el-row :gutter="16">
-            <el-col :span="15">
-              <el-card class="panel" shadow="never">
-                <template #header>
-                  <div class="card-head">
-                    <strong>订单列表</strong>
-                    <el-button @click="loadOrders">刷新</el-button>
-                  </div>
-                </template>
-                <el-form :inline="true" class="toolbar" @submit.prevent="loadOrders">
-                  <el-form-item><el-input v-model="orderFilters.keyword" placeholder="订单号/客户/手机号" clearable /></el-form-item>
-                  <el-form-item><el-select v-model="orderFilters.payment_status" placeholder="支付" clearable><el-option label="待支付" value="pending" /><el-option label="已支付" value="paid" /></el-select></el-form-item>
-                  <el-form-item><el-select v-model="orderFilters.fulfillment_status" placeholder="履约" clearable><el-option label="新订单" value="new" /><el-option label="已确认" value="confirmed" /><el-option label="已发货" value="shipped" /><el-option label="已完成" value="finished" /></el-select></el-form-item>
-                  <el-button type="primary" @click="loadOrders">筛选</el-button>
-                </el-form>
-                <el-table :data="orders" height="560" row-key="id" highlight-current-row @row-click="selectOrder">
-                  <el-table-column prop="order_no" label="订单号" min-width="160" />
-                  <el-table-column prop="customer_name" label="客户" min-width="130">
-                    <template #default="{ row }"><strong>{{ row.customer_name }}</strong><br /><small>{{ row.phone }}</small></template>
-                  </el-table-column>
-                  <el-table-column label="金额" width="120"><template #default="{ row }">{{ row.currency }} {{ row.total_amount }}</template></el-table-column>
-                  <el-table-column label="状态" width="130">
-                    <template #default="{ row }"><el-tag>{{ paymentLabel(row.payment_status) }}</el-tag><br /><el-tag class="mt4" type="success">{{ fulfillLabel(row.fulfillment_status) }}</el-tag></template>
-                  </el-table-column>
-                </el-table>
-              </el-card>
-            </el-col>
-            <el-col :span="9">
-              <el-card class="panel" shadow="never">
-                <template #header><strong>订单跟进</strong></template>
-                <el-empty v-if="!orderDetail.id" description="选择一条订单查看详情" />
-                <el-form v-else :model="orderDetail" label-width="92px">
-                  <el-descriptions :column="1" border class="mb16">
-                    <el-descriptions-item label="订单号">{{ orderDetail.order_no }}</el-descriptions-item>
-                    <el-descriptions-item label="客户">{{ orderDetail.customer_name }} / {{ orderDetail.phone }}</el-descriptions-item>
-                    <el-descriptions-item label="金额">{{ orderDetail.currency }} {{ orderDetail.total_amount }}</el-descriptions-item>
-                  </el-descriptions>
-                  <el-form-item label="支付状态"><el-select v-model="orderDetail.payment_status"><el-option label="待支付" value="pending" /><el-option label="已支付" value="paid" /><el-option label="已退款" value="refunded" /></el-select></el-form-item>
-                  <el-form-item label="履约状态"><el-select v-model="orderDetail.fulfillment_status"><el-option label="新订单" value="new" /><el-option label="已确认" value="confirmed" /><el-option label="已发货" value="shipped" /><el-option label="已完成" value="finished" /><el-option label="已关闭" value="closed" /></el-select></el-form-item>
-                  <el-form-item label="物流公司"><el-input v-model="orderDetail.tracking_company" /></el-form-item>
-                  <el-form-item label="物流单号"><el-input v-model="orderDetail.tracking_no" /></el-form-item>
-                  <el-form-item label="新增跟进"><el-input v-model="orderDetail.followup_note" type="textarea" :rows="3" /></el-form-item>
-                  <el-form-item label="时间线"><el-input v-model="orderDetail.remark" type="textarea" :rows="6" /></el-form-item>
-                  <el-button type="primary" @click="saveOrder">保存订单</el-button>
-                </el-form>
-              </el-card>
-            </el-col>
-          </el-row>
+          <el-card class="panel" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>订单列表</strong>
+                <el-button @click="loadOrders">刷新</el-button>
+              </div>
+            </template>
+            <el-form :inline="true" class="toolbar" @submit.prevent="applyOrderFilters">
+              <el-form-item><el-input v-model="orderFilters.keyword" placeholder="订单号/客户/手机号" clearable /></el-form-item>
+              <el-form-item><el-select v-model="orderFilters.payment_status" placeholder="支付" clearable><el-option label="待支付" value="pending" /><el-option label="已支付" value="paid" /></el-select></el-form-item>
+              <el-form-item><el-select v-model="orderFilters.fulfillment_status" placeholder="履约" clearable><el-option label="新订单" value="new" /><el-option label="已确认" value="confirmed" /><el-option label="已发货" value="shipped" /><el-option label="已完成" value="finished" /></el-select></el-form-item>
+              <el-button type="primary" @click="applyOrderFilters">筛选</el-button>
+            </el-form>
+            <el-table :data="orders" height="560" row-key="id" highlight-current-row @row-click="selectOrder">
+              <el-table-column prop="order_no" label="订单号" min-width="170" />
+              <el-table-column prop="customer_name" label="客户" min-width="150">
+                <template #default="{ row }"><strong>{{ row.customer_name }}</strong><br /><small>{{ row.phone }}</small></template>
+              </el-table-column>
+              <el-table-column label="金额" width="140"><template #default="{ row }">{{ row.currency }} {{ row.total_amount }}</template></el-table-column>
+              <el-table-column label="状态" width="150">
+                <template #default="{ row }"><el-tag>{{ paymentLabel(row.payment_status) }}</el-tag><el-tag class="ml6" type="success">{{ fulfillLabel(row.fulfillment_status) }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="操作" width="110"><template #default="{ row }"><el-button link type="primary" @click.stop="selectOrder(row)">跟进</el-button></template></el-table-column>
+            </el-table>
+            <el-pagination class="table-pager" layout="prev, pager, next, total" :current-page="orderPager.page" :page-size="orderPager.page_size" :total="orderPager.total" @current-change="changeOrderPage" />
+          </el-card>
+          <el-drawer v-model="orderDrawerVisible" size="520px" title="订单跟进">
+            <el-empty v-if="!orderDetail.id" description="选择一条订单查看详情" />
+            <el-form v-else :model="orderDetail" label-width="92px">
+              <el-descriptions :column="1" border class="mb16">
+                <el-descriptions-item label="订单号">{{ orderDetail.order_no }}</el-descriptions-item>
+                <el-descriptions-item label="客户">{{ orderDetail.customer_name }} / {{ orderDetail.phone }}</el-descriptions-item>
+                <el-descriptions-item label="金额">{{ orderDetail.currency }} {{ orderDetail.total_amount }}</el-descriptions-item>
+              </el-descriptions>
+              <el-form-item label="支付状态"><el-select v-model="orderDetail.payment_status"><el-option label="待支付" value="pending" /><el-option label="已支付" value="paid" /><el-option label="已退款" value="refunded" /></el-select></el-form-item>
+              <el-form-item label="履约状态"><el-select v-model="orderDetail.fulfillment_status"><el-option label="新订单" value="new" /><el-option label="已确认" value="confirmed" /><el-option label="已发货" value="shipped" /><el-option label="已完成" value="finished" /><el-option label="已关闭" value="closed" /></el-select></el-form-item>
+              <el-form-item label="物流公司"><el-input v-model="orderDetail.tracking_company" /></el-form-item>
+              <el-form-item label="物流单号"><el-input v-model="orderDetail.tracking_no" /></el-form-item>
+              <el-form-item label="新增跟进"><el-input v-model="orderDetail.followup_note" type="textarea" :rows="3" /></el-form-item>
+              <el-form-item label="时间线"><el-input v-model="orderDetail.remark" type="textarea" :rows="6" /></el-form-item>
+              <el-button type="primary" @click="saveOrder">保存订单</el-button>
+            </el-form>
+          </el-drawer>
         </section>
 
         <section v-if="view === 'service'">
@@ -185,6 +211,7 @@
               <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 'handled' ? 'success' : 'warning'">{{ row.status === 'handled' ? '已处理' : '待处理' }}</el-tag></template></el-table-column>
               <el-table-column label="操作" width="110"><template #default="{ row }"><el-button link type="primary" @click="openOrder(row.order_id)">去处理</el-button></template></el-table-column>
             </el-table>
+            <el-pagination class="table-pager" layout="prev, pager, next, total" :current-page="servicePager.page" :page-size="servicePager.page_size" :total="servicePager.total" @current-change="changeServicePage" />
           </el-card>
         </section>
 
@@ -214,6 +241,7 @@
               <el-table-column prop="status" label="状态" width="120" />
               <el-table-column prop="created_at" label="时间" width="170" />
             </el-table>
+            <el-pagination class="table-pager" layout="prev, pager, next, total" :current-page="formPager.page" :page-size="formPager.page_size" :total="formPager.total" @current-change="changeFormPage" />
           </el-card>
         </section>
 
@@ -260,12 +288,18 @@ const forms = ref<any[]>([])
 const versions = ref<any[]>([])
 const servicePending = ref(0)
 const selectedServiceIds = ref<string[]>([])
+const orderDrawerVisible = ref(false)
 
 const orderFilters = reactive({ keyword: '', payment_status: '', fulfillment_status: '' })
 const serviceFilters = reactive({ keyword: '', status: '', type: '' })
 const orderDetail = reactive<any>({})
 const articleForm = reactive<any>({})
 const productForm = reactive<any>({})
+const articlePager = reactive({ page: 1, page_size: 10, total: 0 })
+const productPager = reactive({ page: 1, page_size: 10, total: 0 })
+const orderPager = reactive({ page: 1, page_size: 10, total: 0 })
+const servicePager = reactive({ page: 1, page_size: 10, total: 0 })
+const formPager = reactive({ page: 1, page_size: 10, total: 0 })
 
 const navItems = [
   { key: 'dashboard', label: '概览', hint: '查看运营指标、内容数量和站点状态。', icon: 'Odometer' },
@@ -317,8 +351,30 @@ async function logout() {
 function setView(key: string) {
   view.value = key
   if (key === 'dashboard') loadDashboard()
+  if (key === 'articles') loadArticles()
+  if (key === 'products') loadProducts()
   if (key === 'orders') loadOrders()
   if (key === 'service') loadServices()
+  if (key === 'forms') loadForms()
+}
+
+function refreshCurrentView() {
+  const loaders: Record<string, () => Promise<void>> = {
+    dashboard: loadDashboard,
+    settings: loadSettings,
+    articles: loadArticles,
+    products: loadProducts,
+    orders: loadOrders,
+    service: loadServices,
+    media: loadMedia,
+    forms: loadForms,
+    publish: loadVersions
+  }
+  loaders[view.value]?.().then(() => ElMessage.success('当前页面已刷新'))
+}
+
+function openLegacyAdmin() {
+  window.open('/admin.html', '_blank')
 }
 
 async function loadAll() {
@@ -364,13 +420,23 @@ async function saveSettings() {
 }
 
 async function loadArticles() {
-  const data = await request('/api/articles?page_size=50')
+  const data = await request(`/api/articles?page=${articlePager.page}&page_size=${articlePager.page_size}`)
   articles.value = data.items || []
+  articlePager.total = data.pagination?.total || articles.value.length
+}
+function changeArticlePage(page: number) {
+  articlePager.page = page
+  loadArticles()
 }
 
 async function loadProducts() {
-  const data = await request('/api/products?page_size=50')
+  const data = await request(`/api/products?page=${productPager.page}&page_size=${productPager.page_size}`)
   products.value = data.items || []
+  productPager.total = data.pagination?.total || products.value.length
+}
+function changeProductPage(page: number) {
+  productPager.page = page
+  loadProducts()
 }
 
 function newArticle() { Object.assign(articleForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft' }) }
@@ -380,6 +446,7 @@ async function saveArticle() {
   const path = articleForm.id ? `/api/articles/${articleForm.id}` : '/api/articles'
   await request(path, { method, data: { ...articleForm } })
   ElMessage.success('文章已保存')
+  articlePager.page = articleForm.id ? articlePager.page : 1
   await loadArticles()
 }
 async function deleteArticle(item: any) {
@@ -399,6 +466,7 @@ async function saveProduct() {
   const path = productForm.id ? `/api/products/${productForm.id}` : '/api/products'
   await request(path, { method, data: { ...productForm } })
   ElMessage.success('商品已保存')
+  productPager.page = productForm.id ? productPager.page : 1
   await loadProducts()
 }
 async function deleteProduct(item: any) {
@@ -413,11 +481,25 @@ async function generateProductDraft(prompt: string) {
 
 async function loadOrders() {
   const params = new URLSearchParams()
+  params.set('page', String(orderPager.page))
+  params.set('page_size', String(orderPager.page_size))
   Object.entries(orderFilters).forEach(([key, value]) => value && params.set(key, value))
-  const data = await request(`/api/orders?page_size=50&${params.toString()}`)
+  const data = await request(`/api/orders?${params.toString()}`)
   orders.value = data.items || []
+  orderPager.total = data.pagination?.total || orders.value.length
 }
-function selectOrder(row: any) { Object.assign(orderDetail, row, { followup_note: '' }) }
+function applyOrderFilters() {
+  orderPager.page = 1
+  loadOrders()
+}
+function changeOrderPage(page: number) {
+  orderPager.page = page
+  loadOrders()
+}
+function selectOrder(row: any) {
+  Object.assign(orderDetail, row, { followup_note: '' })
+  orderDrawerVisible.value = true
+}
 async function saveOrder() {
   await request(`/api/orders/${orderDetail.id}`, {
     method: 'PUT',
@@ -431,20 +513,29 @@ async function saveOrder() {
     }
   })
   ElMessage.success('订单已保存')
+  orderDrawerVisible.value = false
   await Promise.all([loadOrders(), loadServices(), loadDashboard()])
 }
 async function openOrder(id: number) {
   const data = await request(`/api/orders/${id}`)
   Object.assign(orderDetail, data, { followup_note: '' })
   view.value = 'orders'
+  orderDrawerVisible.value = true
 }
 
 async function loadServices() {
   const params = new URLSearchParams()
+  params.set('page', String(servicePager.page))
+  params.set('page_size', String(servicePager.page_size))
   Object.entries(serviceFilters).forEach(([key, value]) => value && params.set(key, value))
   const data = await request(`/api/orders/service-requests?${params.toString()}`)
   services.value = data.items || []
+  servicePager.total = data.pagination?.total || services.value.length
   servicePending.value = data.pending || 0
+}
+function changeServicePage(page: number) {
+  servicePager.page = page
+  loadServices()
 }
 async function resolveSelectedServices() {
   if (!selectedServiceIds.value.length) return ElMessage.warning('请选择待处理服务请求')
@@ -458,8 +549,13 @@ async function loadMedia() {
   media.value = data.items || []
 }
 async function loadForms() {
-  const data = await request('/api/forms/submissions?page_size=50')
+  const data = await request(`/api/forms/submissions?page=${formPager.page}&page_size=${formPager.page_size}`)
   forms.value = data.items || []
+  formPager.total = data.pagination?.total || forms.value.length
+}
+function changeFormPage(page: number) {
+  formPager.page = page
+  loadForms()
 }
 async function loadVersions() {
   const data = await request('/api/site/publish-versions')
@@ -513,37 +609,51 @@ export default defineComponent({
       `
     },
     ContentEditor: {
-      props: ['type', 'items', 'form'],
-      emits: ['new', 'edit', 'save', 'delete', 'ai'],
+      props: ['type', 'items', 'form', 'page', 'pageSize', 'total'],
+      emits: ['new', 'edit', 'save', 'delete', 'ai', 'page-change'],
       data() {
-        return { prompt: '' }
+        return { prompt: '', drawerVisible: false }
       },
       computed: {
         title() { return this.type === 'article' ? '文章' : '商品' },
         bodyField() { return this.type === 'article' ? 'content' : 'description' }
       },
+      methods: {
+        openNew() {
+          this.$emit('new')
+          this.drawerVisible = true
+        },
+        openEdit(row: any) {
+          this.$emit('edit', row)
+          this.drawerVisible = true
+        },
+        saveForm() {
+          this.$emit('save')
+        }
+      },
       template: `
-        <el-row :gutter="16">
-          <el-col :span="14">
-            <el-card class="panel" shadow="never">
-              <template #header><div class="card-head"><strong>{{ title }}列表</strong><el-button type="primary" @click="$emit('new')">新建{{ title }}</el-button></div></template>
-              <el-table :data="items" height="650">
-                <el-table-column prop="title" label="标题" min-width="220">
-                  <template #default="{ row }"><strong>{{ row.title }}</strong><br /><small>{{ row.slug }}</small></template>
-                </el-table-column>
-                <el-table-column prop="status" label="状态" width="110" />
-                <el-table-column label="操作" width="150">
-                  <template #default="{ row }">
-                    <el-button link type="primary" @click="$emit('edit', row)">编辑</el-button>
-                    <el-button link type="danger" @click="$emit('delete', row)">删除</el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
-            </el-card>
-          </el-col>
-          <el-col :span="10">
-            <el-card class="panel" shadow="never">
-              <template #header><strong>{{ form.id ? '编辑' : '新建' }}{{ title }}</strong></template>
+        <div>
+          <el-card class="panel" shadow="never">
+            <template #header><div class="card-head"><strong>{{ title }}列表</strong><el-button type="primary" @click="openNew">新建{{ title }}</el-button></div></template>
+            <el-table :data="items" height="650">
+              <el-table-column prop="title" label="标题" min-width="260">
+                <template #default="{ row }"><strong>{{ row.title }}</strong><br /><small>{{ row.slug }}</small></template>
+              </el-table-column>
+              <el-table-column v-if="type === 'product'" prop="sku" label="SKU" width="140" />
+              <el-table-column v-if="type === 'product'" label="价格/库存" width="150">
+                <template #default="{ row }">{{ row.price || 0 }} / {{ row.stock || 0 }}</template>
+              </el-table-column>
+              <el-table-column prop="status" label="状态" width="110" />
+              <el-table-column label="操作" width="160">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+                  <el-button link type="danger" @click="$emit('delete', row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-pagination class="table-pager" layout="prev, pager, next, total" :current-page="page" :page-size="pageSize" :total="total" @current-change="$emit('page-change', $event)" />
+          </el-card>
+          <el-drawer v-model="drawerVisible" :title="(form.id ? '编辑' : '新建') + title" size="620px">
               <el-form :model="form" label-width="90px">
                 <el-alert type="info" show-icon :closable="false" class="mb16" title="AI 生成入口保留，内容会填充到当前表单。" />
                 <el-form-item label="AI 要求"><el-input v-model="prompt" placeholder="输入生成要求" /></el-form-item>
@@ -559,11 +669,10 @@ export default defineComponent({
                   <el-col :span="12"><el-form-item label="库存"><el-input-number v-model="form.stock" :min="0" /></el-form-item></el-col>
                 </el-row>
                 <el-form-item label="状态"><el-select v-model="form.status"><el-option label="草稿" value="draft" /><el-option label="发布" value="published" /></el-select></el-form-item>
-                <el-button type="primary" @click="$emit('save')">保存{{ title }}</el-button>
+                <el-button type="primary" @click="saveForm">保存{{ title }}</el-button>
               </el-form>
-            </el-card>
-          </el-col>
-        </el-row>
+          </el-drawer>
+        </div>
       `
     }
   }

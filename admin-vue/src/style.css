@@ -69,6 +69,12 @@ body {
 }
 .topbar h1 { margin: 0; font-size: 22px; }
 .topbar p { margin: 5px 0 0; color: var(--hj-muted); }
+.work-tabs {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+}
 .top-actions { display: flex; gap: 10px; }
 .main { padding: 22px; }
 .metric-grid {
@@ -118,6 +124,14 @@ body {
 .wide-form { max-width: 1040px; }
 .mb16 { margin-bottom: 16px; }
 .mt4 { margin-top: 4px; }
+.ml6 { margin-left: 6px; }
+.table-pager {
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+.el-drawer__body {
+  padding-top: 10px;
+}
 .media-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
