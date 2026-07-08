@@ -829,7 +829,8 @@ async function loadDashboard() {
   $('#statTodayVisitors').textContent = metrics.today_visitors || 0;
   $('#statTodayViews').textContent = `浏览 ${metrics.today_views || 0} 次`;
   $('#statVisitDepth').textContent = metrics.visit_depth || 0;
-  $('#statTodayPaid').textContent = `${metrics.currency || 'CNY'} ${metrics.today_paid_amount || '0.00'}`;
+  $('#statTodayPaid').textContent = metrics.today_paid_amount || '0.00';
+  $('#statTodayPaidCurrency').textContent = `/ ${metrics.currency || 'CNY'}`;
   $('#statPendingOrders').textContent = metrics.pending_orders || 0;
   $('#statPendingOrderHint').textContent = `待付款 ${metrics.pending_payment_orders || 0} / 待发货 ${metrics.pending_fulfillment_orders || 0}`;
   $('#statArticles').textContent = articles.pagination.total;

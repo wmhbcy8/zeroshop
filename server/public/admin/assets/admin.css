@@ -152,6 +152,12 @@ h2 { font-size: 18px; }
 }
 .stat-card { padding: 20px; }
 .stat-card span { color: var(--muted); font-size: 13px; }
+.stat-card span em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 500;
+}
 .stat-card strong { display: block; font-size: 30px; margin-top: 8px; }
 .stat-card small {
   display: block;
