@@ -1,0 +1,19 @@
+{{ include "partials/header.html" }}
+
+<main class="page article-page">
+  {{{ breadcrumb_html }}}
+  <article class="content">
+    <a class="back-link" href="index.html">返回资讯列表</a>
+    <h1>{{ article.title }}</h1>
+    <p class="meta">{{ article.published_at }} / {{ article.category.name }}</p>
+    {{ if article.cover }}
+      <img class="cover" src="{{ article.cover }}" alt="{{ article.title }}">
+    {{ /if }}
+    <div class="richtext">
+      {{{ article.content }}}
+    </div>
+  </article>
+  {{{ related_html }}}
+</main>
+
+{{ include "partials/footer.html" }}

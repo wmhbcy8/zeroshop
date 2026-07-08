@@ -6,6 +6,7 @@
 
 - 演示数据：`demo-data/`
 - 第一套模板：`templates/business-clean/`
+- 模板中心已内置三套 MVP 模板：`business-clean`、`blog-knowledge`、`product-showcase`
 - PHP 静态生成器：`worker/GenerateSite.php`
 - Node 验证生成器：`worker/generate-site.mjs`
 - 最小 API：`server/public/index.php`

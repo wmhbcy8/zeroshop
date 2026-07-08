@@ -1,0 +1,21 @@
+{{ include "partials/header.html" }}
+
+<main class="page">
+  <section class="page-title">
+    <span class="eyebrow">News</span>
+    <h1>行业资讯</h1>
+    <p>持续更新低空经济、无人机和企业数字化相关内容。</p>
+  </section>
+  <section class="article-list">
+    {{ each articles }}
+      <a class="article-row" href="{{ item.url }}">
+        <span>{{ item.published_at }}</span>
+        <strong>{{ item.title }}</strong>
+        <p>{{ item.summary }}</p>
+      </a>
+    {{ /each }}
+  </section>
+</main>
+
+{{ include "partials/footer.html" }}
+

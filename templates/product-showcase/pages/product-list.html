@@ -1,0 +1,22 @@
+{{ include "partials/header.html" }}
+
+<main class="page">
+  <section class="page-title">
+    <span class="eyebrow">Products</span>
+    <h1>产品中心</h1>
+    <p>展示适合企业官网和独立站的产品内容结构。</p>
+  </section>
+  <section class="card-grid">
+    {{ each products }}
+      <a class="card product-card" href="{{ item.url }}">
+        <img src="{{ item.cover }}" alt="{{ item.title }}">
+        <h3>{{ item.title }}</h3>
+        <p>{{ item.summary }}</p>
+        <span class="price">¥{{ item.price }}</span>
+      </a>
+    {{ /each }}
+  </section>
+</main>
+
+{{ include "partials/footer.html" }}
+

@@ -1,0 +1,24 @@
+{{ include "partials/header.html" }}
+
+<main>
+  <section class="hero">
+    <div class="hero-copy">
+      <span class="eyebrow">{{ site.hero.eyebrow }}</span>
+      <h1>{{ site.hero.title }}</h1>
+      <p>{{ site.hero.subtitle }}</p>
+      <div class="hero-actions">
+        <a class="btn primary" href="products/index.html">{{ site.hero.primary_text }}</a>
+        <a class="btn" href="news/index.html">{{ site.hero.secondary_text }}</a>
+      </div>
+    </div>
+    <div class="hero-panel">
+      <p>{{ site.hero.panel_label }}</p>
+      <strong>{{ site.hero.panel_title }}</strong>
+      <span>{{ site.hero.panel_description }}</span>
+    </div>
+  </section>
+
+  {{{ home_modules }}}
+</main>
+
+{{ include "partials/footer.html" }}

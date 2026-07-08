@@ -1,0 +1,9 @@
+{
+  "name": "产品展示独立站模板",
+  "key": "product-showcase",
+  "version": "0.1.0",
+  "author": "化简",
+  "type": ["shop", "product", "company"],
+  "supports": ["page", "article", "product", "seo", "form"],
+  "entry": "pages/index.html"
+}

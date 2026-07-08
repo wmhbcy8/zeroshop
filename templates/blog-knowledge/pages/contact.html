@@ -1,0 +1,27 @@
+{{ include "partials/header.html" }}
+
+<main class="page">
+  <section class="page-title">
+    <span class="eyebrow">Contact</span>
+    <h1>联系我们</h1>
+    <p>留下需求，我们会尽快联系你。</p>
+  </section>
+  <section class="product-detail">
+    <div>
+      <h2>{{ site.name }}</h2>
+      <p>电话：{{ site.phone }}</p>
+      <p>邮箱：{{ site.email }}</p>
+      <p>地址：{{ site.address }}</p>
+    </div>
+    <form class="inquiry-form" data-api="/api/forms/submit">
+      <input type="hidden" name="form_key" value="contact">
+      <input type="text" name="name" placeholder="姓名">
+      <input type="tel" name="phone" placeholder="电话">
+      <input type="email" name="email" placeholder="邮箱">
+      <textarea name="message" placeholder="请简单描述你的需求"></textarea>
+      <button type="submit">提交留言</button>
+    </form>
+  </section>
+</main>
+
+{{ include "partials/footer.html" }}

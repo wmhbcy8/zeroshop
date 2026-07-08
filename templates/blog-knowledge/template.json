@@ -1,0 +1,9 @@
+{
+  "name": "博客知识库模板",
+  "key": "blog-knowledge",
+  "version": "0.1.0",
+  "author": "化简",
+  "type": ["blog", "knowledge", "company"],
+  "supports": ["page", "article", "product", "seo", "form"],
+  "entry": "pages/index.html"
+}
