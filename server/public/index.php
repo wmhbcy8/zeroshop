@@ -152,6 +152,34 @@ function read_config_json(string $filename): array
     return $data;
 }
 
+function template_registry(): array
+{
+    $root = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'templates';
+    $items = [];
+    if (!is_dir($root)) {
+        return ['items' => []];
+    }
+    foreach (glob($root . DIRECTORY_SEPARATOR . '*' . DIRECTORY_SEPARATOR . 'template.json') ?: [] as $path) {
+        $data = json_decode((string)file_get_contents($path), true);
+        if (!is_array($data)) {
+            continue;
+        }
+        $key = (string)($data['key'] ?? basename(dirname($path)));
+        $items[] = [
+            'key' => $key,
+            'name' => (string)($data['name'] ?? $key),
+            'version' => (string)($data['version'] ?? ''),
+            'author' => (string)($data['author'] ?? ''),
+            'type' => $data['type'] ?? [],
+            'supports' => $data['supports'] ?? [],
+            'entry' => (string)($data['entry'] ?? ''),
+            'path' => 'templates/' . basename(dirname($path)),
+        ];
+    }
+    usort($items, fn($a, $b) => strcmp((string)$a['key'], (string)$b['key']));
+    return ['items' => $items];
+}
+
 function ensure_dir(string $dir): void
 {
     if (!is_dir($dir)) {
@@ -1436,6 +1464,10 @@ try {
 
     if ($method === 'GET' && $path === '/site/modules') {
         ok(read_config_json('module-registry.json'));
+    }
+
+    if ($method === 'GET' && $path === '/site/templates') {
+        ok(template_registry());
     }
 
     if ($method === 'PUT' && $path === '/site/settings') {

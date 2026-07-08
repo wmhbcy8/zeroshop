@@ -111,6 +111,82 @@
           </el-card>
         </section>
 
+        <section v-if="view === 'templates'">
+          <el-row :gutter="16">
+            <el-col :span="9">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>模板中心</strong>
+                    <el-button type="primary" @click="saveTemplateSettings">保存配置</el-button>
+                  </div>
+                </template>
+                <div class="template-grid">
+                  <article v-for="item in templates" :key="item.key" class="template-card" :class="{ active: site.template_key === item.key }" @click="site.template_key = item.key">
+                    <div class="template-preview">
+                      <span>{{ item.name?.slice(0, 2) || '模' }}</span>
+                    </div>
+                    <strong>{{ item.name }}</strong>
+                    <small>{{ item.key }} · {{ item.version || 'v0.1' }}</small>
+                    <div class="tag-row">
+                      <el-tag v-for="support in item.supports || []" :key="support" size="small" effect="plain">{{ support }}</el-tag>
+                    </div>
+                    <el-button size="small" :type="site.template_key === item.key ? 'primary' : 'default'">{{ site.template_key === item.key ? '当前模板' : '选择模板' }}</el-button>
+                  </article>
+                </div>
+              </el-card>
+            </el-col>
+            <el-col :span="15">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>模块中心</strong>
+                    <el-button @click="resetHomeModules">恢复默认模块</el-button>
+                  </div>
+                </template>
+                <el-alert title="模块配置会写入站点设置，生成静态站时按启用状态和排序输出首页模块。" type="info" show-icon class="mb16" />
+                <el-tabs v-model="templateTab">
+                  <el-tab-pane label="首页模块" name="home">
+                    <el-table :data="site.home_modules" row-key="key" height="470">
+                      <el-table-column prop="title" label="模块" min-width="160">
+                        <template #default="{ row }"><strong>{{ moduleTitle(row.key) }}</strong><br /><small>{{ moduleDescription(row.key) }}</small></template>
+                      </el-table-column>
+                      <el-table-column label="启用" width="90"><template #default="{ row }"><el-switch v-model="row.enabled" /></template></el-table-column>
+                      <el-table-column label="排序" width="150"><template #default="{ row }"><el-input-number v-model="row.sort_order" :min="0" :step="10" size="small" /></template></el-table-column>
+                      <el-table-column label="操作" width="150">
+                        <template #default="{ $index }">
+                          <el-button link type="primary" @click="moveHomeModule($index, -1)">上移</el-button>
+                          <el-button link type="primary" @click="moveHomeModule($index, 1)">下移</el-button>
+                        </template>
+                      </el-table-column>
+                    </el-table>
+                  </el-tab-pane>
+                  <el-tab-pane label="全站模块" name="global">
+                    <div class="global-module-grid">
+                      <label v-for="item in globalModuleItems" :key="item.key" class="module-toggle">
+                        <el-switch v-model="site.global_modules[item.key]" />
+                        <span><strong>{{ item.title }}</strong><small>{{ item.description }}</small></span>
+                      </label>
+                      <el-form label-width="96px" class="floating-text-form">
+                        <el-form-item label="浮动按钮文案"><el-input v-model="site.global_modules.floating_text" /></el-form-item>
+                      </el-form>
+                    </div>
+                  </el-tab-pane>
+                  <el-tab-pane label="模块注册表" name="registry">
+                    <el-table :data="moduleRegistry.modules || []" height="470">
+                      <el-table-column prop="key" label="Key" width="150" />
+                      <el-table-column prop="title" label="名称" width="140" />
+                      <el-table-column prop="scope" label="范围" width="110" />
+                      <el-table-column prop="render_slot" label="插槽" min-width="180" />
+                      <el-table-column prop="description" label="说明" min-width="240" />
+                    </el-table>
+                  </el-tab-pane>
+                </el-tabs>
+              </el-card>
+            </el-col>
+          </el-row>
+        </section>
+
         <section v-if="view === 'ai'">
           <el-row :gutter="16">
             <el-col :span="9">
@@ -366,6 +442,7 @@ const token = ref(localStorage.getItem(TOKEN_KEY) || '')
 const loading = ref(false)
 const generating = ref(false)
 const view = ref('dashboard')
+const templateTab = ref('home')
 
 const loginForm = reactive({ username: 'admin', password: 'admin123456' })
 const site = reactive<any>({ ai: {}, payment: {}, deploy: {}, content: {} })
@@ -378,6 +455,8 @@ const services = ref<any[]>([])
 const media = ref<any[]>([])
 const forms = ref<any[]>([])
 const versions = ref<any[]>([])
+const templates = ref<any[]>([])
+const moduleRegistry = ref<any>({ scopes: [], modules: [] })
 const servicePending = ref(0)
 const selectedServiceIds = ref<string[]>([])
 const orderDrawerVisible = ref(false)
@@ -406,6 +485,7 @@ const aiCoverLoading = ref('')
 const navItems = [
   { key: 'dashboard', label: '概览', hint: '查看运营指标、内容数量和站点状态。', icon: 'Odometer' },
   { key: 'settings', label: '站点', hint: '维护企业信息、SEO、AI、支付和发布配置。', icon: 'Setting' },
+  { key: 'templates', label: '模板', hint: '选择主题模板，启用首页与全站模块。', icon: 'Grid' },
   { key: 'ai', label: 'AI', hint: '批量生成文章、商品文案和封面素材。', icon: 'MagicStick' },
   { key: 'articles', label: '文章', hint: '管理 SEO 文章和知识库内容。', icon: 'Document' },
   { key: 'products', label: '商品', hint: '管理独立站商品与商城展示内容。', icon: 'Goods' },
@@ -418,6 +498,8 @@ const navItems = [
 const currentNav = computed(() => navItems.find((item) => item.key === view.value))
 const authHeaders = computed(() => ({ Authorization: `Bearer ${token.value}` }))
 const imageMedia = computed(() => media.value.filter((item) => item.file_type === 'image'))
+const homeModuleItems = computed(() => (moduleRegistry.value.modules || []).filter((item: any) => item.scope === 'home'))
+const globalModuleItems = computed(() => (moduleRegistry.value.modules || []).filter((item: any) => item.scope === 'global'))
 
 async function request(path: string, options: any = {}) {
   const response = await axios({
@@ -455,6 +537,7 @@ async function logout() {
 function setView(key: string) {
   view.value = key
   if (key === 'dashboard') loadDashboard()
+  if (key === 'templates') Promise.all([loadTemplates(), loadModuleRegistry()])
   if (key === 'articles') loadArticles()
   if (key === 'products') loadProducts()
   if (key === 'orders') loadOrders()
@@ -468,6 +551,7 @@ function refreshCurrentView() {
   const loaders: Record<string, () => Promise<void>> = {
     dashboard: loadDashboard,
     settings: loadSettings,
+    templates: async () => { await Promise.all([loadTemplates(), loadModuleRegistry(), loadSettings()]) },
     ai: async () => {},
     articles: loadArticles,
     products: loadProducts,
@@ -485,7 +569,7 @@ function openLegacyAdmin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadDashboard(), loadSettings(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadMedia(), loadForms(), loadVersions()])
+  await Promise.all([loadDashboard(), loadSettings(), loadTemplates(), loadModuleRegistry(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadMedia(), loadForms(), loadVersions()])
 }
 
 async function loadDashboard() {
@@ -511,19 +595,102 @@ async function loadSettings() {
 }
 
 function normalizeSite(data: any = {}) {
-  return {
+  const normalized = {
     ...data,
+    template_key: data.template_key || 'business-clean',
     ai: data.ai || {},
     payment: data.payment || {},
     deploy: data.deploy || {},
-    content: data.content || {}
+    content: data.content || {},
+    global_modules: {
+      search_nav: data.global_modules?.search_nav ?? true,
+      breadcrumbs: data.global_modules?.breadcrumbs ?? true,
+      related: data.global_modules?.related ?? true,
+      floating_inquiry: data.global_modules?.floating_inquiry ?? true,
+      floating_text: data.global_modules?.floating_text || '立即咨询'
+    },
+    home_modules: Array.isArray(data.home_modules) && data.home_modules.length ? data.home_modules : defaultHomeModules()
   }
+  return normalized
 }
 
 async function saveSettings() {
   const data = await request('/api/site/settings', { method: 'PUT', data: site })
   Object.assign(site, normalizeSite(data))
   ElMessage.success('站点设置已保存')
+}
+
+async function loadTemplates() {
+  const data = await request('/api/site/templates')
+  templates.value = data.items || []
+}
+
+async function loadModuleRegistry() {
+  const data = await request('/api/site/modules')
+  moduleRegistry.value = data || { scopes: [], modules: [] }
+  if (!site.home_modules?.length) {
+    site.home_modules = defaultHomeModules()
+  }
+}
+
+function defaultHomeModules() {
+  const modules = (moduleRegistry.value.modules || []).filter((item: any) => item.scope === 'home')
+  const fallback = modules.length ? modules : [
+    { key: 'about', title: '图文介绍' },
+    { key: 'advantages', title: '优势卖点' },
+    { key: 'cases', title: '案例展示' },
+    { key: 'products', title: '产品模块' },
+    { key: 'articles', title: '文章模块' },
+    { key: 'faq', title: 'FAQ' },
+    { key: 'inquiry', title: '询盘表单' }
+  ]
+  return fallback.map((item: any, index: number) => ({
+    key: item.key,
+    title: item.title || item.key,
+    enabled: item.enabled_by_default ?? true,
+    sort_order: (index + 1) * 10
+  }))
+}
+
+function moduleMeta(key: string) {
+  return (moduleRegistry.value.modules || []).find((item: any) => item.key === key) || {}
+}
+
+function moduleTitle(key: string) {
+  const meta = moduleMeta(key)
+  return meta.title || site.home_modules?.find((item: any) => item.key === key)?.title || key
+}
+
+function moduleDescription(key: string) {
+  return moduleMeta(key).description || '-'
+}
+
+function resetHomeModules() {
+  site.home_modules = defaultHomeModules()
+}
+
+function moveHomeModule(index: number, direction: number) {
+  const next = index + direction
+  if (next < 0 || next >= site.home_modules.length) return
+  const items = [...site.home_modules]
+  const current = items[index]
+  items[index] = items[next]
+  items[next] = current
+  site.home_modules = items.map((item, itemIndex) => ({ ...item, sort_order: (itemIndex + 1) * 10 }))
+}
+
+async function saveTemplateSettings() {
+  site.home_modules = [...site.home_modules]
+    .sort((a: any, b: any) => Number(a.sort_order || 0) - Number(b.sort_order || 0))
+    .map((item: any, index: number) => ({
+      key: item.key,
+      title: moduleTitle(item.key),
+      enabled: Boolean(item.enabled),
+      sort_order: Number(item.sort_order || (index + 1) * 10)
+    }))
+  const data = await request('/api/site/settings', { method: 'PUT', data: site })
+  Object.assign(site, normalizeSite(data))
+  ElMessage.success('模板与模块配置已保存')
 }
 
 async function loadArticles() {
