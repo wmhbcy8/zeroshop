@@ -1245,6 +1245,66 @@
           </el-drawer>
         </section>
 
+        <section v-if="view === 'seo'">
+          <el-row :gutter="16">
+            <el-col :span="8">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>SEO 体检</strong>
+                    <el-button @click="loadSeoAudit">重新检查</el-button>
+                  </div>
+                </template>
+                <div class="seo-score-box">
+                  <strong>{{ seoAudit.score ?? 0 }}</strong>
+                  <span>{{ seoAudit.grade || '-' }} 级</span>
+                  <small>{{ seoAudit.site_name || currentSite?.name || '当前站点' }}</small>
+                </div>
+                <el-descriptions :column="1" border>
+                  <el-descriptions-item label="主域名">{{ seoAudit.domain || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="页面">{{ seoAudit.summary?.pages || 0 }}</el-descriptions-item>
+                  <el-descriptions-item label="文章">{{ seoAudit.summary?.articles || 0 }}</el-descriptions-item>
+                  <el-descriptions-item label="商品">{{ seoAudit.summary?.products || 0 }}</el-descriptions-item>
+                  <el-descriptions-item label="Sitemap">{{ seoAudit.summary?.sitemap_ready ? '就绪' : '待配置域名' }}</el-descriptions-item>
+                  <el-descriptions-item label="搜索索引">{{ seoAudit.summary?.search_index_ready ? '就绪' : '待发布内容' }}</el-descriptions-item>
+                </el-descriptions>
+              </el-card>
+            </el-col>
+            <el-col :span="16">
+              <el-card class="panel" shadow="never">
+                <template #header><strong>站点级问题</strong></template>
+                <el-empty v-if="!seoAudit.issues?.length" description="站点基础 SEO 暂无明显问题" />
+                <div v-else class="seo-issue-list">
+                  <div v-for="(item, index) in seoAudit.issues" :key="index" class="seo-issue-item">
+                    <el-tag :type="seoIssueTag(item.level)">{{ item.level }}</el-tag>
+                    <span>{{ item.message }}</span>
+                  </div>
+                </div>
+              </el-card>
+              <el-card class="panel mt16" shadow="never">
+                <template #header><strong>内容 SEO 问题</strong></template>
+                <el-table :data="seoAudit.items || []" height="470" row-key="url">
+                  <el-table-column label="内容" min-width="260">
+                    <template #default="{ row }">
+                      <strong>{{ row.title }}</strong><br />
+                      <small>{{ seoTypeLabel(row.type) }} / {{ row.url }}</small>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="score" label="评分" width="90" />
+                  <el-table-column label="问题" min-width="360">
+                    <template #default="{ row }">
+                      <div class="seo-mini-issues">
+                        <el-tag v-for="issue in row.issues" :key="`${row.url}-${issue.field}`" size="small" :type="seoIssueTag(issue.level)">{{ issue.message }}</el-tag>
+                        <span v-if="!row.issues?.length">良好</span>
+                      </div>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </el-card>
+            </el-col>
+          </el-row>
+        </section>
+
         <section v-if="view === 'publish'">
           <el-card class="panel mb16" shadow="never">
             <template #header>
@@ -1457,6 +1517,7 @@ const collectorSources = ref<any[]>([])
 const collectorRecords = ref<any[]>([])
 const domains = ref<any[]>([])
 const paymentChannels = ref<any[]>([])
+const seoAudit = ref<any>({})
 const versions = ref<any[]>([])
 const batchTasks = ref<any[]>([])
 const batchTaskOverview = ref<any>({})
@@ -1572,6 +1633,7 @@ const navItems = [
   { key: 'media', label: '媒体库', hint: '上传并复用图片和文件素材。', icon: 'Picture' },
   { key: 'forms', label: '留言', hint: '处理询盘线索和联系表单。', icon: 'ChatLineRound' },
   { key: 'collector', label: '采集', hint: '管理 RSS 和指定 URL 采集，沉淀 SEO 文章草稿。', icon: 'Connection' },
+  { key: 'seo', label: 'SEO', hint: '检查站点基础信息、内容元信息、sitemap 和搜索索引准备度。', icon: 'TrendCharts' },
   { key: 'publish', label: '部署', hint: '配置宝塔面板、生成静态站并查看发布记录。', icon: 'Upload' }
 ]
 const currentNav = computed(() => navItems.find((item) => item.key === view.value))
@@ -1670,6 +1732,7 @@ function setView(key: string) {
   if (key === 'media') loadMedia()
   if (key === 'forms') loadForms()
   if (key === 'collector') loadCollector()
+  if (key === 'seo') loadSeoAudit()
   if (key === 'publish') loadVersions()
 }
 
@@ -1693,6 +1756,7 @@ function refreshCurrentView() {
     media: loadMedia,
     forms: loadForms,
     collector: loadCollector,
+    seo: loadSeoAudit,
     publish: loadVersions
   }
   loaders[view.value]?.().then(() => ElMessage.success('当前页面已刷新'))
@@ -1703,7 +1767,7 @@ function openLegacyAdmin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadPlatform(), loadSites(), loadDomains(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadCollector(), loadAiTasks(), loadVersions()])
+  await Promise.all([loadPlatform(), loadSites(), loadDomains(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadCollector(), loadSeoAudit(), loadAiTasks(), loadVersions()])
 }
 
 async function loadPlatform() {
@@ -1750,6 +1814,18 @@ async function loadSites() {
 async function loadDomains() {
   const data = await request('/api/site/domains')
   domains.value = data.items || []
+}
+
+async function loadSeoAudit() {
+  seoAudit.value = await request('/api/seo/audit')
+}
+
+function seoIssueTag(level: string) {
+  return level === 'error' ? 'danger' : (level === 'warning' ? 'warning' : 'info')
+}
+
+function seoTypeLabel(type: string) {
+  return ({ article: '文章', product: '商品', page: '页面' } as any)[type] || type || '-'
 }
 
 function resetDomainForm() {

@@ -2412,6 +2412,160 @@ function site_static_pages(PDO $pdo): array
     return ['site_id' => $siteId, 'items' => $items];
 }
 
+function seo_text_length(string $value): int
+{
+    return function_exists('mb_strlen') ? mb_strlen(trim($value), 'UTF-8') : strlen(trim($value));
+}
+
+function seo_plain_text(string $value): string
+{
+    return trim(preg_replace('/\s+/', ' ', strip_tags($value)));
+}
+
+function seo_slug_ok(string $slug): bool
+{
+    return (bool)preg_match('/^[a-z0-9][a-z0-9-]*[a-z0-9]$/', $slug) || (bool)preg_match('/^[a-z0-9]$/', $slug);
+}
+
+function seo_site_filtered_rows(PDO $pdo, string $type, string $table, string $columns, int $siteId): array
+{
+    $sql = "SELECT {$columns} FROM {$table} WHERE status = 'published'";
+    $params = [];
+    try {
+        $relationExists = (bool)$pdo->query("SHOW TABLES LIKE 'content_site_relations'")->fetchColumn();
+        if ($relationExists) {
+            $stmt = $pdo->prepare('SELECT COUNT(*) FROM content_site_relations WHERE content_type = ?');
+            $stmt->execute([$type]);
+            if ((int)$stmt->fetchColumn() > 0) {
+                $sql .= " AND id IN (SELECT content_id FROM content_site_relations WHERE content_type = :content_type AND site_id = :site_id)";
+                $params = ['content_type' => $type, 'site_id' => $siteId];
+            }
+        }
+    } catch (Throwable $error) {
+        $params = [];
+    }
+    $sql .= ' ORDER BY id DESC LIMIT 500';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll();
+}
+
+function seo_audit_item(array $row, string $type, string $urlPrefix, string $bodyField): array
+{
+    $issues = [];
+    $title = trim((string)($row['title'] ?? ''));
+    $slug = trim((string)($row['slug'] ?? ''));
+    $summary = trim((string)($row['summary'] ?? ''));
+    $seoTitle = trim((string)($row['seo_title'] ?? ''));
+    $seoKeywords = trim((string)($row['seo_keywords'] ?? ''));
+    $seoDescription = trim((string)($row['seo_description'] ?? ''));
+    $body = seo_plain_text((string)($row[$bodyField] ?? ''));
+
+    if ($seoTitle === '' || seo_text_length($seoTitle) < 8) {
+        $issues[] = ['level' => 'warning', 'field' => 'seo_title', 'message' => 'SEO 标题缺失或过短'];
+    }
+    if ($seoDescription === '' || seo_text_length($seoDescription) < 30) {
+        $issues[] = ['level' => 'warning', 'field' => 'seo_description', 'message' => 'SEO 描述缺失或过短'];
+    }
+    if ($seoKeywords === '') {
+        $issues[] = ['level' => 'info', 'field' => 'seo_keywords', 'message' => 'SEO 关键词为空'];
+    }
+    if ($slug === '' || !seo_slug_ok($slug)) {
+        $issues[] = ['level' => 'warning', 'field' => 'slug', 'message' => 'Slug 建议使用英文小写、数字和连字符'];
+    }
+    if ($summary === '' || seo_text_length($summary) < 20) {
+        $issues[] = ['level' => 'info', 'field' => 'summary', 'message' => '摘要偏短，不利于列表页和搜索摘要'];
+    }
+    if (seo_text_length($body) < 120) {
+        $issues[] = ['level' => 'info', 'field' => $bodyField, 'message' => '正文内容偏短，建议补充问题、方案、案例和参数'];
+    }
+
+    $score = max(0, 100 - count(array_filter($issues, fn($item) => $item['level'] === 'warning')) * 18 - count(array_filter($issues, fn($item) => $item['level'] === 'info')) * 8);
+    return [
+        'id' => (int)($row['id'] ?? 0),
+        'type' => $type,
+        'title' => $title,
+        'slug' => $slug,
+        'url' => $urlPrefix . $slug . '.html',
+        'score' => $score,
+        'issues' => $issues,
+        'issue_count' => count($issues),
+    ];
+}
+
+function seo_audit(PDO $pdo, PDO $main): array
+{
+    ensure_content_distribution_table($pdo);
+    $siteId = requested_site_id();
+    $site = site_settings($pdo, $siteId);
+    $current = current_site($main, $pdo);
+    $issues = [];
+
+    if (trim((string)($site['name'] ?? '')) === '') {
+        $issues[] = ['level' => 'error', 'scope' => 'site', 'message' => '站点名称为空'];
+    }
+    if (trim((string)($site['domain'] ?? $current['domain'] ?? '')) === '') {
+        $issues[] = ['level' => 'warning', 'scope' => 'site', 'message' => '未设置主域名，sitemap 会缺少正式域名'];
+    }
+    if (trim((string)($site['description'] ?? '')) === '') {
+        $issues[] = ['level' => 'warning', 'scope' => 'site', 'message' => '站点描述为空'];
+    }
+    if (trim((string)($site['keywords'] ?? '')) === '') {
+        $issues[] = ['level' => 'info', 'scope' => 'site', 'message' => '站点关键词为空'];
+    }
+    if (empty($site['nav']) || !is_array($site['nav'])) {
+        $issues[] = ['level' => 'warning', 'scope' => 'site', 'message' => '导航菜单为空'];
+    }
+
+    $articles = seo_site_filtered_rows($pdo, 'article', 'articles', 'id,title,slug,summary,content,seo_title,seo_keywords,seo_description', $siteId);
+    $products = seo_site_filtered_rows($pdo, 'product', 'products', 'id,title,slug,summary,description,seo_title,seo_keywords,seo_description', $siteId);
+    $pages = seo_site_filtered_rows($pdo, 'page', 'pages', 'id,title,slug,summary,content,seo_title,seo_keywords,seo_description', $siteId);
+
+    if (!$articles) {
+        $issues[] = ['level' => 'info', 'scope' => 'content', 'message' => '当前站点还没有已发布文章'];
+    }
+    if (!$products) {
+        $issues[] = ['level' => 'info', 'scope' => 'content', 'message' => '当前站点还没有已发布商品'];
+    }
+
+    $items = [];
+    foreach ($pages as $row) {
+        $items[] = seo_audit_item($row, 'page', '', 'content');
+    }
+    foreach ($articles as $row) {
+        $items[] = seo_audit_item($row, 'article', 'news/', 'content');
+    }
+    foreach ($products as $row) {
+        $items[] = seo_audit_item($row, 'product', 'products/', 'description');
+    }
+
+    $itemIssues = array_sum(array_map(fn($item) => (int)$item['issue_count'], $items));
+    $sitePenalty = count(array_filter($issues, fn($item) => $item['level'] === 'error')) * 25
+        + count(array_filter($issues, fn($item) => $item['level'] === 'warning')) * 12
+        + count(array_filter($issues, fn($item) => $item['level'] === 'info')) * 5;
+    $score = max(0, min(100, 100 - $sitePenalty - min(45, $itemIssues * 3)));
+    usort($items, fn($a, $b) => ($a['score'] <=> $b['score']) ?: ($b['issue_count'] <=> $a['issue_count']));
+
+    return [
+        'site_id' => $siteId,
+        'site_name' => $site['name'] ?? $current['name'] ?? '',
+        'domain' => $site['domain'] ?? $current['domain'] ?? '',
+        'score' => $score,
+        'grade' => $score >= 85 ? 'A' : ($score >= 70 ? 'B' : ($score >= 55 ? 'C' : 'D')),
+        'issues' => $issues,
+        'items' => $items,
+        'summary' => [
+            'pages' => count($pages),
+            'articles' => count($articles),
+            'products' => count($products),
+            'checked_items' => count($items),
+            'item_issues' => $itemIssues,
+            'sitemap_ready' => trim((string)($site['domain'] ?? $current['domain'] ?? '')) !== '',
+            'search_index_ready' => (count($articles) + count($products) + count($pages)) > 0,
+        ],
+    ];
+}
+
 function text_limit(string $value, int $length): string
 {
     if (function_exists('mb_substr')) {
@@ -3810,6 +3964,10 @@ try {
 
     if ($method === 'GET' && $path === '/site/templates') {
         ok(template_registry());
+    }
+
+    if ($method === 'GET' && $path === '/seo/audit') {
+        ok(seo_audit($pdo, main_pdo()));
     }
 
     if ($method === 'GET' && $path === '/payment/channels') {
