@@ -782,27 +782,6 @@
                   </el-form-item>
                 </el-form>
               </el-card>
-              <el-card class="panel mt16" shadow="never">
-                <template #header><strong>AI 接口配置</strong></template>
-                <el-form :model="site.ai" label-width="96px">
-                  <el-form-item label="平台服务">
-                    <div class="inline-form-row">
-                      <el-select v-model="selectedAiProviderId" filterable placeholder="选择平台 AI 服务">
-                        <el-option v-for="item in aiProviders" :key="item.id" :label="`${item.name} / ${item.text_model || '-'}`" :value="item.id" />
-                      </el-select>
-                      <el-button :disabled="!selectedAiProviderId" @click="applySelectedAiProvider">导入到当前站</el-button>
-                    </div>
-                  </el-form-item>
-                  <el-form-item label="服务商"><el-input v-model="site.ai.provider" placeholder="OpenAI / DeepSeek / 通义千问" /></el-form-item>
-                  <el-form-item label="模型名称"><el-input v-model="site.ai.model" placeholder="例如：gpt-4.1-mini" /></el-form-item>
-                  <el-form-item label="API 地址"><el-input v-model="site.ai.endpoint" placeholder="https://api.example.com/v1/chat/completions" /></el-form-item>
-                  <el-form-item label="API Key"><el-input v-model="site.ai.api_key" type="password" show-password /></el-form-item>
-                  <div class="form-actions">
-                    <el-button @click="saveSettings">保存当前站点 AI</el-button>
-                    <el-button @click="saveSettingsAsDefault">保存为公共默认</el-button>
-                  </div>
-                </el-form>
-              </el-card>
             </el-col>
             <el-col :span="15">
               <el-card class="panel" shadow="never">
@@ -891,6 +870,57 @@
             @bulk-distribute="bulkDistributeArticles"
             @page-change="changeArticlePage"
           />
+        </section>
+
+        <section v-if="view === 'ai-settings'">
+          <el-card class="panel mb16" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>当前站点 AI 配置</strong>
+                <div class="head-actions">
+                  <el-button @click="saveSettings">保存当前站点 AI</el-button>
+                  <el-button @click="saveSettingsAsDefault">保存为公共默认</el-button>
+                </div>
+              </div>
+            </template>
+            <el-alert
+              class="mb16"
+              type="info"
+              show-icon
+              :closable="false"
+              :title="`当前编辑：${currentSite?.name || site.name || '默认站点'}。AI 接口配置属于站点服务能力，保存后文章、商品、图片生成会优先使用这套配置。`"
+            />
+            <el-form :model="site.ai" label-width="108px" class="wide-form">
+              <el-form-item label="平台服务">
+                <div class="inline-form-row">
+                  <el-select v-model="selectedAiProviderId" filterable placeholder="选择平台 AI 服务">
+                    <el-option v-for="item in aiProviders" :key="item.id" :label="`${item.name} / ${item.text_model || '-'}`" :value="item.id" />
+                  </el-select>
+                  <el-button :disabled="!selectedAiProviderId" @click="applySelectedAiProvider">导入到当前站</el-button>
+                </div>
+              </el-form-item>
+              <el-row :gutter="16">
+                <el-col :span="12"><el-form-item label="服务商"><el-input v-model="site.ai.provider" placeholder="OpenAI / DeepSeek / 通义千问" /></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="模型名称"><el-input v-model="site.ai.model" placeholder="例如：gpt-4.1-mini" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="API 地址"><el-input v-model="site.ai.endpoint" placeholder="https://api.example.com/v1/chat/completions" /></el-form-item>
+              <el-row :gutter="16">
+                <el-col :span="12"><el-form-item label="API Key"><el-input v-model="site.ai.api_key" type="password" show-password placeholder="留空则保留原密钥" /></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="图片模型"><el-input v-model="site.ai.image_model" placeholder="可选" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="视频模型"><el-input v-model="site.ai.video_model" placeholder="可选，预留给后续视频生成接口" /></el-form-item>
+            </el-form>
+          </el-card>
+          <el-card class="panel" shadow="never">
+            <template #header><strong>AI 发布逻辑</strong></template>
+            <div class="capability-list">
+              <span>AI 菜单负责生成文章、商品、图片和任务</span>
+              <span>文章/商品编辑器可单条选择当前站点、全部站点或指定站点</span>
+              <span>批量入库会按选择范围写入内容分发关系</span>
+              <span>生成静态站时，每个前台只读取分发给自己的内容</span>
+              <span>公共默认只用于新站继承；当前站点可保留独立 AI 密钥</span>
+            </div>
+          </el-card>
         </section>
 
         <section v-if="view === 'pages'">
@@ -1884,6 +1914,7 @@ const navItems = [
   { key: 'templates', label: '模板', hint: '选择主题模板，启用首页与全站模块。', icon: 'Grid' },
   { key: 'pages', label: '页面', hint: '管理关于我们、服务介绍、专题落地页等普通静态页面。', icon: 'Files' },
   { key: 'ai', label: 'AI', hint: '批量生成文章、商品文案和封面素材。', icon: 'MagicStick' },
+  { key: 'ai-settings', label: 'AI配置', hint: '配置当前站点的大模型接口、图片模型和视频模型。', icon: 'Cpu' },
   { key: 'articles', label: '文章', hint: '管理 SEO 文章和知识库内容。', icon: 'Document' },
   { key: 'products', label: '商品', hint: '管理独立站商品与商城展示内容。', icon: 'Goods' },
   { key: 'categories', label: '分类', hint: '管理文章分类和商品分类，生成 SEO 分类聚合页。', icon: 'FolderOpened' },
@@ -1992,7 +2023,8 @@ function setView(key: string) {
   if (key === 'domains') loadDomains()
   if (key === 'templates') Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry()])
   if (key === 'pages') loadPages()
-  if (key === 'ai') Promise.all([loadSettings(), loadAiTasks(), isPlatformAdmin.value ? loadPlatform() : Promise.resolve()])
+  if (key === 'ai') Promise.all([loadAiTasks(), loadSites()])
+  if (key === 'ai-settings') Promise.all([loadSettings(), isPlatformAdmin.value ? loadPlatform() : Promise.resolve()])
   if (key === 'articles') loadArticles()
   if (key === 'products') loadProducts()
   if (key === 'categories') loadCategories()
@@ -2016,7 +2048,8 @@ function refreshCurrentView() {
     domains: loadDomains,
     settings: async () => { await Promise.all([loadSettings(), loadStaticPages()]) },
     templates: async () => { await Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry(), loadSettings(), loadStaticPages()]) },
-    ai: async () => { await Promise.all([loadSettings(), loadAiTasks(), isPlatformAdmin.value ? loadPlatform() : Promise.resolve()]) },
+    ai: async () => { await Promise.all([loadAiTasks(), loadSites()]) },
+    'ai-settings': async () => { await Promise.all([loadSettings(), isPlatformAdmin.value ? loadPlatform() : Promise.resolve()]) },
     pages: loadPages,
     articles: async () => { await Promise.all([loadArticles(), loadCategories()]) },
     products: async () => { await Promise.all([loadProducts(), loadCategories()]) },
@@ -2883,7 +2916,10 @@ async function deleteCategory(type: 'article' | 'product', item: any) {
 }
 
 function allSiteIds() {
-  return sites.value.map((item: any) => Number(item.id)).filter((id) => id > 0)
+  return sites.value
+    .filter((item: any) => (item.status || 'active') === 'active')
+    .map((item: any) => Number(item.id))
+    .filter((id) => id > 0)
 }
 
 function currentSiteIds() {
@@ -3053,11 +3089,20 @@ function normalizeAiDraft(type: string, draft: any, index = 1) {
 }
 
 async function generateAiPreview() {
+  syncAiSiteScope()
   aiLoading.value = true
   try {
     const items = []
     for (let index = 1; index <= Math.min(3, aiForm.count); index++) {
-      const data = await request('/api/ai/generate', { method: 'POST', data: { type: aiForm.type, prompt: aiPromptFor(index) } })
+      const data = await request('/api/ai/generate', {
+        method: 'POST',
+        data: {
+          type: aiForm.type,
+          prompt: aiPromptFor(index),
+          site_scope: aiForm.site_scope,
+          site_ids: aiForm.site_ids
+        }
+      })
       items.push(normalizeAiDraft(aiForm.type, data.draft || data, index))
     }
     aiDrafts.value = items
@@ -3078,6 +3123,7 @@ async function loadAiTasks() {
 }
 
 async function createAiTask() {
+  syncAiSiteScope()
   aiTaskLoading.value = true
   try {
     const task = await request('/api/ai/tasks', {
@@ -3153,6 +3199,7 @@ async function saveAiDraft(item: any, index: number, status: 'draft' | 'publishe
 }
 
 async function batchCreateAiContent() {
+  syncAiSiteScope()
   aiBatchLoading.value = true
   try {
     const path = aiForm.type === 'article' ? '/api/ai/batch-articles' : '/api/ai/batch-products'

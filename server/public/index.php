@@ -2828,9 +2828,17 @@ function normalize_site_ids(array $data): array
             ensure_center_tables($main);
             $allowed = allowed_site_ids_for_user($main);
             if ($allowed !== null) {
-                return $allowed ?: [requested_site_id()];
+                $allowed = array_values(array_unique(array_filter(array_map('intval', $allowed), fn($id) => $id > 0)));
+                if ($allowed) {
+                    $placeholders = implode(',', array_fill(0, count($allowed), '?'));
+                    $stmt = $main->prepare("SELECT id FROM sites WHERE status = 'active' AND id IN ({$placeholders}) ORDER BY id ASC");
+                    $stmt->execute($allowed);
+                    $activeAllowed = array_values(array_unique(array_filter(array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN)), fn($id) => $id > 0)));
+                    return $activeAllowed ?: [requested_site_id()];
+                }
+                return [requested_site_id()];
             }
-            $ids = $main->query('SELECT id FROM sites ORDER BY id ASC')->fetchAll(PDO::FETCH_COLUMN);
+            $ids = $main->query("SELECT id FROM sites WHERE status = 'active' ORDER BY id ASC")->fetchAll(PDO::FETCH_COLUMN);
             $ids = array_values(array_unique(array_filter(array_map('intval', $ids), fn($id) => $id > 0)));
             if ($ids) {
                 return $ids;

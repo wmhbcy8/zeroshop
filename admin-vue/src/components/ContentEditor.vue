@@ -166,7 +166,10 @@ function generateDraft() {
 }
 
 function allSiteIds() {
-  return props.sites.map((site: any) => Number(site.id)).filter((id: number) => id > 0)
+  return props.sites
+    .filter((site: any) => (site.status || 'active') === 'active')
+    .map((site: any) => Number(site.id))
+    .filter((id: number) => id > 0)
 }
 
 function currentSiteIds() {
@@ -210,7 +213,7 @@ function selectCover(item: any) {
 
 function syncScope() {
   if (props.form.site_scope === 'all') {
-    props.form.site_ids = props.sites.map((site: any) => Number(site.id))
+    props.form.site_ids = allSiteIds()
     return
   }
   if (props.form.site_scope === 'current' || !props.form.site_scope) {
