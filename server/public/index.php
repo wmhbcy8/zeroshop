@@ -1175,6 +1175,166 @@ function list_batch_tasks(PDO $main): array
     ];
 }
 
+function platform_customer_payload(array $data, array $current = []): array
+{
+    $name = trim((string)($data['name'] ?? ($current['name'] ?? '')));
+    if ($name === '') {
+        fail('客户名称不能为空', 'VALIDATION_ERROR', 422);
+    }
+    $status = trim((string)($data['status'] ?? ($current['status'] ?? 'active')));
+    if (!in_array($status, ['active', 'disabled', 'expired'], true)) {
+        $status = 'active';
+    }
+    $plan = trim((string)($data['plan_key'] ?? ($current['plan_key'] ?? 'starter'))) ?: 'starter';
+    return [
+        'name' => mb_substr($name, 0, 100, 'UTF-8'),
+        'company' => mb_substr(trim((string)($data['company'] ?? ($current['company'] ?? ''))), 0, 150, 'UTF-8'),
+        'phone' => mb_substr(trim((string)($data['phone'] ?? ($current['phone'] ?? ''))), 0, 50, 'UTF-8'),
+        'email' => mb_substr(trim((string)($data['email'] ?? ($current['email'] ?? ''))), 0, 120, 'UTF-8'),
+        'plan_key' => mb_substr($plan, 0, 60, 'UTF-8'),
+        'max_sites' => max(1, (int)($data['max_sites'] ?? ($current['max_sites'] ?? 10))),
+        'ai_quota' => max(0, (int)($data['ai_quota'] ?? ($current['ai_quota'] ?? 1000))),
+        'storage_quota_mb' => max(0, (int)($data['storage_quota_mb'] ?? ($current['storage_quota_mb'] ?? 1024))),
+        'expires_at' => trim((string)($data['expires_at'] ?? ($current['expires_at'] ?? ''))) ?: null,
+        'status' => $status,
+    ];
+}
+
+function list_platform_customers(PDO $main): array
+{
+    ensure_center_tables($main);
+    $where = [];
+    $params = [];
+    $keyword = trim((string)($_GET['keyword'] ?? ''));
+    if ($keyword !== '') {
+        $where[] = '(c.name LIKE :keyword OR c.company LIKE :keyword OR c.phone LIKE :keyword OR c.email LIKE :keyword)';
+        $params['keyword'] = '%' . $keyword . '%';
+    }
+    $status = trim((string)($_GET['status'] ?? ''));
+    if ($status !== '') {
+        $where[] = 'c.status = :status';
+        $params['status'] = $status;
+    }
+    $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $offset = ($page - 1) * $pageSize;
+    $countStmt = $main->prepare("SELECT COUNT(*) FROM customers c {$whereSql}");
+    $countStmt->execute($params);
+    $total = (int)$countStmt->fetchColumn();
+    $stmt = $main->prepare("SELECT c.*, COUNT(s.id) AS site_count, SUM(s.status = 'active') AS active_site_count
+        FROM customers c
+        LEFT JOIN sites s ON s.customer_id = c.id
+        {$whereSql}
+        GROUP BY c.id
+        ORDER BY c.id DESC
+        LIMIT {$pageSize} OFFSET {$offset}");
+    $stmt->execute($params);
+    return [
+        'items' => array_map(function (array $row) {
+            $row['site_count'] = (int)($row['site_count'] ?? 0);
+            $row['active_site_count'] = (int)($row['active_site_count'] ?? 0);
+            return $row;
+        }, $stmt->fetchAll()),
+        'pagination' => [
+            'page' => $page,
+            'page_size' => $pageSize,
+            'total' => $total,
+            'total_pages' => (int)ceil($total / $pageSize),
+        ],
+    ];
+}
+
+function save_platform_customer(PDO $main, array $data, ?int $id = null): array
+{
+    ensure_center_tables($main);
+    $current = $id ? fetch_one($main, 'customers', $id) : [];
+    if ($id && !$current) {
+        fail('客户不存在', 'NOT_FOUND', 404);
+    }
+    $payload = platform_customer_payload($data, $current ?: []);
+    $now = now();
+    if ($id) {
+        $stmt = $main->prepare('UPDATE customers SET name=:name, company=:company, phone=:phone, email=:email, plan_key=:plan_key, max_sites=:max_sites, ai_quota=:ai_quota, storage_quota_mb=:storage_quota_mb, expires_at=:expires_at, status=:status, updated_at=:updated_at WHERE id=:id');
+        $stmt->execute($payload + ['id' => $id, 'updated_at' => $now]);
+    } else {
+        $stmt = $main->prepare('INSERT INTO customers (name, company, phone, email, plan_key, max_sites, ai_quota, storage_quota_mb, expires_at, status, created_at, updated_at)
+            VALUES (:name, :company, :phone, :email, :plan_key, :max_sites, :ai_quota, :storage_quota_mb, :expires_at, :status, :created_at, :updated_at)');
+        $stmt->execute($payload + ['created_at' => $now, 'updated_at' => $now]);
+        $id = (int)$main->lastInsertId();
+    }
+    return fetch_one($main, 'customers', (int)$id) ?: [];
+}
+
+function deploy_node_payload(array $data, array $current = []): array
+{
+    $name = trim((string)($data['name'] ?? ($current['name'] ?? '')));
+    if ($name === '') {
+        fail('节点名称不能为空', 'VALIDATION_ERROR', 422);
+    }
+    $status = trim((string)($data['status'] ?? ($current['status'] ?? 'active')));
+    if (!in_array($status, ['active', 'disabled'], true)) {
+        $status = 'active';
+    }
+    return [
+        'name' => mb_substr($name, 0, 120, 'UTF-8'),
+        'node_type' => mb_substr(trim((string)($data['node_type'] ?? ($current['node_type'] ?? 'bt-panel'))) ?: 'bt-panel', 0, 40, 'UTF-8'),
+        'server_ip' => mb_substr(trim((string)($data['server_ip'] ?? ($current['server_ip'] ?? ''))), 0, 80, 'UTF-8'),
+        'panel_url' => mb_substr(trim((string)($data['panel_url'] ?? ($current['panel_url'] ?? ''))), 0, 255, 'UTF-8'),
+        'api_key' => trim((string)($data['api_key'] ?? ($current['api_key'] ?? ''))),
+        'root_path' => mb_substr(trim((string)($data['root_path'] ?? ($current['root_path'] ?? ''))), 0, 255, 'UTF-8'),
+        'status' => $status,
+    ];
+}
+
+function list_deploy_nodes(PDO $main): array
+{
+    ensure_center_tables($main);
+    $rows = $main->query("SELECT n.*, COUNT(s.id) AS site_count FROM deploy_nodes n LEFT JOIN sites s ON s.deploy_node_id = n.id GROUP BY n.id ORDER BY n.id DESC")->fetchAll();
+    return ['items' => array_map(function (array $row) {
+        $row['site_count'] = (int)($row['site_count'] ?? 0);
+        if (!empty($row['api_key'])) {
+            $row['api_key_masked'] = str_repeat('*', 8);
+        }
+        return $row;
+    }, $rows)];
+}
+
+function save_deploy_node(PDO $main, array $data, ?int $id = null): array
+{
+    ensure_center_tables($main);
+    $current = $id ? fetch_one($main, 'deploy_nodes', $id) : [];
+    if ($id && !$current) {
+        fail('部署节点不存在', 'NOT_FOUND', 404);
+    }
+    $payload = deploy_node_payload($data, $current ?: []);
+    $now = now();
+    if ($id) {
+        $stmt = $main->prepare('UPDATE deploy_nodes SET name=:name, node_type=:node_type, server_ip=:server_ip, panel_url=:panel_url, api_key=:api_key, root_path=:root_path, status=:status, updated_at=:updated_at WHERE id=:id');
+        $stmt->execute($payload + ['id' => $id, 'updated_at' => $now]);
+    } else {
+        $stmt = $main->prepare('INSERT INTO deploy_nodes (name, node_type, server_ip, panel_url, api_key, root_path, status, created_at, updated_at)
+            VALUES (:name, :node_type, :server_ip, :panel_url, :api_key, :root_path, :status, :created_at, :updated_at)');
+        $stmt->execute($payload + ['created_at' => $now, 'updated_at' => $now]);
+        $id = (int)$main->lastInsertId();
+    }
+    return fetch_one($main, 'deploy_nodes', (int)$id) ?: [];
+}
+
+function test_deploy_node(PDO $main, int $id): array
+{
+    ensure_center_tables($main);
+    $node = fetch_one($main, 'deploy_nodes', $id);
+    if (!$node) {
+        fail('部署节点不存在', 'NOT_FOUND', 404);
+    }
+    $ok = trim((string)($node['panel_url'] ?? '')) !== '' && trim((string)($node['root_path'] ?? '')) !== '';
+    $result = $ok ? '配置完整，等待接入宝塔 API 实测' : '请补全面板地址和服务器根目录';
+    $main->prepare('UPDATE deploy_nodes SET last_checked_at=:last_checked_at, last_result=:last_result, updated_at=:updated_at WHERE id=:id')
+        ->execute(['id' => $id, 'last_checked_at' => now(), 'last_result' => $result, 'updated_at' => now()]);
+    return fetch_one($main, 'deploy_nodes', $id) ?: [];
+}
+
 function batch_task_filter_sql(): array
 {
     $action = trim((string)($_GET['action'] ?? ''));
@@ -3359,6 +3519,91 @@ try {
 
     if ($method === 'GET' && $path === '/dashboard/metrics') {
         ok(dashboard_metrics($pdo));
+    }
+
+    if ($method === 'GET' && $path === '/platform/overview') {
+        $main = main_pdo();
+        ensure_center_tables($main);
+        ok([
+            'customers' => (int)$main->query('SELECT COUNT(*) FROM customers')->fetchColumn(),
+            'active_customers' => (int)$main->query("SELECT COUNT(*) FROM customers WHERE status = 'active'")->fetchColumn(),
+            'sites' => (int)$main->query('SELECT COUNT(*) FROM sites')->fetchColumn(),
+            'active_sites' => (int)$main->query("SELECT COUNT(*) FROM sites WHERE status = 'active'")->fetchColumn(),
+            'deploy_nodes' => (int)$main->query('SELECT COUNT(*) FROM deploy_nodes')->fetchColumn(),
+            'active_deploy_nodes' => (int)$main->query("SELECT COUNT(*) FROM deploy_nodes WHERE status = 'active'")->fetchColumn(),
+        ]);
+    }
+
+    if ($method === 'GET' && $path === '/platform/customers') {
+        ok(list_platform_customers(main_pdo()));
+    }
+
+    if ($method === 'POST' && $path === '/platform/customers') {
+        ok(save_platform_customer(main_pdo(), body_json()), '客户已保存');
+    }
+
+    if ($params = route_param('/platform/customers/{id}', $path)) {
+        $id = (int)$params['id'];
+        $main = main_pdo();
+        ensure_center_tables($main);
+        if ($method === 'GET') {
+            $item = fetch_one($main, 'customers', $id);
+            if (!$item) {
+                fail('客户不存在', 'NOT_FOUND', 404);
+            }
+            ok($item);
+        }
+        if ($method === 'PUT') {
+            ok(save_platform_customer($main, body_json(), $id), '客户已保存');
+        }
+        if ($method === 'DELETE') {
+            $stmt = $main->prepare('SELECT COUNT(*) FROM sites WHERE customer_id = ?');
+            $stmt->execute([$id]);
+            if ((int)$stmt->fetchColumn() > 0) {
+                fail('客户名下还有站点，不能删除', 'CUSTOMER_HAS_SITES', 409);
+            }
+            $main->prepare('DELETE FROM customers WHERE id = ?')->execute([$id]);
+            ok([], '客户已删除');
+        }
+    }
+
+    if ($method === 'GET' && $path === '/platform/sites') {
+        $main = main_pdo();
+        ensure_center_tables($main);
+        $stmt = $main->query("SELECT s.*, c.name AS customer_name, n.name AS deploy_node_name
+            FROM sites s
+            LEFT JOIN customers c ON c.id = s.customer_id
+            LEFT JOIN deploy_nodes n ON n.id = s.deploy_node_id
+            ORDER BY s.id DESC");
+        ok(['items' => $stmt->fetchAll()]);
+    }
+
+    if ($method === 'GET' && $path === '/platform/deploy-nodes') {
+        ok(list_deploy_nodes(main_pdo()));
+    }
+
+    if ($method === 'POST' && $path === '/platform/deploy-nodes') {
+        ok(save_deploy_node(main_pdo(), body_json()), '部署节点已保存');
+    }
+
+    if ($params = route_param('/platform/deploy-nodes/{id}/test', $path)) {
+        if ($method === 'POST') {
+            ok(test_deploy_node(main_pdo(), (int)$params['id']), '部署节点检查完成');
+        }
+    }
+
+    if ($params = route_param('/platform/deploy-nodes/{id}', $path)) {
+        $id = (int)$params['id'];
+        if ($method === 'PUT') {
+            ok(save_deploy_node(main_pdo(), body_json(), $id), '部署节点已保存');
+        }
+        if ($method === 'DELETE') {
+            $main = main_pdo();
+            ensure_center_tables($main);
+            $main->prepare('UPDATE sites SET deploy_node_id = NULL WHERE deploy_node_id = ?')->execute([$id]);
+            $main->prepare('DELETE FROM deploy_nodes WHERE id = ?')->execute([$id]);
+            ok([], '部署节点已删除');
+        }
     }
 
     if ($method === 'GET' && $path === '/sites') {

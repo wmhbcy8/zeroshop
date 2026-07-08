@@ -22,7 +22,7 @@
         <span>简</span>
         <div>
           <strong>化简</strong>
-          <small>客户中台</small>
+          <small>{{ view === 'platform' ? '平台后台' : '客户中台' }}</small>
         </div>
       </div>
       <el-menu :default-active="view" class="menu" @select="setView">
@@ -59,6 +59,133 @@
       </el-header>
 
       <el-main class="main">
+        <section v-if="view === 'platform'">
+          <div class="metric-grid">
+            <MetricCard title="客户总数" :value="platformOverview.customers || 0" :note="`启用 ${platformOverview.active_customers || 0}`" icon="User" />
+            <MetricCard title="站点总数" :value="platformOverview.sites || 0" :note="`启用 ${platformOverview.active_sites || 0}`" icon="Grid" />
+            <MetricCard title="部署节点" :value="platformOverview.deploy_nodes || 0" :note="`可用 ${platformOverview.active_deploy_nodes || 0}`" icon="Upload" />
+            <MetricCard title="客户套餐" value="套餐/配额" note="控制站点数、AI额度和存储空间" icon="Tickets" />
+          </div>
+          <el-row :gutter="16">
+            <el-col :span="14">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>客户管理</strong>
+                    <el-button type="primary" @click="newPlatformCustomer">新建客户</el-button>
+                  </div>
+                </template>
+                <el-table :data="platformCustomers" height="360" row-key="id">
+                  <el-table-column label="客户" min-width="220">
+                    <template #default="{ row }">
+                      <strong>{{ row.name }}</strong><br />
+                      <small>{{ row.company || row.phone || row.email || '-' }}</small>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="套餐" width="150">
+                    <template #default="{ row }">{{ row.plan_key }} / {{ row.max_sites }} 站</template>
+                  </el-table-column>
+                  <el-table-column label="配额" width="170">
+                    <template #default="{ row }">AI {{ row.ai_quota }} / {{ row.storage_quota_mb }}MB</template>
+                  </el-table-column>
+                  <el-table-column label="站点" width="100">
+                    <template #default="{ row }">{{ row.site_count || 0 }}</template>
+                  </el-table-column>
+                  <el-table-column label="状态" width="100">
+                    <template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status }}</el-tag></template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="130">
+                    <template #default="{ row }">
+                      <el-button link type="primary" @click="editPlatformCustomer(row)">编辑</el-button>
+                      <el-button link type="danger" @click="deletePlatformCustomer(row)">删除</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </el-card>
+            </el-col>
+            <el-col :span="10">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>部署节点</strong>
+                    <el-button type="primary" @click="newDeployNode">新建节点</el-button>
+                  </div>
+                </template>
+                <el-table :data="deployNodes" height="360" row-key="id">
+                  <el-table-column label="节点" min-width="180">
+                    <template #default="{ row }">
+                      <strong>{{ row.name }}</strong><br />
+                      <small>{{ row.panel_url || row.server_ip || '-' }}</small>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="站点" width="70"><template #default="{ row }">{{ row.site_count || 0 }}</template></el-table-column>
+                  <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag>{{ row.status }}</el-tag></template></el-table-column>
+                  <el-table-column label="操作" width="170">
+                    <template #default="{ row }">
+                      <el-button link type="primary" @click="testDeployNode(row)">检查</el-button>
+                      <el-button link type="primary" @click="editDeployNode(row)">编辑</el-button>
+                      <el-button link type="danger" @click="deleteDeployNode(row)">删除</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </el-card>
+            </el-col>
+          </el-row>
+          <el-card class="panel mt16" shadow="never">
+            <template #header><strong>平台站点总览</strong></template>
+            <el-table :data="platformSites" height="300" row-key="id">
+              <el-table-column label="站点" min-width="220"><template #default="{ row }"><strong>{{ row.name }}</strong><br /><small>{{ row.domain || row.subdomain || row.site_key }}</small></template></el-table-column>
+              <el-table-column prop="customer_name" label="客户" width="160" />
+              <el-table-column prop="template_key" label="模板" width="150" />
+              <el-table-column prop="deploy_node_name" label="部署节点" width="160" />
+              <el-table-column prop="public_path" label="发布目录" min-width="220" />
+              <el-table-column prop="status" label="状态" width="100" />
+            </el-table>
+          </el-card>
+          <el-drawer v-model="platformCustomerDrawerVisible" size="560px" :title="platformCustomerForm.id ? '编辑客户' : '新建客户'">
+            <el-form :model="platformCustomerForm" label-width="108px">
+              <el-form-item label="客户名称"><el-input v-model="platformCustomerForm.name" /></el-form-item>
+              <el-form-item label="公司名称"><el-input v-model="platformCustomerForm.company" /></el-form-item>
+              <el-row :gutter="12">
+                <el-col :span="12"><el-form-item label="手机号"><el-input v-model="platformCustomerForm.phone" /></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="邮箱"><el-input v-model="platformCustomerForm.email" /></el-form-item></el-col>
+              </el-row>
+              <el-divider content-position="left">套餐配额</el-divider>
+              <el-row :gutter="12">
+                <el-col :span="12"><el-form-item label="套餐"><el-select v-model="platformCustomerForm.plan_key"><el-option label="Starter" value="starter" /><el-option label="Growth" value="growth" /><el-option label="Enterprise" value="enterprise" /></el-select></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="到期日"><el-date-picker v-model="platformCustomerForm.expires_at" value-format="YYYY-MM-DD" type="date" placeholder="可选" /></el-form-item></el-col>
+              </el-row>
+              <el-row :gutter="12">
+                <el-col :span="8"><el-form-item label="站点数"><el-input-number v-model="platformCustomerForm.max_sites" :min="1" /></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="AI额度"><el-input-number v-model="platformCustomerForm.ai_quota" :min="0" /></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="存储MB"><el-input-number v-model="platformCustomerForm.storage_quota_mb" :min="0" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="状态"><el-select v-model="platformCustomerForm.status"><el-option label="启用" value="active" /><el-option label="停用" value="disabled" /><el-option label="过期" value="expired" /></el-select></el-form-item>
+              <div class="drawer-actions">
+                <el-button @click="platformCustomerDrawerVisible = false">取消</el-button>
+                <el-button type="primary" @click="savePlatformCustomer">保存客户</el-button>
+              </div>
+            </el-form>
+          </el-drawer>
+          <el-drawer v-model="deployNodeDrawerVisible" size="560px" :title="deployNodeForm.id ? '编辑部署节点' : '新建部署节点'">
+            <el-form :model="deployNodeForm" label-width="108px">
+              <el-form-item label="节点名称"><el-input v-model="deployNodeForm.name" /></el-form-item>
+              <el-row :gutter="12">
+                <el-col :span="12"><el-form-item label="节点类型"><el-select v-model="deployNodeForm.node_type"><el-option label="宝塔面板" value="bt-panel" /><el-option label="手动服务器" value="manual" /><el-option label="SFTP" value="sftp" /></el-select></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="服务器IP"><el-input v-model="deployNodeForm.server_ip" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="面板地址"><el-input v-model="deployNodeForm.panel_url" placeholder="https://server:8888" /></el-form-item>
+              <el-form-item label="API Key"><el-input v-model="deployNodeForm.api_key" type="password" show-password /></el-form-item>
+              <el-form-item label="根目录"><el-input v-model="deployNodeForm.root_path" placeholder="/www/wwwroot" /></el-form-item>
+              <el-form-item label="状态"><el-select v-model="deployNodeForm.status"><el-option label="启用" value="active" /><el-option label="停用" value="disabled" /></el-select></el-form-item>
+              <div class="drawer-actions">
+                <el-button @click="deployNodeDrawerVisible = false">取消</el-button>
+                <el-button type="primary" @click="saveDeployNode">保存节点</el-button>
+              </div>
+            </el-form>
+          </el-drawer>
+        </section>
+
         <section v-if="view === 'dashboard'">
           <div class="metric-grid">
             <MetricCard title="站点总数" :value="centerOverview.sites || sites.length" note="客户名下前台站点" icon="Grid" />
@@ -1269,6 +1396,10 @@ const batchTasks = ref<any[]>([])
 const batchTaskOverview = ref<any>({})
 const sites = ref<any[]>([])
 const centerOverview = ref<any>({})
+const platformOverview = ref<any>({})
+const platformCustomers = ref<any[]>([])
+const platformSites = ref<any[]>([])
+const deployNodes = ref<any[]>([])
 const currentSiteId = ref<number | string>(10001)
 const operationSiteScope = ref('all')
 const templates = ref<any[]>([])
@@ -1284,6 +1415,8 @@ const publishDrawerVisible = ref(false)
 const siteDrawerVisible = ref(false)
 const batchTaskDrawerVisible = ref(false)
 const categoryDrawerVisible = ref(false)
+const platformCustomerDrawerVisible = ref(false)
+const deployNodeDrawerVisible = ref(false)
 const publishResult = ref<any>(null)
 const deployTesting = ref(false)
 const packaging = ref(false)
@@ -1307,6 +1440,8 @@ const publishDetail = reactive<any>({})
 const batchTaskDetail = reactive<any>({})
 const categoryForm = reactive<any>({})
 const categoryType = ref<'article' | 'product'>('article')
+const platformCustomerForm = reactive<any>({})
+const deployNodeForm = reactive<any>({})
 const publishSummary = computed(() => parseSummary(publishDetail.summary))
 const publishResultTitle = computed(() => {
   if (!publishResult.value) return ''
@@ -1351,6 +1486,7 @@ const siteCreating = ref(false)
 const collectorRunningId = ref<number | string>('')
 
 const navItems = [
+  { key: 'platform', label: '平台', hint: '运营方后台：管理客户、套餐、站点和部署节点。', icon: 'Monitor' },
   { key: 'dashboard', label: '概览', hint: '查看运营指标、内容数量和站点状态。', icon: 'Odometer' },
   { key: 'sites', label: '站点', hint: '管理客户名下所有前台站点。', icon: 'Grid' },
   { key: 'settings', label: '设置', hint: '维护当前站点基础信息、SEO、导航和全站页面结构。', icon: 'Setting' },
@@ -1448,6 +1584,7 @@ async function logout() {
 
 function setView(key: string) {
   view.value = key
+  if (key === 'platform') loadPlatform()
   if (key === 'dashboard') loadDashboard()
   if (key === 'sites') loadSites()
   if (key === 'templates') Promise.all([loadTemplates(), loadModuleRegistry()])
@@ -1469,6 +1606,7 @@ function setView(key: string) {
 function refreshCurrentView() {
   const loaders: Record<string, () => Promise<void>> = {
     dashboard: loadDashboard,
+    platform: loadPlatform,
     sites: loadSites,
     settings: async () => { await Promise.all([loadSettings(), loadStaticPages()]) },
     templates: async () => { await Promise.all([loadTemplates(), loadModuleRegistry(), loadSettings(), loadStaticPages()]) },
@@ -1494,7 +1632,20 @@ function openLegacyAdmin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadSites(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadCollector(), loadAiTasks(), loadVersions()])
+  await Promise.all([loadPlatform(), loadSites(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadCollector(), loadAiTasks(), loadVersions()])
+}
+
+async function loadPlatform() {
+  const [overview, customers, siteData, nodes] = await Promise.all([
+    request('/api/platform/overview'),
+    request('/api/platform/customers?page_size=100'),
+    request('/api/platform/sites'),
+    request('/api/platform/deploy-nodes')
+  ])
+  platformOverview.value = overview || {}
+  platformCustomers.value = customers.items || []
+  platformSites.value = siteData.items || []
+  deployNodes.value = nodes.items || []
 }
 
 async function loadDashboard() {
@@ -1523,6 +1674,114 @@ async function loadSites() {
   sites.value = data.items || []
   centerOverview.value = data.overview || {}
   if (!currentSiteId.value) currentSiteId.value = data.current_site_id || sites.value[0]?.id || 10001
+}
+
+function resetPlatformCustomerForm() {
+  Object.assign(platformCustomerForm, {
+    id: '',
+    name: '',
+    company: '',
+    phone: '',
+    email: '',
+    plan_key: 'starter',
+    max_sites: 10,
+    ai_quota: 1000,
+    storage_quota_mb: 1024,
+    expires_at: '',
+    status: 'active'
+  })
+}
+
+function newPlatformCustomer() {
+  resetPlatformCustomerForm()
+  platformCustomerDrawerVisible.value = true
+}
+
+function editPlatformCustomer(row: any) {
+  Object.assign(platformCustomerForm, {
+    id: row.id,
+    name: row.name || '',
+    company: row.company || '',
+    phone: row.phone || '',
+    email: row.email || '',
+    plan_key: row.plan_key || 'starter',
+    max_sites: Number(row.max_sites || 10),
+    ai_quota: Number(row.ai_quota || 1000),
+    storage_quota_mb: Number(row.storage_quota_mb || 1024),
+    expires_at: row.expires_at || '',
+    status: row.status || 'active'
+  })
+  platformCustomerDrawerVisible.value = true
+}
+
+async function savePlatformCustomer() {
+  const method = platformCustomerForm.id ? 'PUT' : 'POST'
+  const path = platformCustomerForm.id ? `/api/platform/customers/${platformCustomerForm.id}` : '/api/platform/customers'
+  await request(path, { method, data: { ...platformCustomerForm } })
+  platformCustomerDrawerVisible.value = false
+  ElMessage.success('客户已保存')
+  await loadPlatform()
+}
+
+async function deletePlatformCustomer(row: any) {
+  await ElMessageBox.confirm(`确定删除客户「${row.name}」？客户名下有站点时不能删除。`)
+  await request(`/api/platform/customers/${row.id}`, { method: 'DELETE' })
+  ElMessage.success('客户已删除')
+  await loadPlatform()
+}
+
+function resetDeployNodeForm() {
+  Object.assign(deployNodeForm, {
+    id: '',
+    name: '',
+    node_type: 'bt-panel',
+    server_ip: '',
+    panel_url: '',
+    api_key: '',
+    root_path: '/www/wwwroot',
+    status: 'active'
+  })
+}
+
+function newDeployNode() {
+  resetDeployNodeForm()
+  deployNodeDrawerVisible.value = true
+}
+
+function editDeployNode(row: any) {
+  Object.assign(deployNodeForm, {
+    id: row.id,
+    name: row.name || '',
+    node_type: row.node_type || 'bt-panel',
+    server_ip: row.server_ip || '',
+    panel_url: row.panel_url || '',
+    api_key: row.api_key || '',
+    root_path: row.root_path || '/www/wwwroot',
+    status: row.status || 'active'
+  })
+  deployNodeDrawerVisible.value = true
+}
+
+async function saveDeployNode() {
+  const method = deployNodeForm.id ? 'PUT' : 'POST'
+  const path = deployNodeForm.id ? `/api/platform/deploy-nodes/${deployNodeForm.id}` : '/api/platform/deploy-nodes'
+  await request(path, { method, data: { ...deployNodeForm } })
+  deployNodeDrawerVisible.value = false
+  ElMessage.success('部署节点已保存')
+  await loadPlatform()
+}
+
+async function testDeployNode(row: any) {
+  const data = await request(`/api/platform/deploy-nodes/${row.id}/test`, { method: 'POST' })
+  ElMessage.success(data.last_result || '部署节点检查完成')
+  await loadPlatform()
+}
+
+async function deleteDeployNode(row: any) {
+  await ElMessageBox.confirm(`确定删除部署节点「${row.name}」？关联站点会解除该节点。`)
+  await request(`/api/platform/deploy-nodes/${row.id}`, { method: 'DELETE' })
+  ElMessage.success('部署节点已删除')
+  await loadPlatform()
 }
 
 function switchSite() {
