@@ -1007,6 +1007,7 @@
             @delete="deleteArticle"
             @ai="generateArticleDraft"
             @bulk-distribute="bulkDistributeArticles"
+            @publish-status="publishArticleStatus"
             @page-change="changeArticlePage"
           />
         </section>
@@ -1081,6 +1082,7 @@
             @delete="deletePage"
             @ai="generatePageDraft"
             @bulk-distribute="bulkDistributePages"
+            @publish-status="publishPageStatus"
             @page-change="changePagePage"
           />
         </section>
@@ -1104,6 +1106,7 @@
             @delete="deleteProduct"
             @ai="generateProductDraft"
             @bulk-distribute="bulkDistributeProducts"
+            @publish-status="publishProductStatus"
             @page-change="changeProductPage"
           />
         </section>
@@ -3339,6 +3342,23 @@ async function bulkDistributeContent(type: 'article' | 'product' | 'page', paylo
   await Promise.all([reload(), loadDashboard(), loadSites()])
 }
 
+async function publishContentStatus(type: 'article' | 'product' | 'page', item: any, action: 'publish' | 'draft', reload: () => Promise<void>) {
+  const endpoint = type === 'article' ? '/api/articles' : type === 'product' ? '/api/products' : '/api/pages'
+  const site_ids = item.site_ids?.length ? item.site_ids : currentSiteIds()
+  const actionText = action === 'publish' ? '发布' : '转为草稿'
+  await ElMessageBox.confirm(`确定将「${item.title}」${actionText}？前台范围：${contentSiteLabel(site_ids)}`)
+  await request(`${endpoint}/${item.id}/publish`, {
+    method: 'POST',
+    data: {
+      action,
+      site_scope: inferSiteScope(site_ids),
+      site_ids
+    }
+  })
+  ElMessage.success(action === 'publish' ? '内容已发布' : '内容已转为草稿')
+  await Promise.all([reload(), loadDashboard(), loadSites()])
+}
+
 function syncAiSiteScope() {
   aiForm.site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
 }
@@ -3365,6 +3385,10 @@ async function bulkDistributePages(payload: any) {
   await bulkDistributeContent('page', payload, loadPages)
   await loadStaticPages()
 }
+async function publishPageStatus(item: any, action: 'publish' | 'draft') {
+  await publishContentStatus('page', item, action, loadPages)
+  await loadStaticPages()
+}
 async function deletePage(item: any) {
   await ElMessageBox.confirm(`确定删除页面「${item.title}」？`)
   await request(`/api/pages/${item.id}`, { method: 'DELETE' })
@@ -3388,6 +3412,10 @@ async function saveArticle() {
 async function bulkDistributeArticles(payload: any) {
   await bulkDistributeContent('article', payload, loadArticles)
 }
+async function publishArticleStatus(item: any, action: 'publish' | 'draft') {
+  await publishContentStatus('article', item, action, loadArticles)
+  await loadTags()
+}
 async function deleteArticle(item: any) {
   await ElMessageBox.confirm(`确定删除文章「${item.title}」？`)
   await request(`/api/articles/${item.id}`, { method: 'DELETE' })
@@ -3409,6 +3437,9 @@ async function saveProduct() {
 }
 async function bulkDistributeProducts(payload: any) {
   await bulkDistributeContent('product', payload, loadProducts)
+}
+async function publishProductStatus(item: any, action: 'publish' | 'draft') {
+  await publishContentStatus('product', item, action, loadProducts)
 }
 async function deleteProduct(item: any) {
   await ElMessageBox.confirm(`确定删除商品「${item.title}」？`)

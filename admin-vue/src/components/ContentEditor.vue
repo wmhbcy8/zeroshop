@@ -51,9 +51,11 @@
         <el-table-column label="分发站点" min-width="180">
           <template #default="{ row }"><small>{{ siteNames(row) }}</small></template>
         </el-table-column>
-        <el-table-column label="操作" width="160">
+        <el-table-column label="操作" width="220">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button v-if="row.status === 'published'" link type="warning" @click="$emit('publish-status', row, 'draft')">转草稿</el-button>
+            <el-button v-else link type="success" @click="$emit('publish-status', row, 'publish')">发布</el-button>
             <el-button link type="danger" @click="$emit('delete', row)">删除</el-button>
           </template>
         </el-table-column>
@@ -160,7 +162,7 @@ const props = defineProps<{
   currentSiteId: number | string
 }>()
 
-const emit = defineEmits(['new', 'edit', 'save', 'delete', 'ai', 'page-change', 'bulk-distribute'])
+const emit = defineEmits(['new', 'edit', 'save', 'delete', 'ai', 'page-change', 'bulk-distribute', 'publish-status'])
 
 const prompt = ref('')
 const drawerVisible = ref(false)

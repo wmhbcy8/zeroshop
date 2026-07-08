@@ -4795,6 +4795,44 @@ function insert_page(PDO $pdo, array $data): int
     return $id;
 }
 
+function publish_content_item(PDO $pdo, string $type, int $id, array $data = []): array
+{
+    $map = [
+        'page' => ['table' => 'pages', 'label' => '页面'],
+        'article' => ['table' => 'articles', 'label' => '文章'],
+        'product' => ['table' => 'products', 'label' => '商品'],
+    ];
+    if (!isset($map[$type])) {
+        fail('内容类型不支持', 'VALIDATION_ERROR', 422);
+    }
+    if ($type === 'page') {
+        ensure_pages_table($pdo);
+    }
+    $table = $map[$type]['table'];
+    $item = fetch_one($pdo, $table, $id);
+    if (!$item) {
+        fail($map[$type]['label'] . '不存在', 'NOT_FOUND', 404);
+    }
+    $action = (string)($data['action'] ?? $data['status'] ?? 'publish');
+    $status = in_array($action, ['draft', 'unpublish'], true) ? 'draft' : 'published';
+    $publishedAt = $status === 'published' ? ((string)($item['published_at'] ?? '') ?: now()) : null;
+    $stmt = $pdo->prepare("UPDATE {$table} SET status = :status, published_at = :published_at, updated_at = :updated_at WHERE id = :id");
+    $stmt->execute([
+        'id' => $id,
+        'status' => $status,
+        'published_at' => $publishedAt,
+        'updated_at' => now(),
+    ]);
+    if (isset($data['site_scope']) || isset($data['site_ids']) || isset($data['distribution_site_ids'])) {
+        sync_content_distribution($pdo, $type, $id, normalize_site_ids($data));
+    }
+    $item = attach_distribution($pdo, $type, [fetch_one($pdo, $table, $id)])[0];
+    if ($type === 'article') {
+        $item = attach_article_tags($pdo, [$item])[0];
+    }
+    return $item;
+}
+
 function ensure_collector_tables(PDO $pdo): void
 {
     $pdo->exec("CREATE TABLE IF NOT EXISTS collector_sources (
@@ -6777,6 +6815,13 @@ try {
         ok(['id' => $id], '创建成功');
     }
 
+    if ($params = route_param('/pages/{id}/publish', $path)) {
+        if ($method === 'POST') {
+            $item = publish_content_item($pdo, 'page', (int)$params['id'], body_json());
+            ok($item, $item['status'] === 'published' ? '页面已发布' : '页面已转为草稿');
+        }
+    }
+
     if ($params = route_param('/pages/{id}', $path)) {
         ensure_pages_table($pdo);
         $id = (int)$params['id'];
@@ -6830,6 +6875,13 @@ try {
         $id = insert_article($pdo, $data);
         sync_content_distribution($pdo, 'article', $id, normalize_site_ids($data));
         ok(['id' => $id], '创建成功');
+    }
+
+    if ($params = route_param('/articles/{id}/publish', $path)) {
+        if ($method === 'POST') {
+            $item = publish_content_item($pdo, 'article', (int)$params['id'], body_json());
+            ok($item, $item['status'] === 'published' ? '文章已发布' : '文章已转为草稿');
+        }
     }
 
     if ($params = route_param('/articles/{id}', $path)) {
@@ -6888,6 +6940,13 @@ try {
         $id = insert_product($pdo, $data);
         sync_content_distribution($pdo, 'product', $id, normalize_site_ids($data));
         ok(['id' => $id], '创建成功');
+    }
+
+    if ($params = route_param('/products/{id}/publish', $path)) {
+        if ($method === 'POST') {
+            $item = publish_content_item($pdo, 'product', (int)$params['id'], body_json());
+            ok($item, $item['status'] === 'published' ? '商品已发布' : '商品已转为草稿');
+        }
     }
 
     if ($params = route_param('/products/{id}', $path)) {
