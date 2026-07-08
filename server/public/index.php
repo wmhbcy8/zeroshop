@@ -479,7 +479,9 @@ function requested_site_filter(): ?int
     if ($raw === '' || $raw === 'all') {
         return null;
     }
-    return resolve_request_site_id(['site_id' => $raw]);
+    $siteId = resolve_request_site_id(['site_id' => $raw]);
+    assert_site_access($siteId);
+    return $siteId;
 }
 
 function site_name_map(PDO $main): array
@@ -698,13 +700,9 @@ function list_order_service_requests_scoped(PDO $pdo, ?PDO $main = null): array
     $status = trim((string)($_GET['status'] ?? ''));
     $type = trim((string)($_GET['type'] ?? ''));
     $keyword = trim((string)($_GET['keyword'] ?? ''));
-    $siteId = requested_site_filter();
     $clauses = ["remark IS NOT NULL", "remark <> ''"];
     $params = [];
-    if ($siteId) {
-        $clauses[] = 'site_id = :site_id';
-        $params['site_id'] = $siteId;
-    }
+    append_site_scope_clause($clauses, $params);
     $stmt = $pdo->prepare('SELECT * FROM orders WHERE ' . implode(' AND ', $clauses) . ' ORDER BY id DESC LIMIT 1000');
     $stmt->execute($params);
     $items = [];
@@ -785,12 +783,12 @@ function record_site_visit(PDO $pdo): array
 function dashboard_metrics(PDO $pdo): array
 {
     $today = date('Y-m-d');
-    $siteId = requested_site_filter();
-    $siteClause = $siteId ? ' AND site_id = :site_id' : '';
+    $scopeParams = [];
+    $scopeClauses = [];
+    append_site_scope_clause($scopeClauses, $scopeParams);
+    $siteClause = $scopeClauses ? ' AND ' . implode(' AND ', $scopeClauses) : '';
     $visitParams = ['today' => $today . ' 00:00:00'];
-    if ($siteId) {
-        $visitParams['site_id'] = $siteId;
-    }
+    $visitParams = array_merge($visitParams, $scopeParams);
     $visitStmt = $pdo->prepare("SELECT COUNT(*) AS views, COUNT(DISTINCT visitor_key) AS visitors FROM site_visits WHERE created_at >= :today{$siteClause}");
     $visitStmt->execute($visitParams);
     $visitStats = $visitStmt->fetch() ?: [];
@@ -802,11 +800,9 @@ function dashboard_metrics(PDO $pdo): array
         SUM(payment_status = 'pending') AS pending_payment_orders,
         SUM(fulfillment_status IN ('new', 'confirmed')) AS pending_orders,
         SUM(payment_status = 'paid' AND fulfillment_status IN ('new', 'confirmed')) AS pending_fulfillment_orders
-        FROM orders" . ($siteId ? ' WHERE site_id = :site_id' : ''));
+        FROM orders" . ($scopeClauses ? ' WHERE ' . implode(' AND ', $scopeClauses) : ''));
     $orderParams = ['today' => $today . ' 00:00:00'];
-    if ($siteId) {
-        $orderParams['site_id'] = $siteId;
-    }
+    $orderParams = array_merge($orderParams, $scopeParams);
     $orderStmt->execute($orderParams);
     $orderStats = $orderStmt->fetch() ?: [];
 
@@ -1262,6 +1258,28 @@ function center_overview(array $sites): array
     return $totals;
 }
 
+function filter_sites_for_user(PDO $main, array $items, ?array $user = null): array
+{
+    $allowed = allowed_site_ids_for_user($main, $user);
+    if ($allowed === null) {
+        return $items;
+    }
+    return array_values(array_filter($items, fn($item) => in_array((int)($item['id'] ?? 0), $allowed, true)));
+}
+
+function current_customer_id_for_create(?array $user = null, array $data = []): int
+{
+    $user = $user ?: auth_user();
+    if ($user && !is_platform_admin($user)) {
+        $customerId = (int)($user['customer_id'] ?? 0);
+        if ($customerId <= 0) {
+            fail('客户账号未绑定客户资料，无法创建站点', 'CUSTOMER_NOT_BOUND', 403);
+        }
+        return $customerId;
+    }
+    return max(1, (int)($data['customer_id'] ?? 1));
+}
+
 function list_batch_tasks(PDO $main): array
 {
     ensure_center_tables($main);
@@ -1388,8 +1406,11 @@ function list_operation_logs(PDO $main): array
     }
     $siteId = trim((string)($_GET['site_id'] ?? ''));
     if ($siteId !== '' && $siteId !== 'all') {
+        assert_site_access((int)$siteId, $main);
         $where[] = 'site_id = :site_id';
         $params['site_id'] = (int)$siteId;
+    } else {
+        append_site_scope_clause($where, $params);
     }
     $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
     $page = max(1, (int)($_GET['page'] ?? 1));
@@ -1500,6 +1521,74 @@ function save_platform_customer(PDO $main, array $data, ?int $id = null): array
         $id = (int)$main->lastInsertId();
     }
     return fetch_one($main, 'customers', (int)$id) ?: [];
+}
+
+function customer_admin_user_payload(array $data): array
+{
+    $username = trim((string)($data['username'] ?? ''));
+    if ($username === '' || !preg_match('/^[a-zA-Z0-9_@.-]{3,80}$/', $username)) {
+        fail('客户登录账号只能使用 3-80 位字母、数字、下划线、点、横线或邮箱格式字符', 'VALIDATION_ERROR', 422);
+    }
+    $password = (string)($data['password'] ?? '');
+    if ($password !== '' && strlen($password) < 8) {
+        fail('客户登录密码至少 8 位', 'VALIDATION_ERROR', 422);
+    }
+    return [
+        'username' => $username,
+        'password' => $password,
+        'display_name' => mb_substr(trim((string)($data['display_name'] ?? $username)), 0, 100, 'UTF-8') ?: $username,
+        'status' => in_array(($data['status'] ?? 'active'), ['active', 'disabled'], true) ? (string)$data['status'] : 'active',
+    ];
+}
+
+function save_customer_admin_user(PDO $sitePdo, PDO $main, int $customerId, array $data): array
+{
+    ensure_center_tables($main);
+    ensure_auth_tables($sitePdo);
+    $customer = fetch_one($main, 'customers', $customerId);
+    if (!$customer) {
+        fail('客户不存在', 'NOT_FOUND', 404);
+    }
+    $payload = customer_admin_user_payload($data);
+    $stmt = $sitePdo->prepare("SELECT * FROM admin_users WHERE customer_id = :customer_id AND role = 'customer_admin' ORDER BY id ASC LIMIT 1");
+    $stmt->execute(['customer_id' => $customerId]);
+    $current = $stmt->fetch();
+    $time = now();
+    if ($current) {
+        $passwordSql = $payload['password'] !== '' ? ', password_hash = :password_hash' : '';
+        $update = $sitePdo->prepare("UPDATE admin_users SET username = :username, display_name = :display_name, status = :status{$passwordSql}, updated_at = :updated_at WHERE id = :id");
+        $params = [
+            'id' => (int)$current['id'],
+            'username' => $payload['username'],
+            'display_name' => $payload['display_name'],
+            'status' => $payload['status'],
+            'updated_at' => $time,
+        ];
+        if ($payload['password'] !== '') {
+            $params['password_hash'] = password_hash($payload['password'], PASSWORD_DEFAULT);
+        }
+        $update->execute($params);
+        $id = (int)$current['id'];
+    } else {
+        if ($payload['password'] === '') {
+            fail('新建客户账号时必须设置登录密码', 'VALIDATION_ERROR', 422);
+        }
+        $insert = $sitePdo->prepare("INSERT INTO admin_users (username, password_hash, display_name, customer_id, role, status, created_at, updated_at)
+            VALUES (:username, :password_hash, :display_name, :customer_id, 'customer_admin', :status, :created_at, :updated_at)");
+        $insert->execute([
+            'username' => $payload['username'],
+            'password_hash' => password_hash($payload['password'], PASSWORD_DEFAULT),
+            'display_name' => $payload['display_name'],
+            'customer_id' => $customerId,
+            'status' => $payload['status'],
+            'created_at' => $time,
+            'updated_at' => $time,
+        ]);
+        $id = (int)$sitePdo->lastInsertId();
+    }
+    $item = fetch_one($sitePdo, 'admin_users', $id) ?: [];
+    unset($item['password_hash']);
+    return $item;
 }
 
 function deploy_node_payload(array $data, array $current = []): array
@@ -1823,6 +1912,15 @@ function batch_task_filter_sql(): array
     if ($date !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
         $clauses[] = 'DATE(created_at) = :date';
         $params['date'] = $date;
+    }
+    $scope = requested_site_scope();
+    if ($scope !== null) {
+        if (!$scope) {
+            $clauses[] = '1 = 0';
+        } else {
+            $clauses[] = 'site_ids REGEXP :site_ids_regexp';
+            $params['site_ids_regexp'] = '(^|[^0-9])(' . implode('|', array_map('intval', $scope)) . ')([^0-9]|$)';
+        }
     }
     $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
     return [$whereSql, $params];
@@ -2213,8 +2311,11 @@ function list_deploy_tasks(PDO $main): array
     $params = [];
     $siteId = trim((string)($_GET['site_id'] ?? ''));
     if ($siteId !== '' && $siteId !== 'all') {
+        assert_site_access((int)$siteId, $main);
         $clauses[] = 'site_id = :site_id';
         $params['site_id'] = (int)$siteId;
+    } else {
+        append_site_scope_clause($clauses, $params);
     }
     foreach (['action', 'status'] as $field) {
         $value = trim((string)($_GET[$field] ?? ''));
@@ -2530,6 +2631,10 @@ function normalize_site_ids(array $data): array
         try {
             $main = main_pdo();
             ensure_center_tables($main);
+            $allowed = allowed_site_ids_for_user($main);
+            if ($allowed !== null) {
+                return $allowed ?: [requested_site_id()];
+            }
             $ids = $main->query('SELECT id FROM sites ORDER BY id ASC')->fetchAll(PDO::FETCH_COLUMN);
             $ids = array_values(array_unique(array_filter(array_map('intval', $ids), fn($id) => $id > 0)));
             if ($ids) {
@@ -2547,6 +2652,9 @@ function normalize_site_ids(array $data): array
         $ids = [$ids];
     }
     $ids = array_values(array_unique(array_filter(array_map('intval', $ids), fn($id) => $id > 0)));
+    foreach ($ids as $siteId) {
+        assert_site_access((int)$siteId);
+    }
     return $ids ?: [requested_site_id()];
 }
 
@@ -2612,6 +2720,7 @@ function distribution_site_counts(PDO $pdo, string $type): array
 function requested_site_id(): int
 {
     $siteId = (int)($_SERVER['HTTP_X_SITE_ID'] ?? 10001);
+    assert_site_access($siteId);
     return $siteId > 0 ? $siteId : 10001;
 }
 
@@ -2769,7 +2878,6 @@ function list_orders(PDO $pdo, ?PDO $main = null): array
     $keyword = trim((string)($_GET['keyword'] ?? ''));
     $paymentStatus = trim((string)($_GET['payment_status'] ?? ''));
     $fulfillmentStatus = trim((string)($_GET['fulfillment_status'] ?? ''));
-    $siteId = requested_site_filter();
 
     $keywordClause = '';
     $keywordParams = [];
@@ -2792,10 +2900,7 @@ function list_orders(PDO $pdo, ?PDO $main = null): array
         $clauses[] = 'fulfillment_status = :fulfillment_status';
         $params['fulfillment_status'] = $fulfillmentStatus;
     }
-    if ($siteId) {
-        $clauses[] = 'site_id = :site_id';
-        $params['site_id'] = $siteId;
-    }
+    append_site_scope_clause($clauses, $params);
 
     $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
     $countStmt = $pdo->prepare("SELECT COUNT(*) FROM orders{$whereSql}");
@@ -2844,7 +2949,6 @@ function list_form_submissions(PDO $pdo, ?PDO $main = null): array
     $offset = ($page - 1) * $pageSize;
     $keyword = trim((string)($_GET['keyword'] ?? ''));
     $status = trim((string)($_GET['status'] ?? ''));
-    $siteId = requested_site_filter();
     $clauses = [];
     $params = [];
     if ($keyword !== '') {
@@ -2855,10 +2959,7 @@ function list_form_submissions(PDO $pdo, ?PDO $main = null): array
         $clauses[] = 'status = :status';
         $params['status'] = $status;
     }
-    if ($siteId) {
-        $clauses[] = 'site_id = :site_id';
-        $params['site_id'] = $siteId;
-    }
+    append_site_scope_clause($clauses, $params);
     $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
     $countStmt = $pdo->prepare("SELECT COUNT(*) FROM form_submissions{$whereSql}");
     $countStmt->execute($params);
@@ -3773,8 +3874,8 @@ function normalize_collector_source(array $data, array $current = []): array
 function list_collector_sources(PDO $pdo, ?PDO $main = null): array
 {
     ensure_collector_tables($pdo);
-    $siteId = requested_site_filter();
-    $where = $siteId ? ['site_id = ' . (int)$siteId] : [];
+    $siteWhere = site_scope_where_sql();
+    $where = $siteWhere !== '' ? [$siteWhere] : [];
     $result = paginate($pdo, 'collector_sources', $where, 'id DESC', 'name');
     $result['items'] = attach_site_names($result['items'], $main);
     return $result;
@@ -3783,8 +3884,8 @@ function list_collector_sources(PDO $pdo, ?PDO $main = null): array
 function list_collector_records(PDO $pdo, ?PDO $main = null): array
 {
     ensure_collector_tables($pdo);
-    $siteId = requested_site_filter();
-    $where = $siteId ? ['site_id = ' . (int)$siteId] : [];
+    $siteWhere = site_scope_where_sql();
+    $where = $siteWhere !== '' ? [$siteWhere] : [];
     $result = paginate($pdo, 'collector_records', $where, 'id DESC', 'title');
     $result['items'] = attach_site_names($result['items'], $main);
     return $result;
@@ -3892,8 +3993,8 @@ function normalize_ai_task_row(array $row): array
 function list_ai_tasks(PDO $pdo, ?PDO $main = null): array
 {
     ensure_ai_task_tables($pdo);
-    $siteId = requested_site_filter();
-    if (!$siteId) {
+    $siteScope = requested_site_scope($main);
+    if ($siteScope === null) {
         $result = paginate($pdo, 'ai_tasks', [], 'id DESC', 'prompt');
         $result['items'] = array_map('normalize_ai_task_row', attach_site_names($result['items'], $main));
         return $result;
@@ -3915,9 +4016,14 @@ function list_ai_tasks(PDO $pdo, ?PDO $main = null): array
     $stmt = $pdo->prepare("SELECT * FROM ai_tasks{$whereSql} ORDER BY id DESC");
     $stmt->execute($params);
     $rows = array_map('normalize_ai_task_row', $stmt->fetchAll());
-    $rows = array_values(array_filter($rows, static function (array $row) use ($siteId) {
+    $rows = array_values(array_filter($rows, static function (array $row) use ($siteScope) {
         $ids = array_values(array_filter(array_map('intval', $row['site_ids'] ?? []), fn($id) => $id > 0));
-        return (int)($row['site_id'] ?? 0) === (int)$siteId || in_array((int)$siteId, $ids, true);
+        foreach ($siteScope as $siteId) {
+            if ((int)($row['site_id'] ?? 0) === (int)$siteId || in_array((int)$siteId, $ids, true)) {
+                return true;
+            }
+        }
+        return false;
     }));
     $page = max(1, (int)($_GET['page'] ?? 1));
     $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
@@ -4204,12 +4310,14 @@ function ensure_auth_tables(PDO $pdo): void
         username VARCHAR(80) NOT NULL UNIQUE,
         password_hash VARCHAR(255) NOT NULL,
         display_name VARCHAR(100) NOT NULL,
+        customer_id BIGINT UNSIGNED,
         role VARCHAR(50) NOT NULL DEFAULT 'admin',
         status VARCHAR(30) NOT NULL DEFAULT 'active',
         last_login_at DATETIME,
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    ensure_column($pdo, 'admin_users', 'customer_id', 'BIGINT UNSIGNED');
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS admin_sessions (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
@@ -4351,7 +4459,7 @@ function current_user(PDO $pdo): ?array
     if ($token === '') {
         return null;
     }
-    $stmt = $pdo->prepare("SELECT u.id, u.username, u.display_name, u.role
+    $stmt = $pdo->prepare("SELECT u.id, u.username, u.display_name, u.role, u.customer_id
         FROM admin_sessions s
         JOIN admin_users u ON u.id = s.user_id
         WHERE s.token_hash = :token_hash AND s.expires_at > :now AND u.status = 'active'
@@ -4372,6 +4480,96 @@ function require_login(PDO $pdo): array
     }
     $GLOBALS['AUTH_USER'] = $user;
     return $user;
+}
+
+function auth_user(): ?array
+{
+    return $GLOBALS['AUTH_USER'] ?? null;
+}
+
+function is_platform_admin(?array $user = null): bool
+{
+    $user = $user ?: auth_user();
+    return in_array((string)($user['role'] ?? ''), ['admin', 'platform_admin', 'super_admin'], true);
+}
+
+function require_platform_admin(PDO $pdo): array
+{
+    $user = require_login($pdo);
+    if (!is_platform_admin($user)) {
+        fail('当前账号无权访问平台后台', 'FORBIDDEN', 403);
+    }
+    return $user;
+}
+
+function allowed_site_ids_for_user(PDO $main, ?array $user = null): ?array
+{
+    $user = $user ?: auth_user();
+    if (!$user || is_platform_admin($user)) {
+        return null;
+    }
+    $customerId = (int)($user['customer_id'] ?? 0);
+    if ($customerId <= 0) {
+        return [];
+    }
+    ensure_center_tables($main);
+    $stmt = $main->prepare('SELECT id FROM sites WHERE customer_id = ? ORDER BY id ASC');
+    $stmt->execute([$customerId]);
+    return array_values(array_filter(array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN)), fn($id) => $id > 0));
+}
+
+function assert_site_access(int $siteId, ?PDO $main = null): void
+{
+    $user = auth_user();
+    if (!$user || is_platform_admin($user)) {
+        return;
+    }
+    $allowed = allowed_site_ids_for_user($main ?: main_pdo(), $user);
+    if (!in_array($siteId, $allowed ?? [], true)) {
+        fail('当前账号无权访问该站点', 'FORBIDDEN_SITE', 403);
+    }
+}
+
+function requested_site_scope(?PDO $main = null): ?array
+{
+    $raw = $_GET['site_id'] ?? 'all';
+    if ($raw === '' || $raw === 'all') {
+        return allowed_site_ids_for_user($main ?: main_pdo());
+    }
+    $siteId = resolve_request_site_id(['site_id' => $raw]);
+    assert_site_access($siteId, $main);
+    return [$siteId];
+}
+
+function append_site_scope_clause(array &$clauses, array &$params, string $column = 'site_id', string $prefix = 'scope_site'): void
+{
+    $scope = requested_site_scope();
+    if ($scope === null) {
+        return;
+    }
+    if (!$scope) {
+        $clauses[] = '1 = 0';
+        return;
+    }
+    $placeholders = [];
+    foreach (array_values($scope) as $index => $siteId) {
+        $key = $prefix . $index;
+        $placeholders[] = ':' . $key;
+        $params[$key] = (int)$siteId;
+    }
+    $clauses[] = $column . ' IN (' . implode(',', $placeholders) . ')';
+}
+
+function site_scope_where_sql(string $column = 'site_id'): string
+{
+    $scope = requested_site_scope();
+    if ($scope === null) {
+        return '';
+    }
+    if (!$scope) {
+        return '1 = 0';
+    }
+    return $column . ' IN (' . implode(',', array_map('intval', $scope)) . ')';
 }
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -4412,6 +4610,7 @@ try {
                 'username' => $user['username'],
                 'display_name' => $user['display_name'],
                 'role' => $user['role'],
+                'customer_id' => (int)($user['customer_id'] ?? 0),
             ],
         ], '登录成功');
     }
@@ -4610,7 +4809,11 @@ try {
         ok(public_order_view(fetch_one($pdo, 'orders', (int)$order['id']) ?: $order), '服务请求已提交');
     }
 
-    require_login($pdo);
+    $user = require_login($pdo);
+
+    if (str_starts_with($path, '/platform/')) {
+        require_platform_admin($pdo);
+    }
 
     if ($method === 'GET' && $path === '/dashboard/metrics') {
         ok(dashboard_metrics($pdo));
@@ -4665,6 +4868,12 @@ try {
             }
             $main->prepare('DELETE FROM customers WHERE id = ?')->execute([$id]);
             ok([], '客户已删除');
+        }
+    }
+
+    if ($params = route_param('/platform/customers/{id}/admin-user', $path)) {
+        if ($method === 'POST' || $method === 'PUT') {
+            ok(save_customer_admin_user($pdo, main_pdo(), (int)$params['id'], body_json()), '客户中台账号已保存');
         }
     }
 
@@ -4746,11 +4955,15 @@ try {
 
     if ($method === 'GET' && $path === '/sites') {
         $main = main_pdo();
-        $items = center_site_items($main, $pdo);
+        $items = filter_sites_for_user($main, center_site_items($main, $pdo), $user);
+        $currentSiteId = (int)($_SERVER['HTTP_X_SITE_ID'] ?? 0);
+        if (!$currentSiteId || !in_array($currentSiteId, array_map(fn($item) => (int)$item['id'], $items), true)) {
+            $currentSiteId = (int)($items[0]['id'] ?? 10001);
+        }
         ok([
             'items' => $items,
             'overview' => center_overview($items),
-            'current_site_id' => 10001,
+            'current_site_id' => $currentSiteId,
         ]);
     }
 
@@ -4760,10 +4973,12 @@ try {
         $main = main_pdo();
         ensure_center_tables($main);
         $payload = normalize_center_site_payload($data);
+        $customerId = current_customer_id_for_create($user, $data);
         $now = now();
         $stmt = $main->prepare("INSERT INTO sites (customer_id, name, site_key, deploy_node_id, domain, subdomain, language, template_key, database_name, public_path, deploy_config_json, status, created_at, updated_at)
-            VALUES (1, :name, '', :deploy_node_id, :domain, :subdomain, :language, :template_key, :database_name, '', :deploy_config_json, :status, :created_at, :updated_at)");
+            VALUES (:customer_id, :name, '', :deploy_node_id, :domain, :subdomain, :language, :template_key, :database_name, '', :deploy_config_json, :status, :created_at, :updated_at)");
         $stmt->execute([
+            'customer_id' => $customerId,
             'name' => $payload['name'],
             'deploy_node_id' => $payload['deploy_node_id'] ?: null,
             'domain' => $payload['domain'],
@@ -4787,7 +5002,7 @@ try {
             'subdomain' => $siteKey . '.huajian.local',
             'public_path' => $publicPath,
         ]);
-        $items = center_site_items($main, $pdo);
+        $items = filter_sites_for_user($main, center_site_items($main, $pdo), $user);
         ok([
             'site' => fetch_one($main, 'sites', $id),
             'items' => $items,
@@ -4799,8 +5014,9 @@ try {
         $id = (int)$params['id'];
         if ($method === 'PUT') {
             $main = main_pdo();
+            assert_site_access($id, $main);
             $siteItem = update_center_site($main, $id, body_json(), $pdo);
-            $items = center_site_items($main, $pdo);
+            $items = filter_sites_for_user($main, center_site_items($main, $pdo), $user);
             ok([
                 'site' => $siteItem,
                 'items' => $items,

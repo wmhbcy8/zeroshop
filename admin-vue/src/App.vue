@@ -26,7 +26,7 @@
         </div>
       </div>
       <el-menu :default-active="view" class="menu" @select="setView">
-        <el-menu-item v-for="item in navItems" :key="item.key" :index="item.key">
+        <el-menu-item v-for="item in visibleNavItems" :key="item.key" :index="item.key">
           <el-icon><component :is="item.icon" /></el-icon>
           <span>{{ item.label }}</span>
           <el-badge v-if="item.key === 'service' && servicePending" :value="servicePending" class="menu-badge" />
@@ -95,9 +95,10 @@
                   <el-table-column label="状态" width="100">
                     <template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status }}</el-tag></template>
                   </el-table-column>
-                  <el-table-column label="操作" width="130">
+                  <el-table-column label="操作" width="210">
                     <template #default="{ row }">
                       <el-button link type="primary" @click="editPlatformCustomer(row)">编辑</el-button>
+                      <el-button link type="success" @click="openCustomerAdminUser(row)">中台账号</el-button>
                       <el-button link type="danger" @click="deletePlatformCustomer(row)">删除</el-button>
                     </template>
                   </el-table-column>
@@ -198,6 +199,24 @@
               <div class="drawer-actions">
                 <el-button @click="platformCustomerDrawerVisible = false">取消</el-button>
                 <el-button type="primary" @click="savePlatformCustomer">保存客户</el-button>
+              </div>
+            </el-form>
+          </el-drawer>
+          <el-drawer v-model="customerAdminDrawerVisible" size="520px" title="客户中台账号">
+            <el-form :model="customerAdminForm" label-width="108px">
+              <el-alert class="mb16" type="info" show-icon :closable="false" :title="`账号将绑定客户：${customerAdminForm.customer_name || '-'}`" />
+              <el-form-item label="登录账号"><el-input v-model="customerAdminForm.username" placeholder="例如 customer@example.com" /></el-form-item>
+              <el-form-item label="显示名称"><el-input v-model="customerAdminForm.display_name" placeholder="例如 企业管理员" /></el-form-item>
+              <el-form-item label="登录密码"><el-input v-model="customerAdminForm.password" type="password" show-password placeholder="新建必填；重置时填写新密码" /></el-form-item>
+              <el-form-item label="状态">
+                <el-select v-model="customerAdminForm.status">
+                  <el-option label="启用" value="active" />
+                  <el-option label="停用" value="disabled" />
+                </el-select>
+              </el-form-item>
+              <div class="drawer-actions">
+                <el-button @click="customerAdminDrawerVisible = false">取消</el-button>
+                <el-button type="primary" @click="saveCustomerAdminUser">保存账号</el-button>
               </div>
             </el-form>
           </el-drawer>
@@ -1685,6 +1704,7 @@ import ContentEditor from './components/ContentEditor.vue'
 
 const TOKEN_KEY = 'huajian_admin_token'
 const token = ref(localStorage.getItem(TOKEN_KEY) || '')
+const currentUser = ref<any>(null)
 const loading = ref(false)
 const generating = ref(false)
 const view = ref('dashboard')
@@ -1738,6 +1758,7 @@ const siteDrawerVisible = ref(false)
 const batchTaskDrawerVisible = ref(false)
 const categoryDrawerVisible = ref(false)
 const platformCustomerDrawerVisible = ref(false)
+const customerAdminDrawerVisible = ref(false)
 const deployNodeDrawerVisible = ref(false)
 const aiProviderDrawerVisible = ref(false)
 const publishResult = ref<any>(null)
@@ -1767,6 +1788,7 @@ const batchTaskDetail = reactive<any>({})
 const categoryForm = reactive<any>({})
 const categoryType = ref<'article' | 'product'>('article')
 const platformCustomerForm = reactive<any>({})
+const customerAdminForm = reactive<any>({})
 const deployNodeForm = reactive<any>({})
 const aiProviderForm = reactive<any>({})
 const selectedAiProviderId = ref<number | string>('')
@@ -1840,7 +1862,9 @@ const navItems = [
   { key: 'seo', label: 'SEO', hint: '检查站点基础信息、内容元信息、sitemap 和搜索索引准备度。', icon: 'TrendCharts' },
   { key: 'publish', label: '部署', hint: '配置宝塔面板、生成静态站并查看发布记录。', icon: 'Upload' }
 ]
-const currentNav = computed(() => navItems.find((item) => item.key === view.value))
+const isPlatformAdmin = computed(() => ['admin', 'platform_admin', 'super_admin'].includes(String(currentUser.value?.role || '')))
+const visibleNavItems = computed(() => navItems.filter((item) => item.key !== 'platform' || isPlatformAdmin.value))
+const currentNav = computed(() => visibleNavItems.value.find((item) => item.key === view.value) || visibleNavItems.value[0])
 const currentSite = computed(() => sites.value.find((item: any) => String(item.id) === String(currentSiteId.value)))
 const settingsScopeText = computed(() => {
   if (String(currentSiteId.value) === '10001') return '正在编辑公共默认配置'
@@ -1903,8 +1927,10 @@ async function login() {
       data: { ...loginForm }
     })
     token.value = data.token
+    currentUser.value = data.user || null
     localStorage.setItem(TOKEN_KEY, data.token)
     ElMessage.success('登录成功')
+    if (!isPlatformAdmin.value && view.value === 'platform') view.value = 'dashboard'
     await loadAll()
   } finally {
     loading.value = false
@@ -1914,10 +1940,15 @@ async function login() {
 async function logout() {
   try { await request('/api/auth/logout', { method: 'POST' }) } catch {}
   token.value = ''
+  currentUser.value = null
   localStorage.removeItem(TOKEN_KEY)
 }
 
 function setView(key: string) {
+  if (key === 'platform' && !isPlatformAdmin.value) {
+    view.value = 'dashboard'
+    return
+  }
   view.value = key
   if (key === 'platform') loadPlatform()
   if (key === 'dashboard') loadDashboard()
@@ -1925,7 +1956,7 @@ function setView(key: string) {
   if (key === 'domains') loadDomains()
   if (key === 'templates') Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry()])
   if (key === 'pages') loadPages()
-  if (key === 'ai') Promise.all([loadAiTasks(), loadPlatform()])
+  if (key === 'ai') Promise.all([loadAiTasks(), isPlatformAdmin.value ? loadPlatform() : Promise.resolve()])
   if (key === 'articles') loadArticles()
   if (key === 'products') loadProducts()
   if (key === 'categories') loadCategories()
@@ -1949,7 +1980,7 @@ function refreshCurrentView() {
     domains: loadDomains,
     settings: async () => { await Promise.all([loadSettings(), loadStaticPages()]) },
     templates: async () => { await Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry(), loadSettings(), loadStaticPages()]) },
-    ai: async () => { await Promise.all([loadAiTasks(), loadPlatform()]) },
+    ai: async () => { await Promise.all([loadAiTasks(), isPlatformAdmin.value ? loadPlatform() : Promise.resolve()]) },
     pages: loadPages,
     articles: async () => { await Promise.all([loadArticles(), loadCategories()]) },
     products: async () => { await Promise.all([loadProducts(), loadCategories()]) },
@@ -1973,10 +2004,43 @@ function openLegacyAdmin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadPlatform(), loadSites(), loadDomains(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadDeployTasks(), loadOperationLogs(), loadMedia(), loadForms(), loadCollector(), loadSeoAudit(), loadAiTasks(), loadVersions()])
+  if (!currentUser.value) {
+    currentUser.value = await request('/api/auth/me')
+  }
+  if (!isPlatformAdmin.value && view.value === 'platform') {
+    view.value = 'dashboard'
+  }
+  await Promise.all([
+    isPlatformAdmin.value ? loadPlatform() : Promise.resolve(),
+    loadSites(),
+    loadDomains(),
+    loadDashboard(),
+    loadSettings(),
+    loadStaticPages(),
+    loadTemplates(),
+    loadTemplateCloneTasks(),
+    loadModuleRegistry(),
+    loadCategories(),
+    loadPages(),
+    loadArticles(),
+    loadProducts(),
+    loadOrders(),
+    loadServices(),
+    loadPaymentChannels(),
+    loadBatchTasks(),
+    loadDeployTasks(),
+    loadOperationLogs(),
+    loadMedia(),
+    loadForms(),
+    loadCollector(),
+    loadSeoAudit(),
+    loadAiTasks(),
+    loadVersions()
+  ])
 }
 
 async function loadPlatform() {
+  if (!isPlatformAdmin.value) return
   const [overview, customers, siteData, nodes, providers] = await Promise.all([
     request('/api/platform/overview'),
     request('/api/platform/customers?page_size=100'),
@@ -2157,6 +2221,28 @@ async function deletePlatformCustomer(row: any) {
   await ElMessageBox.confirm(`确定删除客户「${row.name}」？客户名下有站点时不能删除。`)
   await request(`/api/platform/customers/${row.id}`, { method: 'DELETE' })
   ElMessage.success('客户已删除')
+  await loadPlatform()
+}
+
+function openCustomerAdminUser(row: any) {
+  Object.assign(customerAdminForm, {
+    customer_id: row.id,
+    customer_name: row.name || '',
+    username: row.email || row.phone || `customer_${row.id}`,
+    display_name: `${row.name || '客户'}管理员`,
+    password: '',
+    status: 'active'
+  })
+  customerAdminDrawerVisible.value = true
+}
+
+async function saveCustomerAdminUser() {
+  await request(`/api/platform/customers/${customerAdminForm.customer_id}/admin-user`, {
+    method: 'POST',
+    data: { ...customerAdminForm }
+  })
+  customerAdminDrawerVisible.value = false
+  ElMessage.success('客户中台账号已保存')
   await loadPlatform()
 }
 
