@@ -813,6 +813,24 @@ function ensure_center_tables(PDO $main): void
         UNIQUE KEY uk_channel_site (channel_id, site_id),
         INDEX idx_site_id (site_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $main->exec("CREATE TABLE IF NOT EXISTS batch_tasks (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        task_no VARCHAR(80) NOT NULL UNIQUE,
+        action VARCHAR(50) NOT NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'success',
+        total_count INT UNSIGNED NOT NULL DEFAULT 0,
+        success_count INT UNSIGNED NOT NULL DEFAULT 0,
+        failed_count INT UNSIGNED NOT NULL DEFAULT 0,
+        site_ids TEXT,
+        summary TEXT,
+        started_at DATETIME,
+        finished_at DATETIME,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_action (action),
+        INDEX idx_status (status),
+        INDEX idx_created_at (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $now = now();
     $main->exec("INSERT INTO customers (id, name, phone, email, company, status, created_at, updated_at)
         VALUES (1, '默认客户', '', '', '', 'active', '{$now}', '{$now}')
@@ -1044,6 +1062,93 @@ function center_overview(array $sites): array
         }
     }
     return $totals;
+}
+
+function list_batch_tasks(PDO $main): array
+{
+    ensure_center_tables($main);
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $offset = ($page - 1) * $pageSize;
+
+    $total = (int)$main->query('SELECT COUNT(*) FROM batch_tasks')->fetchColumn();
+    $stmt = $main->prepare("SELECT * FROM batch_tasks ORDER BY id DESC LIMIT {$pageSize} OFFSET {$offset}");
+    $stmt->execute();
+    $items = array_map(function (array $item) {
+        $summary = json_decode((string)($item['summary'] ?? ''), true);
+        $siteIds = json_decode((string)($item['site_ids'] ?? '[]'), true);
+        $item['summary_data'] = is_array($summary) ? $summary : [];
+        $item['site_id_list'] = is_array($siteIds) ? $siteIds : [];
+        return $item;
+    }, $stmt->fetchAll());
+
+    return [
+        'items' => $items,
+        'pagination' => [
+            'page' => $page,
+            'page_size' => $pageSize,
+            'total' => $total,
+            'total_pages' => (int)ceil($total / $pageSize),
+        ],
+    ];
+}
+
+function save_batch_task(PDO $main, array $data): array
+{
+    ensure_center_tables($main);
+    $action = trim((string)($data['action'] ?? ''));
+    if (!in_array($action, ['generate', 'deploy-check', 'package'], true)) {
+        fail('任务类型不支持', 'VALIDATION_ERROR', 422);
+    }
+    $results = $data['results'] ?? [];
+    if (!is_array($results)) {
+        $results = [];
+    }
+    $siteIds = [];
+    $cleanResults = [];
+    foreach ($results as $result) {
+        if (!is_array($result)) {
+            continue;
+        }
+        $siteId = (int)($result['site_id'] ?? 0);
+        if ($siteId > 0) {
+            $siteIds[] = $siteId;
+        }
+        $cleanResults[] = [
+            'site_id' => $siteId,
+            'site_name' => mb_substr((string)($result['site_name'] ?? ''), 0, 120, 'UTF-8'),
+            'ok' => !empty($result['ok']),
+            'message' => mb_substr((string)($result['message'] ?? ''), 0, 500, 'UTF-8'),
+        ];
+    }
+    $total = count($cleanResults);
+    $success = count(array_filter($cleanResults, static fn($item) => !empty($item['ok'])));
+    $failed = max(0, $total - $success);
+    $status = $failed === 0 ? 'success' : ($success > 0 ? 'partial' : 'failed');
+    $now = now();
+    $taskNo = 'BT' . date('YmdHis') . strtoupper(substr(bin2hex(random_bytes(3)), 0, 6));
+    $summary = [
+        'message' => (string)($data['message'] ?? ''),
+        'results' => $cleanResults,
+    ];
+
+    $stmt = $main->prepare("INSERT INTO batch_tasks (task_no, action, status, total_count, success_count, failed_count, site_ids, summary, started_at, finished_at, created_at, updated_at)
+        VALUES (:task_no, :action, :status, :total_count, :success_count, :failed_count, :site_ids, :summary, :started_at, :finished_at, :created_at, :updated_at)");
+    $stmt->execute([
+        'task_no' => $taskNo,
+        'action' => $action,
+        'status' => $status,
+        'total_count' => $total,
+        'success_count' => $success,
+        'failed_count' => $failed,
+        'site_ids' => json_encode(array_values(array_unique($siteIds)), JSON_UNESCAPED_UNICODE),
+        'summary' => json_encode($summary, JSON_UNESCAPED_UNICODE),
+        'started_at' => (string)($data['started_at'] ?? $now),
+        'finished_at' => (string)($data['finished_at'] ?? $now),
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    return fetch_one($main, 'batch_tasks', (int)$main->lastInsertId()) ?: [];
 }
 
 function decode_payment_config(?string $value): array
@@ -2461,6 +2566,14 @@ try {
 
     if ($method === 'GET' && $path === '/payment/channels') {
         ok(list_payment_channels(main_pdo()));
+    }
+
+    if ($method === 'GET' && $path === '/batch/tasks') {
+        ok(list_batch_tasks(main_pdo()));
+    }
+
+    if ($method === 'POST' && $path === '/batch/tasks') {
+        ok(save_batch_task(main_pdo(), body_json()), '批量任务已记录');
     }
 
     if ($method === 'POST' && $path === '/payment/channels') {

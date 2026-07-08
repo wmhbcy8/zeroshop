@@ -91,6 +91,24 @@ exec_all($main, [
         INDEX idx_domain (domain),
         INDEX idx_status (status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS batch_tasks (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        task_no VARCHAR(80) NOT NULL UNIQUE,
+        action VARCHAR(50) NOT NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'success',
+        total_count INT UNSIGNED NOT NULL DEFAULT 0,
+        success_count INT UNSIGNED NOT NULL DEFAULT 0,
+        failed_count INT UNSIGNED NOT NULL DEFAULT 0,
+        site_ids TEXT,
+        summary TEXT,
+        started_at DATETIME,
+        finished_at DATETIME,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_action (action),
+        INDEX idx_status (status),
+        INDEX idx_created_at (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
 ]);
 
 $now = date('Y-m-d H:i:s');

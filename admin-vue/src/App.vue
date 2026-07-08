@@ -756,6 +756,48 @@
             </el-alert>
           </el-drawer>
         </section>
+
+        <section v-if="view === 'tasks'">
+          <el-card class="panel" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>任务记录中心</strong>
+                <el-button @click="loadBatchTasks">刷新任务</el-button>
+              </div>
+            </template>
+            <el-table :data="batchTasks">
+              <el-table-column prop="task_no" label="任务号" min-width="180" />
+              <el-table-column label="类型" width="120"><template #default="{ row }">{{ batchActionLabel(row.action) }}</template></el-table-column>
+              <el-table-column label="状态" width="110">
+                <template #default="{ row }">
+                  <el-tag :type="row.status === 'success' ? 'success' : row.status === 'partial' ? 'warning' : 'danger'">{{ row.status }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="结果" width="150">
+                <template #default="{ row }">{{ row.success_count }}/{{ row.total_count }} 成功</template>
+              </el-table-column>
+              <el-table-column prop="finished_at" label="完成时间" width="180" />
+              <el-table-column label="操作" width="100"><template #default="{ row }"><el-button link type="primary" @click="openBatchTask(row)">详情</el-button></template></el-table-column>
+            </el-table>
+          </el-card>
+          <el-drawer v-model="batchTaskDrawerVisible" size="560px" title="任务详情">
+            <el-descriptions :column="1" border>
+              <el-descriptions-item label="任务号">{{ batchTaskDetail.task_no || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="类型">{{ batchActionLabel(batchTaskDetail.action) }}</el-descriptions-item>
+              <el-descriptions-item label="状态">{{ batchTaskDetail.status || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="站点数量">{{ batchTaskDetail.total_count || 0 }}</el-descriptions-item>
+              <el-descriptions-item label="成功/失败">{{ batchTaskDetail.success_count || 0 }} / {{ batchTaskDetail.failed_count || 0 }}</el-descriptions-item>
+              <el-descriptions-item label="开始时间">{{ batchTaskDetail.started_at || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="完成时间">{{ batchTaskDetail.finished_at || '-' }}</el-descriptions-item>
+            </el-descriptions>
+            <div class="batch-detail-list">
+              <strong>执行结果</strong>
+              <span v-for="item in batchTaskResults(batchTaskDetail)" :key="`${item.site_id}-${item.site_name}`">
+                {{ item.site_name || item.site_id }}：{{ item.ok ? '完成' : '失败' }}{{ item.message ? ` - ${item.message}` : '' }}
+              </span>
+            </div>
+          </el-drawer>
+        </section>
       </el-main>
     </el-container>
   </el-container>
@@ -786,6 +828,7 @@ const media = ref<any[]>([])
 const forms = ref<any[]>([])
 const paymentChannels = ref<any[]>([])
 const versions = ref<any[]>([])
+const batchTasks = ref<any[]>([])
 const sites = ref<any[]>([])
 const centerOverview = ref<any>({})
 const currentSiteId = ref<number | string>(10001)
@@ -799,6 +842,7 @@ const paymentDrawerVisible = ref(false)
 const formDrawerVisible = ref(false)
 const publishDrawerVisible = ref(false)
 const siteDrawerVisible = ref(false)
+const batchTaskDrawerVisible = ref(false)
 const publishResult = ref<any>(null)
 const deployTesting = ref(false)
 const packaging = ref(false)
@@ -815,6 +859,7 @@ const formDetail = reactive<any>({})
 const paymentForm = reactive<any>({})
 const paymentConfigText = ref('')
 const publishDetail = reactive<any>({})
+const batchTaskDetail = reactive<any>({})
 const publishSummary = computed(() => parseSummary(publishDetail.summary))
 const publishResultTitle = computed(() => {
   if (!publishResult.value) return ''
@@ -860,6 +905,7 @@ const navItems = [
   { key: 'orders', label: '订单', hint: '处理支付、发货和订单跟进。', icon: 'ShoppingCart' },
   { key: 'service', label: '服务', hint: '集中处理客户服务请求。', icon: 'Service' },
   { key: 'payments', label: '支付', hint: '统一配置收款通道并分配到各站点。', icon: 'Money' },
+  { key: 'tasks', label: '任务', hint: '查看批量生成、发布和部署检查的执行记录。', icon: 'List' },
   { key: 'media', label: '媒体库', hint: '上传并复用图片和文件素材。', icon: 'Picture' },
   { key: 'forms', label: '留言', hint: '处理询盘线索和联系表单。', icon: 'ChatLineRound' },
   { key: 'publish', label: '发布', hint: '生成静态站并查看发布记录。', icon: 'Upload' }
@@ -885,6 +931,10 @@ const siteBatchSummary = computed(() => {
   const failed = total - success
   return total ? `批量任务完成：成功 ${success} 个，失败 ${failed} 个` : ''
 })
+
+function batchActionLabel(action: string) {
+  return ({ generate: '生成静态站', 'deploy-check': '部署检查', package: '生成发布包' } as any)[action] || action || '-'
+}
 
 async function request(path: string, options: any = {}) {
   const headers = {
@@ -933,6 +983,7 @@ function setView(key: string) {
   if (key === 'orders') loadOrders()
   if (key === 'service') loadServices()
   if (key === 'payments') loadPaymentChannels()
+  if (key === 'tasks') loadBatchTasks()
   if (key === 'media') loadMedia()
   if (key === 'forms') loadForms()
   if (key === 'publish') loadVersions()
@@ -950,6 +1001,7 @@ function refreshCurrentView() {
     orders: loadOrders,
     service: loadServices,
     payments: loadPaymentChannels,
+    tasks: loadBatchTasks,
     media: loadMedia,
     forms: loadForms,
     publish: loadVersions
@@ -962,7 +1014,7 @@ function openLegacyAdmin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadSites(), loadDashboard(), loadSettings(), loadTemplates(), loadModuleRegistry(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadMedia(), loadForms(), loadVersions()])
+  await Promise.all([loadSites(), loadDashboard(), loadSettings(), loadTemplates(), loadModuleRegistry(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadVersions()])
 }
 
 async function loadDashboard() {
@@ -1587,6 +1639,11 @@ async function loadVersions() {
   versions.value = data.items || data || []
 }
 
+async function loadBatchTasks() {
+  const data = await request('/api/batch/tasks')
+  batchTasks.value = data.items || data || []
+}
+
 function parseSummary(value: any) {
   if (!value) return {}
   if (typeof value === 'object') return value
@@ -1620,10 +1677,6 @@ function selectAllActiveSites() {
   selectedSiteIds.value = sites.value.filter((item: any) => item.status === 'active').map((item: any) => item.id)
 }
 
-function siteBatchActionLabel(action: string) {
-  return ({ generate: '生成静态站', 'deploy-check': '检查部署', package: '生成发布包' } as any)[action] || action
-}
-
 async function runSiteBatch(action: 'generate' | 'deploy-check' | 'package') {
   if (!selectedSiteIds.value.length) {
     ElMessage.warning('请先选择站点')
@@ -1645,7 +1698,7 @@ async function runSiteBatch(action: 'generate' | 'deploy-check' | 'package') {
           site_name: item.name,
           action,
           ok: true,
-          message: data?.message || data?.version_no || siteBatchActionLabel(action)
+          message: data?.message || data?.version_no || batchActionLabel(action)
         })
       } catch (error: any) {
         siteBatchResults.value.push({
@@ -1658,11 +1711,30 @@ async function runSiteBatch(action: 'generate' | 'deploy-check' | 'package') {
       }
     }
     currentSiteId.value = originalSiteId
-    await Promise.all([loadSites(), loadDashboard(), loadVersions()])
+    await saveBatchTaskRecord(action, siteBatchResults.value)
+    await Promise.all([loadSites(), loadDashboard(), loadVersions(), loadBatchTasks()])
     ElMessage.success(siteBatchSummary.value || '批量任务完成')
   } finally {
     currentSiteId.value = originalSiteId
     siteBatchRunning.value = false
+  }
+}
+
+async function saveBatchTaskRecord(action: string, results: any[]) {
+  if (!results.length) return
+  try {
+    await request('/api/batch/tasks', {
+      method: 'POST',
+      data: {
+        action,
+        results,
+        message: siteBatchSummary.value,
+        started_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
+        finished_at: new Date().toISOString().slice(0, 19).replace('T', ' ')
+      }
+    })
+  } catch (error: any) {
+    ElMessage.warning(error?.message || '批量任务记录保存失败')
   }
 }
 
@@ -1711,6 +1783,16 @@ function openPublishVersion(row: any) {
   Object.assign(publishDetail, row)
   publishDrawerVisible.value = true
 }
+
+function openBatchTask(row: any) {
+  Object.assign(batchTaskDetail, row)
+  batchTaskDrawerVisible.value = true
+}
+
+function batchTaskResults(row: any) {
+  return row?.summary_data?.results || parseSummary(row?.summary)?.results || []
+}
+
 function previewSite(item: any = currentSite.value) {
   const url = item?.publish?.preview_url || (String(item?.id || currentSiteId.value) === '10001' ? '/' : `/s/${item?.site_key || 'site_10001'}/`)
   window.open(url, '_blank')
