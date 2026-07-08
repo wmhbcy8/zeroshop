@@ -131,7 +131,7 @@
                       <span>待处理 {{ item.stats?.pending_orders || 0 }}</span>
                     </div>
                     <div class="site-publish">
-                      <span>{{ item.publish?.generated ? '已生成静态站' : '待生成静态站' }}</span>
+                      <span>{{ item.publish?.generated ? '已生成静态站' : '待生成静态站' }} · {{ deployReady(item) ? '部署已配置' : '部署待配置' }}</span>
                       <small>{{ item.publish?.last_created_at || item.publish?.public_path || '-' }}</small>
                     </div>
                     <div class="site-actions" @click.stop>
@@ -184,6 +184,18 @@
                   <el-option label="归档" value="archived" />
                 </el-select>
               </el-form-item>
+              <el-divider content-position="left">部署配置</el-divider>
+              <el-form-item label="面板地址"><el-input v-model="siteForm.deploy.bt_panel_url" placeholder="https://server:8888" /></el-form-item>
+              <el-form-item label="站点目录"><el-input v-model="siteForm.deploy.site_path" placeholder="/www/wwwroot/example.com" /></el-form-item>
+              <el-form-item label="部署模式">
+                <el-select v-model="siteForm.deploy.mode">
+                  <el-option label="手动发布" value="manual" />
+                  <el-option label="发布包上传" value="package" />
+                  <el-option label="宝塔 API" value="bt-api" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="发布后动作"><el-input v-model="siteForm.deploy.after_action" placeholder="reload_nginx" /></el-form-item>
+              <el-form-item label="部署备注"><el-input v-model="siteForm.deploy.note" type="textarea" :rows="2" placeholder="记录服务器、目录、证书和备份策略" /></el-form-item>
               <el-button type="primary" :loading="siteCreating" @click="saveSite">{{ siteEditingId ? '保存站点' : '创建站点' }}</el-button>
             </el-form>
           </el-drawer>
@@ -794,7 +806,8 @@ const publishResultSubtitle = computed(() => {
 const articleForm = reactive<any>({})
 const productForm = reactive<any>({})
 const siteEditingId = ref<number | string>('')
-const siteForm = reactive({ name: '', domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active' })
+const emptyDeploy = () => ({ bt_panel_url: '', site_path: '', mode: 'manual', after_action: '', note: '' })
+const siteForm = reactive<any>({ name: '', domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active', deploy: emptyDeploy() })
 const aiForm = reactive({ type: 'article', prompt: '围绕自主品牌商品、行业解决方案和独立站 SEO 关键词生成内容', count: 5, status: 'draft' })
 const pageBuilder = reactive({ prompt: '围绕自主品牌商品、行业解决方案、SEO 内容沉淀和询盘转化，生成一个企业官网 + 博客知识库 + 独立站商城首页方案' })
 const articlePager = reactive({ page: 1, page_size: 10, total: 0 })
@@ -956,7 +969,7 @@ function openSite(item: any) {
 }
 
 function resetSiteForm() {
-  Object.assign(siteForm, { name: '', domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active' })
+  Object.assign(siteForm, { name: '', domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active', deploy: emptyDeploy() })
 }
 
 function newSite() {
@@ -973,9 +986,14 @@ function editSite(item: any) {
     subdomain: item.subdomain || '',
     language: item.language || 'zh-CN',
     template_key: item.template_key || 'business-clean',
-    status: item.status || 'active'
+    status: item.status || 'active',
+    deploy: { ...emptyDeploy(), ...(item.deploy || {}) }
   })
   siteDrawerVisible.value = true
+}
+
+function deployReady(item: any) {
+  return !!(item?.deploy?.bt_panel_url && item?.deploy?.site_path)
 }
 
 async function saveSite() {

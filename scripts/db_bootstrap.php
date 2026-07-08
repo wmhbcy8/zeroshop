@@ -83,6 +83,7 @@ exec_all($main, [
         template_key VARCHAR(100),
         database_name VARCHAR(120),
         public_path VARCHAR(255),
+        deploy_config_json TEXT,
         status VARCHAR(30) NOT NULL DEFAULT 'active',
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL,
@@ -96,8 +97,8 @@ $now = date('Y-m-d H:i:s');
 $main->exec("INSERT INTO customers (id, name, phone, email, company, status, created_at, updated_at)
     VALUES (1, '楚云数航', '13800000000', 'hello@example.com', '楚云数航科技有限公司', 'active', '{$now}', '{$now}')
     ON DUPLICATE KEY UPDATE name=VALUES(name), updated_at=VALUES(updated_at)");
-$main->exec("INSERT INTO sites (id, customer_id, name, site_key, domain, subdomain, language, template_key, database_name, public_path, status, created_at, updated_at)
-    VALUES (10001, 1, '楚云数航官网', 'site_10001', 'demo.local', 'site10001.huajian.local', 'zh-CN', 'business-clean', '{$siteDb}', 'sites/site_10001/public', 'active', '{$now}', '{$now}')
+$main->exec("INSERT INTO sites (id, customer_id, name, site_key, domain, subdomain, language, template_key, database_name, public_path, deploy_config_json, status, created_at, updated_at)
+    VALUES (10001, 1, '楚云数航官网', 'site_10001', 'demo.local', 'site10001.huajian.local', 'zh-CN', 'business-clean', '{$siteDb}', 'sites/site_10001/public', '{}', 'active', '{$now}', '{$now}')
     ON DUPLICATE KEY UPDATE name=VALUES(name), template_key=VALUES(template_key), database_name=VALUES(database_name), updated_at=VALUES(updated_at)");
 
 $site = pdo_with_db($siteDb);

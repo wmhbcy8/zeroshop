@@ -780,6 +780,7 @@ function ensure_center_tables(PDO $main): void
         template_key VARCHAR(100),
         database_name VARCHAR(120),
         public_path VARCHAR(255),
+        deploy_config_json TEXT,
         status VARCHAR(30) NOT NULL DEFAULT 'active',
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL,
@@ -787,6 +788,7 @@ function ensure_center_tables(PDO $main): void
         INDEX idx_domain (domain),
         INDEX idx_status (status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    ensure_column($main, 'sites', 'deploy_config_json', 'TEXT');
     $main->exec("CREATE TABLE IF NOT EXISTS payment_channels (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
         name VARCHAR(120) NOT NULL,
@@ -854,7 +856,7 @@ function center_site_items(PDO $main, PDO $sitePdo): array
     $pendingFormCounts = site_group_counts($sitePdo, 'form_submissions', "status IN ('new', 'pending')");
     $publishMap = latest_publish_by_site($sitePdo);
 
-    return array_map(function (array $item) use ($articleCounts, $productCounts, $orderCounts, $pendingOrderCounts, $formCounts, $pendingFormCounts, $publishMap) {
+    return array_map(function (array $item) use ($articleCounts, $productCounts, $orderCounts, $pendingOrderCounts, $formCounts, $pendingFormCounts, $publishMap, $settings) {
         $siteId = (int)$item['id'];
         $stats = [
             'articles' => $articleCounts[$siteId] ?? 0,
@@ -864,7 +866,11 @@ function center_site_items(PDO $main, PDO $sitePdo): array
             'forms' => $formCounts[$siteId] ?? 0,
             'pending_forms' => $pendingFormCounts[$siteId] ?? 0,
         ];
-        return $item + ['stats' => $stats, 'publish' => site_publish_summary($item, $publishMap[$siteId] ?? null)];
+        return $item + [
+            'stats' => $stats,
+            'publish' => site_publish_summary($item, $publishMap[$siteId] ?? null),
+            'deploy' => site_deploy_config($item, $siteId === 10001 ? $settings : []),
+        ];
     }, $items);
 }
 
@@ -916,6 +922,49 @@ function site_publish_summary(array $site, ?array $latest): array
     ];
 }
 
+function site_deploy_config(array $site, array $settings = []): array
+{
+    $deploy = [];
+    if (!empty($site['deploy_config_json'])) {
+        $decoded = json_decode((string)$site['deploy_config_json'], true);
+        if (is_array($decoded)) {
+            $deploy = $decoded;
+        }
+    }
+    if (!$deploy && !empty($settings['deploy']) && is_array($settings['deploy'])) {
+        $deploy = $settings['deploy'];
+    }
+
+    return [
+        'bt_panel_url' => (string)($deploy['bt_panel_url'] ?? ''),
+        'site_path' => (string)($deploy['site_path'] ?? ''),
+        'mode' => (string)($deploy['mode'] ?? 'manual'),
+        'after_action' => (string)($deploy['after_action'] ?? ''),
+        'note' => (string)($deploy['note'] ?? ''),
+    ];
+}
+
+function normalize_site_deploy_config(array $data, array $current = []): array
+{
+    $deploy = is_array($data['deploy'] ?? null) ? $data['deploy'] : [];
+    if (!$deploy && !empty($current['deploy_config_json'])) {
+        $decoded = json_decode((string)$current['deploy_config_json'], true);
+        $deploy = is_array($decoded) ? $decoded : [];
+    }
+    $mode = trim((string)($deploy['mode'] ?? 'manual'));
+    if (!in_array($mode, ['manual', 'package', 'bt-api'], true)) {
+        $mode = 'manual';
+    }
+
+    return [
+        'bt_panel_url' => mb_substr(trim((string)($deploy['bt_panel_url'] ?? '')), 0, 255, 'UTF-8'),
+        'site_path' => mb_substr(trim((string)($deploy['site_path'] ?? '')), 0, 255, 'UTF-8'),
+        'mode' => $mode,
+        'after_action' => mb_substr(trim((string)($deploy['after_action'] ?? '')), 0, 120, 'UTF-8'),
+        'note' => mb_substr(trim((string)($deploy['note'] ?? '')), 0, 500, 'UTF-8'),
+    ];
+}
+
 function normalize_center_site_payload(array $data, array $current = []): array
 {
     $name = trim((string)($data['name'] ?? ($current['name'] ?? '')));
@@ -934,6 +983,7 @@ function normalize_center_site_payload(array $data, array $current = []): array
         'language' => mb_substr(trim((string)($data['language'] ?? ($current['language'] ?? 'zh-CN'))) ?: 'zh-CN', 0, 20, 'UTF-8'),
         'template_key' => mb_substr(trim((string)($data['template_key'] ?? ($current['template_key'] ?? 'business-clean'))) ?: 'business-clean', 0, 100, 'UTF-8'),
         'status' => $status,
+        'deploy' => normalize_site_deploy_config($data, $current),
     ];
 }
 
@@ -945,8 +995,15 @@ function update_center_site(PDO $main, int $id, array $data, ?PDO $sitePdo = nul
         fail('站点不存在', 'NOT_FOUND', 404);
     }
     $payload = normalize_center_site_payload($data, $current);
-    $stmt = $main->prepare('UPDATE sites SET name = :name, domain = :domain, subdomain = :subdomain, language = :language, template_key = :template_key, status = :status, updated_at = :updated_at WHERE id = :id');
-    $stmt->execute($payload + [
+    $stmt = $main->prepare('UPDATE sites SET name = :name, domain = :domain, subdomain = :subdomain, language = :language, template_key = :template_key, deploy_config_json = :deploy_config_json, status = :status, updated_at = :updated_at WHERE id = :id');
+    $stmt->execute([
+        'name' => $payload['name'],
+        'domain' => $payload['domain'],
+        'subdomain' => $payload['subdomain'],
+        'language' => $payload['language'],
+        'template_key' => $payload['template_key'],
+        'deploy_config_json' => json_encode($payload['deploy'], JSON_UNESCAPED_UNICODE),
+        'status' => $payload['status'],
         'id' => $id,
         'updated_at' => now(),
     ]);
@@ -955,6 +1012,7 @@ function update_center_site(PDO $main, int $id, array $data, ?PDO $sitePdo = nul
         foreach (['name', 'domain', 'language', 'template_key'] as $field) {
             $settings[$field] = $payload[$field];
         }
+        $settings['deploy'] = $payload['deploy'];
         $settings['updated_at'] = now();
         $settingsStmt = $sitePdo->prepare("REPLACE INTO site_settings (setting_key, setting_value, updated_at) VALUES ('site', :value, :updated_at)");
         $settingsStmt->execute(['value' => json_encode($settings, JSON_UNESCAPED_UNICODE), 'updated_at' => $settings['updated_at']]);
@@ -2342,14 +2400,15 @@ try {
         ensure_center_tables($main);
         $payload = normalize_center_site_payload($data);
         $now = now();
-        $stmt = $main->prepare("INSERT INTO sites (customer_id, name, site_key, domain, subdomain, language, template_key, database_name, public_path, status, created_at, updated_at)
-            VALUES (1, :name, '', :domain, :subdomain, :language, :template_key, :database_name, '', :status, :created_at, :updated_at)");
+        $stmt = $main->prepare("INSERT INTO sites (customer_id, name, site_key, domain, subdomain, language, template_key, database_name, public_path, deploy_config_json, status, created_at, updated_at)
+            VALUES (1, :name, '', :domain, :subdomain, :language, :template_key, :database_name, '', :deploy_config_json, :status, :created_at, :updated_at)");
         $stmt->execute([
             'name' => $payload['name'],
             'domain' => $payload['domain'],
             'subdomain' => $payload['subdomain'],
             'language' => $payload['language'],
             'template_key' => $payload['template_key'],
+            'deploy_config_json' => json_encode($payload['deploy'], JSON_UNESCAPED_UNICODE),
             'status' => $payload['status'],
             'database_name' => env_value('HJ_DB_SITE', 'huajian_site_10001'),
             'created_at' => $now,
@@ -2988,7 +3047,7 @@ try {
         $main = main_pdo();
         $currentSite = current_site($main, $pdo);
         $site = site_settings($pdo);
-        $deploy = $site['deploy'] ?? [];
+        $deploy = site_deploy_config($currentSite, (int)$currentSite['id'] === 10001 ? $site : []);
         $configured = !empty($deploy['bt_panel_url']) && !empty($deploy['site_path']);
         $status = $configured ? 'ready' : 'pending';
         $summary = [
