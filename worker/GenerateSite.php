@@ -283,7 +283,7 @@ function site_for(array $site, string $rootBase): array
         if (!preg_match('#^https?://#', $url) && !str_starts_with($url, $rootBase)) {
             $url = $rootBase . ltrim($url, '/');
         }
-        return ['title' => $item['title'] ?? '', 'url' => $url];
+        return ['title' => $item['title'] ?? '', 'url' => $url, 'target_blank' => !empty($item['target_blank'])];
     }, $nav);
     $site['hero'] = array_replace([
         'eyebrow' => '化简静态建站 MVP',

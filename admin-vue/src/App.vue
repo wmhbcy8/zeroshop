@@ -240,6 +240,26 @@
                 <el-col :span="12"><el-form-item label="邮箱"><el-input v-model="site.email" /></el-form-item></el-col>
               </el-row>
               <el-form-item label="地址"><el-input v-model="site.address" /></el-form-item>
+              <el-divider content-position="left">导航菜单</el-divider>
+              <el-table :data="site.nav" row-key="id" class="mb16">
+                <el-table-column label="标题" min-width="160">
+                  <template #default="{ row }"><el-input v-model="row.title" placeholder="例如：首页" /></template>
+                </el-table-column>
+                <el-table-column label="链接" min-width="220">
+                  <template #default="{ row }"><el-input v-model="row.url" placeholder="例如：index.html" /></template>
+                </el-table-column>
+                <el-table-column label="新窗口" width="90">
+                  <template #default="{ row }"><el-switch v-model="row.target_blank" /></template>
+                </el-table-column>
+                <el-table-column label="操作" width="170">
+                  <template #default="{ $index }">
+                    <el-button link type="primary" @click="moveNavItem($index, -1)">上移</el-button>
+                    <el-button link type="primary" @click="moveNavItem($index, 1)">下移</el-button>
+                    <el-button link type="danger" @click="removeNavItem($index)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <el-button @click="addNavItem">新增导航</el-button>
               <el-divider content-position="left">AI 与支付</el-divider>
               <el-row :gutter="16">
                 <el-col :span="12"><el-form-item label="AI 服务商"><el-input v-model="site.ai.provider" /></el-form-item></el-col>
@@ -1193,6 +1213,7 @@ function normalizeSite(data: any = {}) {
     hero: data.hero || {},
     home_sections: data.home_sections || {},
     home_content: data.home_content || {},
+    nav: normalizeNavItems(data.nav),
     global_modules: {
       search_nav: data.global_modules?.search_nav ?? true,
       breadcrumbs: data.global_modules?.breadcrumbs ?? true,
@@ -1205,7 +1226,37 @@ function normalizeSite(data: any = {}) {
   return normalized
 }
 
+function defaultNavItems() {
+  return [
+    { title: '首页', url: 'index.html' },
+    { title: '行业资讯', url: 'news/index.html' },
+    { title: '产品中心', url: 'products/index.html' },
+    { title: '联系我们', url: 'contact.html' }
+  ]
+}
+
+function normalizeNavItems(items: any[] = []) {
+  const source = Array.isArray(items) && items.length ? items : defaultNavItems()
+  return source.map((item: any, index: number) => ({
+    id: item.id || `nav-${Date.now()}-${index}`,
+    title: item.title || '',
+    url: item.url || '#',
+    target_blank: Boolean(item.target_blank)
+  }))
+}
+
+function cleanNavItems(items: any[] = []) {
+  return items
+    .filter((item: any) => String(item.title || '').trim() !== '')
+    .map((item: any) => ({
+      title: String(item.title || '').trim(),
+      url: String(item.url || '#').trim() || '#',
+      target_blank: Boolean(item.target_blank)
+    }))
+}
+
 async function saveSettings() {
+  site.nav = cleanNavItems(site.nav)
   const data = await request('/api/site/settings', { method: 'PUT', data: site })
   Object.assign(site, normalizeSite(data))
   ElMessage.success('站点设置已保存')
@@ -1258,6 +1309,24 @@ function moduleDescription(key: string) {
 
 function resetHomeModules() {
   site.home_modules = defaultHomeModules()
+}
+
+function addNavItem() {
+  site.nav = [...(site.nav || []), { id: `nav-${Date.now()}`, title: '新导航', url: '#', target_blank: false }]
+}
+
+function removeNavItem(index: number) {
+  site.nav = (site.nav || []).filter((_: any, itemIndex: number) => itemIndex !== index)
+}
+
+function moveNavItem(index: number, direction: number) {
+  const next = index + direction
+  if (!site.nav || next < 0 || next >= site.nav.length) return
+  const items = [...site.nav]
+  const current = items[index]
+  items[index] = items[next]
+  items[next] = current
+  site.nav = items
 }
 
 function moveHomeModule(index: number, direction: number) {
