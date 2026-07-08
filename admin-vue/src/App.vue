@@ -465,6 +465,7 @@
                   </el-form-item>
                   <el-form-item>
                     <el-button type="primary" :loading="aiLoading" @click="generateAiPreview">生成预览</el-button>
+                    <el-button :loading="aiTaskLoading" @click="createAiTask">生成任务</el-button>
                     <el-button :loading="aiBatchLoading" @click="batchCreateAiContent">批量入库</el-button>
                   </el-form-item>
                 </el-form>
@@ -509,6 +510,36 @@
                     <small>{{ item.slug }}<span v-if="item.sku"> / {{ item.sku }}</span></small>
                   </article>
                 </div>
+              </el-card>
+              <el-card class="panel mt16" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>AI 任务记录</strong>
+                    <el-button @click="loadAiTasks">刷新任务</el-button>
+                  </div>
+                </template>
+                <el-table :data="aiTasks" height="320" row-key="id">
+                  <el-table-column label="任务" min-width="260">
+                    <template #default="{ row }">
+                      <strong>{{ aiTaskTypeLabel(row.task_type) }}</strong><br />
+                      <small>{{ row.prompt }}</small>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="status" label="状态" width="110" />
+                  <el-table-column label="结果" width="100">
+                    <template #default="{ row }">{{ row.result_json?.length || row.success_count || 0 }} 条</template>
+                  </el-table-column>
+                  <el-table-column prop="created_at" label="时间" width="170" />
+                  <el-table-column label="操作" width="250">
+                    <template #default="{ row }">
+                      <el-button link type="primary" :disabled="row.status !== 'success'" @click="confirmAiTask(row, 'save_draft')">存草稿</el-button>
+                      <el-button link type="success" :disabled="row.status !== 'success'" @click="confirmAiTask(row, 'publish')">发布</el-button>
+                      <el-button link type="danger" :disabled="row.status !== 'success'" @click="confirmAiTask(row, 'discard')">丢弃</el-button>
+                      <el-button link type="danger" @click="deleteAiTask(row)">删除</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <el-pagination class="table-pager" layout="prev, pager, next, total" :current-page="aiTaskPager.page" :page-size="aiTaskPager.page_size" :total="aiTaskPager.total" @current-change="changeAiTaskPage" />
               </el-card>
             </el-col>
           </el-row>
@@ -1298,11 +1329,14 @@ const mediaPager = reactive({ page: 1, page_size: 12, total: 0 })
 const formPager = reactive({ page: 1, page_size: 10, total: 0 })
 const collectorSourcePager = reactive({ page: 1, page_size: 10, total: 0 })
 const collectorRecordPager = reactive({ page: 1, page_size: 10, total: 0 })
+const aiTaskPager = reactive({ page: 1, page_size: 10, total: 0 })
 const taskPager = reactive({ page: 1, page_size: 10, total: 0 })
 const aiDrafts = ref<any[]>([])
+const aiTasks = ref<any[]>([])
 const pagePlan = ref<any>(null)
 const aiLoading = ref(false)
 const aiBatchLoading = ref(false)
+const aiTaskLoading = ref(false)
 const aiCoverLoading = ref('')
 const pagePlanLoading = ref(false)
 const pagePlanSaving = ref(false)
@@ -1412,6 +1446,7 @@ function setView(key: string) {
   if (key === 'sites') loadSites()
   if (key === 'templates') Promise.all([loadTemplates(), loadModuleRegistry()])
   if (key === 'pages') loadPages()
+  if (key === 'ai') loadAiTasks()
   if (key === 'articles') loadArticles()
   if (key === 'products') loadProducts()
   if (key === 'categories') loadCategories()
@@ -1431,7 +1466,7 @@ function refreshCurrentView() {
     sites: loadSites,
     settings: async () => { await Promise.all([loadSettings(), loadStaticPages()]) },
     templates: async () => { await Promise.all([loadTemplates(), loadModuleRegistry(), loadSettings(), loadStaticPages()]) },
-    ai: async () => {},
+    ai: loadAiTasks,
     pages: loadPages,
     articles: async () => { await Promise.all([loadArticles(), loadCategories()]) },
     products: async () => { await Promise.all([loadProducts(), loadCategories()]) },
@@ -1453,7 +1488,7 @@ function openLegacyAdmin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadSites(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadCollector(), loadVersions()])
+  await Promise.all([loadSites(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadCollector(), loadAiTasks(), loadVersions()])
 }
 
 async function loadDashboard() {
@@ -2035,6 +2070,60 @@ async function generateAiPreview() {
   } finally {
     aiLoading.value = false
   }
+}
+
+async function loadAiTasks() {
+  const params = new URLSearchParams()
+  params.set('page', String(aiTaskPager.page))
+  params.set('page_size', String(aiTaskPager.page_size))
+  params.set('site_id', operationSiteScope.value)
+  const data = await request(`/api/ai/tasks?${params.toString()}`)
+  aiTasks.value = data.items || []
+  aiTaskPager.total = data.pagination?.total || aiTasks.value.length
+}
+
+async function createAiTask() {
+  aiTaskLoading.value = true
+  try {
+    const task = await request('/api/ai/tasks', {
+      method: 'POST',
+      data: {
+        type: aiForm.type,
+        prompt: aiForm.prompt,
+        count: aiForm.count,
+        site_scope: aiForm.site_scope,
+        site_ids: siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
+      }
+    })
+    ElMessage.success(task.message || 'AI 任务已创建')
+    await loadAiTasks()
+  } finally {
+    aiTaskLoading.value = false
+  }
+}
+
+async function confirmAiTask(row: any, action: 'save_draft' | 'publish' | 'discard') {
+  const text = action === 'discard' ? '确定丢弃这个 AI 任务结果？' : (action === 'publish' ? '确定把这个 AI 任务结果直接发布？' : '确定把这个 AI 任务结果保存为草稿？')
+  await ElMessageBox.confirm(text)
+  await request(`/api/ai/tasks/${row.id}/confirm`, { method: 'POST', data: { action } })
+  ElMessage.success('AI 任务已处理')
+  await Promise.all([loadAiTasks(), loadArticles(), loadProducts(), loadDashboard()])
+}
+
+async function deleteAiTask(row: any) {
+  await ElMessageBox.confirm(`确定删除 AI 任务「${row.prompt}」？`)
+  await request(`/api/ai/tasks/${row.id}`, { method: 'DELETE' })
+  ElMessage.success('AI 任务已删除')
+  await loadAiTasks()
+}
+
+function changeAiTaskPage(page: number) {
+  aiTaskPager.page = page
+  loadAiTasks()
+}
+
+function aiTaskTypeLabel(value: string) {
+  return ({ article_generate: '文章生成', product_generate: '商品生成', page_build: '页面搭建' } as any)[value] || value || '-'
 }
 
 async function saveAiDraft(item: any, index: number) {

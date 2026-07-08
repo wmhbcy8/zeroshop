@@ -2609,6 +2609,145 @@ function publish_collector_record(PDO $pdo, int $recordId, string $status = 'dra
     return ['article' => attach_distribution($pdo, 'article', [fetch_one($pdo, 'articles', $articleId)])[0], 'record' => fetch_one($pdo, 'collector_records', $recordId)];
 }
 
+function ensure_ai_task_tables(PDO $pdo): void
+{
+    $pdo->exec("CREATE TABLE IF NOT EXISTS ai_tasks (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        site_id BIGINT UNSIGNED NOT NULL DEFAULT 10001,
+        task_type VARCHAR(50) NOT NULL,
+        prompt TEXT NOT NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'success',
+        site_ids TEXT,
+        result_json MEDIUMTEXT,
+        message VARCHAR(255),
+        success_count INT UNSIGNED NOT NULL DEFAULT 0,
+        created_article_ids TEXT,
+        created_product_ids TEXT,
+        started_at DATETIME,
+        finished_at DATETIME,
+        confirmed_at DATETIME,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_site_id (site_id),
+        INDEX idx_task_type (task_type),
+        INDEX idx_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+
+function normalize_ai_task_row(array $row): array
+{
+    foreach (['site_ids', 'result_json', 'created_article_ids', 'created_product_ids'] as $field) {
+        $decoded = json_decode((string)($row[$field] ?? ''), true);
+        $row[$field] = is_array($decoded) ? $decoded : [];
+    }
+    return $row;
+}
+
+function list_ai_tasks(PDO $pdo, ?PDO $main = null): array
+{
+    ensure_ai_task_tables($pdo);
+    $siteId = requested_site_filter();
+    $where = $siteId ? ['site_id = ' . (int)$siteId] : [];
+    $result = paginate($pdo, 'ai_tasks', $where, 'id DESC', 'prompt');
+    $result['items'] = array_map('normalize_ai_task_row', attach_site_names($result['items'], $main));
+    return $result;
+}
+
+function create_ai_task(PDO $pdo, array $data): array
+{
+    ensure_ai_task_tables($pdo);
+    require_fields($data, ['type', 'prompt']);
+    $type = in_array(($data['type'] ?? 'article'), ['article', 'product'], true) ? (string)$data['type'] : 'article';
+    $count = min(20, max(1, (int)($data['count'] ?? 3)));
+    $site = site_settings($pdo);
+    $siteIds = normalize_site_ids($data);
+    $items = [];
+    for ($i = 1; $i <= $count; $i++) {
+        $itemPrompt = trim((string)$data['prompt']) . "（第 {$i} 条，避免重复）";
+        $fallback = local_ai_draft($type, $itemPrompt, $site);
+        $remote = remote_ai_draft($type, $itemPrompt, $site);
+        $draft = $remote ? array_replace($fallback, $remote) : $fallback;
+        $draft['type'] = $type;
+        $draft['title'] = text_limit((string)($draft['title'] ?? $itemPrompt), 120);
+        $draft['slug'] = substr(draft_slug((string)($draft['slug'] ?? $draft['title']), $type) . '-' . date('His') . '-' . $i, 0, 180);
+        if ($type === 'product') {
+            $draft['sku'] = (string)($draft['sku'] ?? ('HJ-AI-' . date('His') . '-' . $i));
+        }
+        $items[] = $draft;
+    }
+    $time = now();
+    $taskType = $type === 'article' ? 'article_generate' : 'product_generate';
+    $stmt = $pdo->prepare("INSERT INTO ai_tasks (site_id, task_type, prompt, status, site_ids, result_json, message, success_count, started_at, finished_at, created_at, updated_at)
+        VALUES (:site_id, :task_type, :prompt, 'success', :site_ids, :result_json, :message, :success_count, :started_at, :finished_at, :created_at, :updated_at)");
+    $stmt->execute([
+        'site_id' => requested_site_id(),
+        'task_type' => $taskType,
+        'prompt' => trim((string)$data['prompt']),
+        'site_ids' => json_encode($siteIds, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'result_json' => json_encode($items, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'message' => '已生成 ' . count($items) . ' 条草稿，等待确认',
+        'success_count' => count($items),
+        'started_at' => $time,
+        'finished_at' => $time,
+        'created_at' => $time,
+        'updated_at' => $time,
+    ]);
+    return normalize_ai_task_row(fetch_one($pdo, 'ai_tasks', (int)$pdo->lastInsertId()) ?: []);
+}
+
+function confirm_ai_task(PDO $pdo, int $taskId, array $data): array
+{
+    ensure_ai_task_tables($pdo);
+    $task = fetch_one($pdo, 'ai_tasks', $taskId);
+    if (!$task) {
+        fail('AI 任务不存在', 'NOT_FOUND', 404);
+    }
+    $task = normalize_ai_task_row($task);
+    $action = in_array(($data['action'] ?? 'save_draft'), ['save_draft', 'publish', 'discard'], true) ? (string)$data['action'] : 'save_draft';
+    if ($action === 'discard') {
+        $stmt = $pdo->prepare("UPDATE ai_tasks SET status='discarded', message=:message, confirmed_at=:confirmed_at, updated_at=:updated_at WHERE id=:id");
+        $stmt->execute(['id' => $taskId, 'message' => '任务结果已丢弃', 'confirmed_at' => now(), 'updated_at' => now()]);
+        return normalize_ai_task_row(fetch_one($pdo, 'ai_tasks', $taskId) ?: []);
+    }
+    $selected = $data['selected_items'] ?? [];
+    if (!is_array($selected) || !$selected) {
+        $selected = array_keys($task['result_json']);
+    }
+    $selected = array_values(array_unique(array_map('intval', $selected)));
+    $contentStatus = $action === 'publish' ? 'published' : 'draft';
+    $siteIds = array_values(array_filter(array_map('intval', $task['site_ids'] ?? []))) ?: [requested_site_id()];
+    $articleIds = [];
+    $productIds = [];
+    foreach ($selected as $index) {
+        if (!isset($task['result_json'][$index]) || !is_array($task['result_json'][$index])) {
+            continue;
+        }
+        $draft = $task['result_json'][$index];
+        $draft['status'] = $contentStatus;
+        $draft['published_at'] = $contentStatus === 'published' ? now() : null;
+        if (($draft['type'] ?? '') === 'product' || $task['task_type'] === 'product_generate') {
+            $id = insert_product($pdo, $draft);
+            sync_content_distribution($pdo, 'product', $id, $siteIds);
+            $productIds[] = $id;
+        } else {
+            $id = insert_article($pdo, $draft);
+            sync_content_distribution($pdo, 'article', $id, $siteIds);
+            $articleIds[] = $id;
+        }
+    }
+    $message = '已确认入库：文章 ' . count($articleIds) . ' 条，商品 ' . count($productIds) . ' 条';
+    $stmt = $pdo->prepare("UPDATE ai_tasks SET status='confirmed', message=:message, created_article_ids=:created_article_ids, created_product_ids=:created_product_ids, confirmed_at=:confirmed_at, updated_at=:updated_at WHERE id=:id");
+    $stmt->execute([
+        'id' => $taskId,
+        'message' => $message,
+        'created_article_ids' => json_encode($articleIds, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'created_product_ids' => json_encode($productIds, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'confirmed_at' => now(),
+        'updated_at' => now(),
+    ]);
+    return normalize_ai_task_row(fetch_one($pdo, 'ai_tasks', $taskId) ?: []);
+}
+
 function svg_text(string $value): string
 {
     return htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -2870,6 +3009,7 @@ function ensure_auth_tables(PDO $pdo): void
     ensure_column($pdo, 'site_visits', 'site_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 10001');
 
     ensure_collector_tables($pdo);
+    ensure_ai_task_tables($pdo);
 
     $exists = (int)$pdo->query('SELECT COUNT(*) FROM admin_users')->fetchColumn();
     if ($exists === 0) {
@@ -3328,6 +3468,28 @@ try {
     if ($method === 'POST' && $path === '/site/settings/apply-all') {
         $data = body_json();
         ok(apply_site_settings_to_all(main_pdo(), $pdo, $data), '站点设置已应用到全部站点');
+    }
+
+    if ($method === 'GET' && $path === '/ai/tasks') {
+        ok(list_ai_tasks($pdo, main_pdo()));
+    }
+
+    if ($method === 'POST' && $path === '/ai/tasks') {
+        ok(create_ai_task($pdo, body_json()), 'AI 任务已创建');
+    }
+
+    if ($params = route_param('/ai/tasks/{id}/confirm', $path)) {
+        if ($method === 'POST') {
+            ok(confirm_ai_task($pdo, (int)$params['id'], body_json()), 'AI 任务已确认');
+        }
+    }
+
+    if ($params = route_param('/ai/tasks/{id}', $path)) {
+        if ($method === 'DELETE') {
+            ensure_ai_task_tables($pdo);
+            $pdo->prepare('DELETE FROM ai_tasks WHERE id = ?')->execute([(int)$params['id']]);
+            ok([], 'AI 任务已删除');
+        }
     }
 
     if ($method === 'POST' && $path === '/ai/generate') {
