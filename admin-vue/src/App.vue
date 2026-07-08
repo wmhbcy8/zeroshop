@@ -224,7 +224,14 @@
         <section v-if="view === 'settings'">
           <el-card class="panel" shadow="never">
             <template #header>
-              <div class="card-head"><strong>站点设置</strong><el-button type="primary" @click="saveSettings">保存设置</el-button></div>
+              <div class="card-head">
+                <strong>站点设置</strong>
+                <div class="head-actions">
+                  <el-button @click="loadStaticPages">刷新页面列表</el-button>
+                  <el-button @click="saveSettings">保存设置</el-button>
+                  <el-button type="primary" :loading="generating" @click="saveSettingsAndGenerate">保存并生成静态站</el-button>
+                </div>
+              </div>
             </template>
             <el-form :model="site" label-width="120px" class="wide-form">
               <el-divider content-position="left">基础信息</el-divider>
@@ -245,8 +252,37 @@
                 <el-table-column label="标题" min-width="160">
                   <template #default="{ row }"><el-input v-model="row.title" placeholder="例如：首页" /></template>
                 </el-table-column>
-                <el-table-column label="链接" min-width="220">
-                  <template #default="{ row }"><el-input v-model="row.url" placeholder="例如：index.html" /></template>
+                <el-table-column label="链接页面" min-width="300">
+                  <template #default="{ row }">
+                    <el-select
+                      v-model="row.url"
+                      filterable
+                      allow-create
+                      clearable
+                      default-first-option
+                      placeholder="选择静态页面或输入外链"
+                      class="nav-page-select"
+                      @change="onNavUrlChange(row)"
+                    >
+                      <el-option-group
+                        v-for="group in staticPageGroups"
+                        :key="group.type"
+                        :label="group.label"
+                      >
+                        <el-option
+                          v-for="page in group.items"
+                          :key="`${group.type}-${page.url}`"
+                          :label="page.title"
+                          :value="page.url"
+                        >
+                          <div class="page-option">
+                            <span>{{ page.title }}</span>
+                            <small>{{ page.url }}</small>
+                          </div>
+                        </el-option>
+                      </el-option-group>
+                    </el-select>
+                  </template>
                 </el-table-column>
                 <el-table-column label="新窗口" width="90">
                   <template #default="{ row }"><el-switch v-model="row.target_blank" /></template>
@@ -907,6 +943,7 @@ const currentSiteId = ref<number | string>(10001)
 const operationSiteScope = ref('all')
 const templates = ref<any[]>([])
 const moduleRegistry = ref<any>({ scopes: [], modules: [] })
+const staticPages = ref<any[]>([])
 const servicePending = ref(0)
 const selectedServiceIds = ref<string[]>([])
 const orderDrawerVisible = ref(false)
@@ -987,6 +1024,16 @@ const navItems = [
 ]
 const currentNav = computed(() => navItems.find((item) => item.key === view.value))
 const currentSite = computed(() => sites.value.find((item: any) => String(item.id) === String(currentSiteId.value)))
+const staticPageGroups = computed(() => {
+  const labels: any = { system: '系统页面', article: '文章页面', product: '商品页面', custom: '自定义页面' }
+  return ['system', 'article', 'product', 'custom']
+    .map((type) => ({
+      type,
+      label: labels[type] || type,
+      items: staticPages.value.filter((item: any) => item.type === type)
+    }))
+    .filter((group) => group.items.length)
+})
 const authHeaders = computed(() => ({ Authorization: `Bearer ${token.value}` }))
 const imageMedia = computed(() => media.value.filter((item) => item.file_type === 'image'))
 const homeModuleItems = computed(() => (moduleRegistry.value.modules || []).filter((item: any) => item.scope === 'home'))
@@ -1068,8 +1115,8 @@ function refreshCurrentView() {
   const loaders: Record<string, () => Promise<void>> = {
     dashboard: loadDashboard,
     sites: loadSites,
-    settings: loadSettings,
-    templates: async () => { await Promise.all([loadTemplates(), loadModuleRegistry(), loadSettings()]) },
+    settings: async () => { await Promise.all([loadSettings(), loadStaticPages()]) },
+    templates: async () => { await Promise.all([loadTemplates(), loadModuleRegistry(), loadSettings(), loadStaticPages()]) },
     ai: async () => {},
     articles: loadArticles,
     products: loadProducts,
@@ -1089,7 +1136,7 @@ function openLegacyAdmin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadSites(), loadDashboard(), loadSettings(), loadTemplates(), loadModuleRegistry(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadVersions()])
+  await Promise.all([loadSites(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadVersions()])
 }
 
 async function loadDashboard() {
@@ -1123,14 +1170,14 @@ async function loadSites() {
 function switchSite() {
   ElMessage.success('已切换当前站点')
   publishResult.value = null
-  refreshCurrentView()
+  Promise.all([loadStaticPages(), refreshCurrentView()])
 }
 
 function openSite(item: any) {
   currentSiteId.value = item.id
   view.value = 'settings'
   ElMessage.success(`已进入：${item.name}`)
-  loadSettings()
+  Promise.all([loadSettings(), loadStaticPages()])
 }
 
 function resetSiteForm() {
@@ -1196,6 +1243,11 @@ async function loadSettings() {
   Object.assign(site, normalizeSite(data))
 }
 
+async function loadStaticPages() {
+  const data = await request('/api/site/pages')
+  staticPages.value = data.items || []
+}
+
 function normalizeSite(data: any = {}) {
   const normalized = {
     ...data,
@@ -1231,7 +1283,9 @@ function defaultNavItems() {
     { title: '首页', url: 'index.html' },
     { title: '行业资讯', url: 'news/index.html' },
     { title: '产品中心', url: 'products/index.html' },
-    { title: '联系我们', url: 'contact.html' }
+    { title: '联系我们', url: 'contact.html' },
+    { title: '搜索', url: 'search.html' },
+    { title: '查订单', url: 'order.html' }
   ]
 }
 
@@ -1259,7 +1313,13 @@ async function saveSettings() {
   site.nav = cleanNavItems(site.nav)
   const data = await request('/api/site/settings', { method: 'PUT', data: site })
   Object.assign(site, normalizeSite(data))
-  ElMessage.success('站点设置已保存')
+  ElMessage.success('站点设置已保存，生成静态站后前台生效')
+}
+
+async function saveSettingsAndGenerate() {
+  await saveSettings()
+  await generateSite()
+  await loadStaticPages()
 }
 
 async function loadTemplates() {
@@ -1312,7 +1372,16 @@ function resetHomeModules() {
 }
 
 function addNavItem() {
-  site.nav = [...(site.nav || []), { id: `nav-${Date.now()}`, title: '新导航', url: '#', target_blank: false }]
+  site.nav = [...(site.nav || []), { id: `nav-${Date.now()}`, title: '新导航', url: '', target_blank: false }]
+}
+
+function onNavUrlChange(row: any) {
+  const page = staticPages.value.find((item: any) => item.url === row.url)
+  if (!page) return
+  const title = String(row.title || '').trim()
+  if (!title || title === '新导航') {
+    row.title = page.title
+  }
 }
 
 function removeNavItem(index: number) {

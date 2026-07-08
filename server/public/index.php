@@ -1793,6 +1793,53 @@ function site_settings(PDO $pdo): array
     return is_array($data) ? $data : [];
 }
 
+function site_static_pages(PDO $pdo): array
+{
+    $siteId = requested_site_id();
+    $items = [
+        ['type' => 'system', 'title' => '首页', 'url' => 'index.html'],
+        ['type' => 'system', 'title' => '行业资讯', 'url' => 'news/index.html'],
+        ['type' => 'system', 'title' => '产品中心', 'url' => 'products/index.html'],
+        ['type' => 'system', 'title' => '联系我们', 'url' => 'contact.html'],
+        ['type' => 'system', 'title' => '搜索', 'url' => 'search.html'],
+        ['type' => 'system', 'title' => '查订单', 'url' => 'order.html'],
+    ];
+
+    $relationExists = (bool)$pdo->query("SHOW TABLES LIKE 'content_site_relations'")->fetchColumn();
+    $articleSql = "SELECT id, title, slug FROM articles WHERE status = 'published'";
+    $productSql = "SELECT id, title, slug FROM products WHERE status = 'published'";
+    $params = [];
+
+    if ($relationExists) {
+        $articleHasRelations = (int)$pdo->query("SELECT COUNT(*) FROM content_site_relations WHERE content_type = 'article'")->fetchColumn();
+        if ($articleHasRelations > 0) {
+            $articleSql .= " AND id IN (SELECT content_id FROM content_site_relations WHERE content_type = 'article' AND site_id = :article_site_id)";
+            $params['article_site_id'] = $siteId;
+        }
+        $productHasRelations = (int)$pdo->query("SELECT COUNT(*) FROM content_site_relations WHERE content_type = 'product'")->fetchColumn();
+        if ($productHasRelations > 0) {
+            $productSql .= " AND id IN (SELECT content_id FROM content_site_relations WHERE content_type = 'product' AND site_id = :product_site_id)";
+            $params['product_site_id'] = $siteId;
+        }
+    }
+
+    $articleSql .= ' ORDER BY published_at DESC, id DESC LIMIT 200';
+    $articleStmt = $pdo->prepare($articleSql);
+    $articleStmt->execute(array_filter($params, fn($key) => $key === 'article_site_id', ARRAY_FILTER_USE_KEY));
+    foreach ($articleStmt->fetchAll() as $row) {
+        $items[] = ['type' => 'article', 'title' => $row['title'], 'url' => 'news/' . $row['slug'] . '.html'];
+    }
+
+    $productSql .= ' ORDER BY id DESC LIMIT 200';
+    $productStmt = $pdo->prepare($productSql);
+    $productStmt->execute(array_filter($params, fn($key) => $key === 'product_site_id', ARRAY_FILTER_USE_KEY));
+    foreach ($productStmt->fetchAll() as $row) {
+        $items[] = ['type' => 'product', 'title' => $row['title'], 'url' => 'products/' . $row['slug'] . '.html'];
+    }
+
+    return ['site_id' => $siteId, 'items' => $items];
+}
+
 function text_limit(string $value, int $length): string
 {
     if (function_exists('mb_substr')) {
@@ -2670,6 +2717,10 @@ try {
 
     if ($method === 'GET' && $path === '/site/settings') {
         ok(site_settings($pdo));
+    }
+
+    if ($method === 'GET' && $path === '/site/pages') {
+        ok(site_static_pages($pdo));
     }
 
     if ($method === 'GET' && $path === '/site/modules') {

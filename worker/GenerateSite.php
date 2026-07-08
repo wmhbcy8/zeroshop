@@ -277,6 +277,8 @@ function site_for(array $site, string $rootBase): array
         ['title' => '行业资讯', 'url' => 'news/index.html'],
         ['title' => '产品中心', 'url' => 'products/index.html'],
         ['title' => '联系我们', 'url' => 'contact.html'],
+        ['title' => '搜索', 'url' => 'search.html'],
+        ['title' => '查订单', 'url' => 'order.html'],
     ];
     $site['nav'] = array_map(function (array $item) use ($rootBase) {
         $url = $item['url'] ?? '#';

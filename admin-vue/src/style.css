@@ -132,6 +132,20 @@ body {
 .toolbar { margin-bottom: 12px; }
 .media-toolbar { margin-top: 16px; }
 .wide-form { max-width: 1040px; }
+.nav-page-select {
+  width: 100%;
+}
+.page-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+}
+.page-option small {
+  color: #94a3b8;
+  font-size: 12px;
+}
 .mb16 { margin-bottom: 16px; }
 .mt4 { margin-top: 4px; }
 .ml6 { margin-left: 6px; }
