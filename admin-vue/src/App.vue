@@ -177,6 +177,58 @@
               <el-table-column prop="status" label="状态" width="100" />
             </el-table>
           </el-card>
+          <el-card class="panel mt16" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>域名申请工单</strong>
+                <el-button @click="loadPlatform">刷新</el-button>
+              </div>
+            </template>
+            <el-table :data="platformDomainApplications" height="300" row-key="id">
+              <el-table-column label="域名" min-width="210">
+                <template #default="{ row }">
+                  <strong>{{ row.domain }}</strong><br />
+                  <small>{{ row.years }} 年 / {{ domainApplicationUsageLabel(row.usage_type) }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column label="客户/站点" min-width="220">
+                <template #default="{ row }">
+                  <strong>{{ row.customer_name || '-' }}</strong><br />
+                  <small>{{ row.site_name || row.site_key || row.site_id }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column label="状态" width="120"><template #default="{ row }"><el-tag :type="domainApplicationStatusTag(row.status)">{{ domainApplicationStatusLabel(row.status) }}</el-tag></template></el-table-column>
+              <el-table-column prop="created_at" label="提交时间" width="170" />
+              <el-table-column prop="admin_note" label="处理备注" min-width="220" />
+              <el-table-column label="操作" width="120">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="editPlatformDomainApplication(row)">处理</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+          <el-drawer v-model="platformDomainApplicationDrawerVisible" size="560px" title="处理域名申请">
+            <el-form :model="platformDomainApplicationForm" label-width="108px">
+              <el-alert class="mb16" type="info" show-icon :closable="false" :title="`${platformDomainApplicationForm.domain || '-'} / ${platformDomainApplicationForm.site_name || platformDomainApplicationForm.site_id || '-'}`" />
+              <el-form-item label="处理状态">
+                <el-select v-model="platformDomainApplicationForm.status">
+                  <el-option label="已提交" value="submitted" />
+                  <el-option label="查询中" value="checking" />
+                  <el-option label="已通过" value="approved" />
+                  <el-option label="已驳回" value="rejected" />
+                  <el-option label="已购买" value="purchased" />
+                  <el-option label="已绑定" value="bound" />
+                  <el-option label="已取消" value="cancelled" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="处理备注"><el-input v-model="platformDomainApplicationForm.admin_note" type="textarea" :rows="4" placeholder="记录注册商、费用、DNS、实名资料或驳回原因" /></el-form-item>
+              <el-form-item label="同步绑定"><el-switch v-model="platformDomainApplicationForm.bind_to_site" /><small class="form-tip">通过/购买后可直接写入站点域名并设为主域名。</small></el-form-item>
+              <div class="drawer-actions">
+                <el-button @click="platformDomainApplicationDrawerVisible = false">取消</el-button>
+                <el-button type="primary" @click="savePlatformDomainApplication">保存处理结果</el-button>
+              </div>
+            </el-form>
+          </el-drawer>
           <el-drawer v-model="platformCustomerDrawerVisible" size="560px" :title="platformCustomerForm.id ? '编辑客户' : '新建客户'">
             <el-form :model="platformCustomerForm" label-width="108px">
               <el-form-item label="客户名称"><el-input v-model="platformCustomerForm.name" /></el-form-item>
@@ -598,6 +650,7 @@
                 <div class="head-actions">
                   <el-button @click="loadDomains">刷新</el-button>
                   <el-button :loading="domainChecking" @click="checkAllDomains">检查全部</el-button>
+                  <el-button @click="newDomainApplication">申请域名</el-button>
                   <el-button type="primary" @click="newDomain">绑定域名</el-button>
                 </div>
               </div>
@@ -645,6 +698,56 @@
               <div class="drawer-actions">
                 <el-button @click="domainDrawerVisible = false">取消</el-button>
                 <el-button type="primary" @click="saveDomain">保存域名</el-button>
+              </div>
+            </el-form>
+          </el-drawer>
+          <el-card class="panel mt16" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>域名申请记录</strong>
+                <el-button @click="loadDomainApplications">刷新申请</el-button>
+              </div>
+            </template>
+            <el-table :data="domainApplications" height="260" row-key="id">
+              <el-table-column label="申请域名" min-width="220">
+                <template #default="{ row }">
+                  <strong>{{ row.domain }}</strong><br />
+                  <small>{{ row.years }} 年 / {{ domainApplicationUsageLabel(row.usage_type) }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column label="站点" width="170"><template #default="{ row }">{{ row.site_name || row.site_key || row.site_id }}</template></el-table-column>
+              <el-table-column label="状态" width="120"><template #default="{ row }"><el-tag :type="domainApplicationStatusTag(row.status)">{{ domainApplicationStatusLabel(row.status) }}</el-tag></template></el-table-column>
+              <el-table-column prop="applicant_note" label="申请备注" min-width="220" />
+              <el-table-column prop="admin_note" label="平台备注" min-width="220" />
+              <el-table-column prop="created_at" label="提交时间" width="170" />
+            </el-table>
+          </el-card>
+          <el-drawer v-model="domainApplicationDrawerVisible" size="560px" title="申请新域名">
+            <el-form :model="domainApplicationForm" label-width="108px">
+              <el-alert class="mb16" type="info" show-icon :closable="false" :title="`申请会提交给平台后台处理，当前站点：${currentSite?.name || currentSiteId}`" />
+              <el-form-item label="期望域名"><el-input v-model="domainApplicationForm.domain" placeholder="例如：www.example.com" /></el-form-item>
+              <el-row :gutter="12">
+                <el-col :span="12"><el-form-item label="购买年限"><el-input-number v-model="domainApplicationForm.years" :min="1" :max="10" /></el-form-item></el-col>
+                <el-col :span="12">
+                  <el-form-item label="用途">
+                    <el-select v-model="domainApplicationForm.usage_type">
+                      <el-option label="主域名" value="primary" />
+                      <el-option label="别名域名" value="alias" />
+                      <el-option label="子域名" value="subdomain" />
+                      <el-option label="品牌保护" value="brand-protect" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+              <el-row :gutter="12">
+                <el-col :span="12"><el-form-item label="联系人"><el-input v-model="domainApplicationForm.contact_name" /></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="手机"><el-input v-model="domainApplicationForm.contact_phone" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="邮箱"><el-input v-model="domainApplicationForm.contact_email" /></el-form-item>
+              <el-form-item label="申请说明"><el-input v-model="domainApplicationForm.applicant_note" type="textarea" :rows="4" placeholder="填写品牌名、用途、备案/实名资料情况或偏好的注册商" /></el-form-item>
+              <div class="drawer-actions">
+                <el-button @click="domainApplicationDrawerVisible = false">取消</el-button>
+                <el-button type="primary" @click="submitDomainApplication">提交申请</el-button>
               </div>
             </el-form>
           </el-drawer>
@@ -2214,6 +2317,7 @@ const forms = ref<any[]>([])
 const collectorSources = ref<any[]>([])
 const collectorRecords = ref<any[]>([])
 const domains = ref<any[]>([])
+const domainApplications = ref<any[]>([])
 const paymentChannels = ref<any[]>([])
 const seoAudit = ref<any>({})
 const versions = ref<any[]>([])
@@ -2229,6 +2333,7 @@ const centerOverview = ref<any>({})
 const platformOverview = ref<any>({})
 const platformCustomers = ref<any[]>([])
 const platformSites = ref<any[]>([])
+const platformDomainApplications = ref<any[]>([])
 const deployNodes = ref<any[]>([])
 const aiProviders = ref<any[]>([])
 const currentSiteId = ref<number | string>(10001)
@@ -2245,6 +2350,8 @@ const paymentDrawerVisible = ref(false)
 const formDrawerVisible = ref(false)
 const collectorDrawerVisible = ref(false)
 const domainDrawerVisible = ref(false)
+const domainApplicationDrawerVisible = ref(false)
+const platformDomainApplicationDrawerVisible = ref(false)
 const publishDrawerVisible = ref(false)
 const deployTaskDrawerVisible = ref(false)
 const siteDrawerVisible = ref(false)
@@ -2278,6 +2385,8 @@ const orderDetail = reactive<any>({})
 const formDetail = reactive<any>({})
 const collectorForm = reactive<any>({})
 const domainForm = reactive<any>({})
+const domainApplicationForm = reactive<any>({})
+const platformDomainApplicationForm = reactive<any>({})
 const paymentForm = reactive<any>({})
 const paymentConfigText = ref('')
 const publishDetail = reactive<any>({})
@@ -2559,7 +2668,7 @@ function setView(key: string) {
   if (key === 'dashboard') loadDashboard()
   if (key === 'operations') refreshOperations()
   if (key === 'sites') loadSites()
-  if (key === 'domains') loadDomains()
+  if (key === 'domains') Promise.all([loadDomains(), loadDomainApplications()])
   if (key === 'templates') Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry()])
   if (key === 'modules') loadModuleRegistry()
   if (key === 'pages') loadPages()
@@ -2586,7 +2695,7 @@ function refreshCurrentView() {
     operations: refreshOperations,
     platform: loadPlatform,
     sites: loadSites,
-    domains: loadDomains,
+    domains: async () => { await Promise.all([loadDomains(), loadDomainApplications()]) },
     settings: async () => { await Promise.all([loadSettings(), loadStaticPages()]) },
     templates: async () => { await Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry(), loadSettings(), loadStaticPages()]) },
     modules: loadModuleRegistry,
@@ -2625,6 +2734,7 @@ async function loadAll() {
     isPlatformAdmin.value ? loadPlatform() : Promise.resolve(),
     loadSites(),
     loadDomains(),
+    loadDomainApplications(),
     loadDashboard(),
     loadSettings(),
     loadStaticPages(),
@@ -2654,18 +2764,20 @@ async function loadAll() {
 
 async function loadPlatform() {
   if (!isPlatformAdmin.value) return
-  const [overview, customers, siteData, nodes, providers] = await Promise.all([
+  const [overview, customers, siteData, nodes, providers, domainApps] = await Promise.all([
     request('/api/platform/overview'),
     request('/api/platform/customers?page_size=100'),
     request('/api/platform/sites'),
     request('/api/platform/deploy-nodes'),
-    request('/api/platform/ai-providers')
+    request('/api/platform/ai-providers'),
+    request('/api/platform/domain-applications?page_size=100')
   ])
   platformOverview.value = overview || {}
   platformCustomers.value = customers.items || []
   platformSites.value = siteData.items || []
   deployNodes.value = nodes.items || []
   aiProviders.value = providers.items || []
+  platformDomainApplications.value = domainApps.items || []
 }
 
 async function loadDashboard() {
@@ -2709,6 +2821,11 @@ async function loadDomains() {
   domains.value = data.items || []
 }
 
+async function loadDomainApplications() {
+  const data = await request('/api/domain-applications?page_size=50')
+  domainApplications.value = data.items || []
+}
+
 async function loadSeoAudit() {
   seoAudit.value = await request('/api/seo/audit')
 }
@@ -2748,6 +2865,30 @@ function resetDomainForm() {
 function newDomain() {
   resetDomainForm()
   domainDrawerVisible.value = true
+}
+
+function resetDomainApplicationForm() {
+  Object.assign(domainApplicationForm, {
+    domain: '',
+    years: 1,
+    usage_type: 'primary',
+    contact_name: '',
+    contact_phone: '',
+    contact_email: '',
+    applicant_note: ''
+  })
+}
+
+function newDomainApplication() {
+  resetDomainApplicationForm()
+  domainApplicationDrawerVisible.value = true
+}
+
+async function submitDomainApplication() {
+  await request('/api/domain-applications', { method: 'POST', data: { ...domainApplicationForm } })
+  domainApplicationDrawerVisible.value = false
+  ElMessage.success('域名申请已提交给平台后台')
+  await Promise.all([loadDomainApplications(), isPlatformAdmin.value ? loadPlatform() : Promise.resolve()])
 }
 
 function editDomain(row: any) {
@@ -2805,6 +2946,47 @@ async function deleteDomain(row: any) {
   await request(`/api/site/domains/${row.id}`, { method: 'DELETE' })
   ElMessage.success('域名已删除')
   await Promise.all([loadDomains(), loadSites(), loadSettings(), loadPlatform()])
+}
+
+function editPlatformDomainApplication(row: any) {
+  Object.assign(platformDomainApplicationForm, {
+    ...row,
+    bind_to_site: row.status === 'purchased' || row.status === 'approved'
+  })
+  platformDomainApplicationDrawerVisible.value = true
+}
+
+async function savePlatformDomainApplication() {
+  await request(`/api/platform/domain-applications/${platformDomainApplicationForm.id}`, {
+    method: 'PUT',
+    data: { ...platformDomainApplicationForm }
+  })
+  platformDomainApplicationDrawerVisible.value = false
+  ElMessage.success('域名申请处理结果已保存')
+  await Promise.all([loadPlatform(), loadDomainApplications(), loadDomains(), loadSites(), loadSettings()])
+}
+
+function domainApplicationStatusLabel(value: string) {
+  return ({
+    submitted: '已提交',
+    checking: '查询中',
+    approved: '已通过',
+    rejected: '已驳回',
+    purchased: '已购买',
+    bound: '已绑定',
+    cancelled: '已取消'
+  } as any)[value] || value || '-'
+}
+
+function domainApplicationStatusTag(value: string) {
+  if (['approved', 'purchased', 'bound'].includes(value)) return 'success'
+  if (value === 'rejected' || value === 'cancelled') return 'danger'
+  if (value === 'checking') return 'warning'
+  return 'info'
+}
+
+function domainApplicationUsageLabel(value: string) {
+  return ({ primary: '主域名', alias: '别名域名', subdomain: '子域名', 'brand-protect': '品牌保护' } as any)[value] || value || '-'
 }
 
 function domainDnsLabel(value: string) {

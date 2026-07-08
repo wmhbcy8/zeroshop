@@ -1425,6 +1425,27 @@ function ensure_center_tables(PDO $main): void
         INDEX idx_site_id (site_id),
         INDEX idx_status (status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $main->exec("CREATE TABLE IF NOT EXISTS domain_applications (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        customer_id BIGINT UNSIGNED NOT NULL,
+        site_id BIGINT UNSIGNED NOT NULL,
+        domain VARCHAR(180) NOT NULL,
+        years INT UNSIGNED NOT NULL DEFAULT 1,
+        usage_type VARCHAR(40) NOT NULL DEFAULT 'primary',
+        contact_name VARCHAR(100),
+        contact_phone VARCHAR(50),
+        contact_email VARCHAR(120),
+        status VARCHAR(30) NOT NULL DEFAULT 'submitted',
+        applicant_note TEXT,
+        admin_note TEXT,
+        processed_at DATETIME,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_customer_id (customer_id),
+        INDEX idx_site_id (site_id),
+        INDEX idx_domain (domain),
+        INDEX idx_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $main->exec("CREATE TABLE IF NOT EXISTS batch_tasks (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
         task_no VARCHAR(80) NOT NULL UNIQUE,
@@ -2636,6 +2657,168 @@ function check_all_site_domains(PDO $main, int $siteId): array
         'ssl_ready' => $sslReady,
         'message' => '已检查 ' . count($items) . ' 个启用域名，DNS 有效 ' . $valid . ' 个，HTTPS 就绪 ' . $sslReady . ' 个',
     ];
+}
+
+function domain_application_payload(array $data, array $current = []): array
+{
+    $domain = normalize_domain_name((string)($data['domain'] ?? ($current['domain'] ?? '')));
+    if ($domain === '' || !preg_match('/^[a-z0-9.-]+\.[a-z]{2,}$/i', $domain)) {
+        fail('申请域名格式不正确', 'VALIDATION_ERROR', 422);
+    }
+    $usageType = trim((string)($data['usage_type'] ?? ($current['usage_type'] ?? 'primary')));
+    if (!in_array($usageType, ['primary', 'alias', 'subdomain', 'brand-protect'], true)) {
+        $usageType = 'primary';
+    }
+    $status = trim((string)($data['status'] ?? ($current['status'] ?? 'submitted')));
+    if (!in_array($status, ['submitted', 'checking', 'approved', 'rejected', 'purchased', 'bound', 'cancelled'], true)) {
+        $status = 'submitted';
+    }
+    return [
+        'domain' => $domain,
+        'years' => min(10, max(1, (int)($data['years'] ?? ($current['years'] ?? 1)))),
+        'usage_type' => $usageType,
+        'contact_name' => mb_substr(trim((string)($data['contact_name'] ?? ($current['contact_name'] ?? ''))), 0, 100, 'UTF-8'),
+        'contact_phone' => mb_substr(trim((string)($data['contact_phone'] ?? ($current['contact_phone'] ?? ''))), 0, 50, 'UTF-8'),
+        'contact_email' => mb_substr(trim((string)($data['contact_email'] ?? ($current['contact_email'] ?? ''))), 0, 120, 'UTF-8'),
+        'status' => $status,
+        'applicant_note' => trim((string)($data['applicant_note'] ?? ($current['applicant_note'] ?? ''))),
+        'admin_note' => trim((string)($data['admin_note'] ?? ($current['admin_note'] ?? ''))),
+    ];
+}
+
+function hydrate_domain_application(array $row): array
+{
+    $row['id'] = (int)($row['id'] ?? 0);
+    $row['customer_id'] = (int)($row['customer_id'] ?? 0);
+    $row['site_id'] = (int)($row['site_id'] ?? 0);
+    $row['years'] = (int)($row['years'] ?? 1);
+    return $row;
+}
+
+function list_domain_applications(PDO $main, ?array $user = null, bool $platform = false): array
+{
+    ensure_center_tables($main);
+    $where = [];
+    $params = [];
+    if (!$platform) {
+        $scope = requested_site_scope();
+        if ($scope !== null) {
+            if (!$scope) {
+                $where[] = '1 = 0';
+            } else {
+                $placeholders = [];
+                foreach (array_values($scope) as $index => $siteId) {
+                    $key = 'site_id_' . $index;
+                    $placeholders[] = ':' . $key;
+                    $params[$key] = (int)$siteId;
+                }
+                $where[] = 'da.site_id IN (' . implode(',', $placeholders) . ')';
+            }
+        }
+        if ($user && !is_platform_admin($user)) {
+            $where[] = 'da.customer_id = :customer_id';
+            $params['customer_id'] = (int)($user['customer_id'] ?? 0);
+        }
+    }
+    $status = trim((string)($_GET['status'] ?? ''));
+    if ($status !== '') {
+        $where[] = 'da.status = :status';
+        $params['status'] = $status;
+    }
+    $keyword = trim((string)($_GET['keyword'] ?? ''));
+    if ($keyword !== '') {
+        $where[] = '(da.domain LIKE :keyword OR s.name LIKE :keyword OR c.name LIKE :keyword)';
+        $params['keyword'] = '%' . $keyword . '%';
+    }
+    $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $offset = ($page - 1) * $pageSize;
+    $countStmt = $main->prepare("SELECT COUNT(*) FROM domain_applications da LEFT JOIN sites s ON s.id = da.site_id LEFT JOIN customers c ON c.id = da.customer_id {$whereSql}");
+    $countStmt->execute($params);
+    $total = (int)$countStmt->fetchColumn();
+    $stmt = $main->prepare("SELECT da.*, s.name AS site_name, s.site_key, c.name AS customer_name
+        FROM domain_applications da
+        LEFT JOIN sites s ON s.id = da.site_id
+        LEFT JOIN customers c ON c.id = da.customer_id
+        {$whereSql}
+        ORDER BY da.id DESC
+        LIMIT {$pageSize} OFFSET {$offset}");
+    $stmt->execute($params);
+    return [
+        'items' => array_map('hydrate_domain_application', $stmt->fetchAll()),
+        'pagination' => [
+            'page' => $page,
+            'page_size' => $pageSize,
+            'total' => $total,
+            'total_pages' => (int)ceil($total / $pageSize),
+        ],
+    ];
+}
+
+function create_domain_application(PDO $main, int $siteId, array $data, ?array $user = null): array
+{
+    ensure_center_tables($main);
+    assert_site_access($siteId);
+    $site = fetch_one($main, 'sites', $siteId);
+    if (!$site) {
+        fail('站点不存在', 'NOT_FOUND', 404);
+    }
+    if ($user && !is_platform_admin($user) && (int)($site['customer_id'] ?? 0) !== (int)($user['customer_id'] ?? 0)) {
+        fail('无权为该站点申请域名', 'FORBIDDEN', 403);
+    }
+    $payload = domain_application_payload($data);
+    $now = now();
+    $stmt = $main->prepare('INSERT INTO domain_applications (customer_id, site_id, domain, years, usage_type, contact_name, contact_phone, contact_email, status, applicant_note, admin_note, created_at, updated_at)
+        VALUES (:customer_id, :site_id, :domain, :years, :usage_type, :contact_name, :contact_phone, :contact_email, "submitted", :applicant_note, "", :created_at, :updated_at)');
+    $stmt->execute([
+        'customer_id' => (int)$site['customer_id'],
+        'site_id' => $siteId,
+        'domain' => $payload['domain'],
+        'years' => $payload['years'],
+        'usage_type' => $payload['usage_type'],
+        'contact_name' => $payload['contact_name'],
+        'contact_phone' => $payload['contact_phone'],
+        'contact_email' => $payload['contact_email'],
+        'applicant_note' => $payload['applicant_note'],
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    return hydrate_domain_application(fetch_one($main, 'domain_applications', (int)$main->lastInsertId()) ?: []);
+}
+
+function update_domain_application(PDO $main, int $id, array $data): array
+{
+    ensure_center_tables($main);
+    $current = fetch_one($main, 'domain_applications', $id);
+    if (!$current) {
+        fail('域名申请不存在', 'NOT_FOUND', 404);
+    }
+    $payload = domain_application_payload($data, $current);
+    $statusChanged = ($payload['status'] ?? '') !== ($current['status'] ?? '');
+    $now = now();
+    $stmt = $main->prepare('UPDATE domain_applications SET domain=:domain, years=:years, usage_type=:usage_type, contact_name=:contact_name, contact_phone=:contact_phone, contact_email=:contact_email, status=:status, applicant_note=:applicant_note, admin_note=:admin_note, processed_at=:processed_at, updated_at=:updated_at WHERE id=:id');
+    $stmt->execute($payload + [
+        'id' => $id,
+        'processed_at' => $statusChanged && in_array($payload['status'], ['approved', 'rejected', 'purchased', 'bound', 'cancelled'], true) ? $now : ($current['processed_at'] ?? null),
+        'updated_at' => $now,
+    ]);
+    if (!empty($data['bind_to_site']) && in_array($payload['status'], ['approved', 'purchased', 'bound'], true)) {
+        $domain = save_site_domain($main, (int)$current['site_id'], [
+            'domain' => $payload['domain'],
+            'domain_type' => $payload['usage_type'] === 'alias' ? 'alias' : 'primary',
+            'is_primary' => $payload['usage_type'] !== 'alias',
+            'dns_status' => 'pending',
+            'ssl_status' => 'pending',
+            'status' => 'active',
+        ]);
+        $main->prepare('UPDATE domain_applications SET status = "bound", processed_at = :processed_at, updated_at = :updated_at WHERE id = :id')
+            ->execute(['id' => $id, 'processed_at' => $now, 'updated_at' => $now]);
+        $saved = hydrate_domain_application(fetch_one($main, 'domain_applications', $id) ?: []);
+        $saved['bound_domain'] = $domain;
+        return $saved;
+    }
+    return hydrate_domain_application(fetch_one($main, 'domain_applications', $id) ?: []);
 }
 
 function batch_task_filter_sql(): array
@@ -6643,6 +6826,16 @@ try {
         ok(list_deploy_tasks(main_pdo()));
     }
 
+    if ($method === 'GET' && $path === '/platform/domain-applications') {
+        ok(list_domain_applications(main_pdo(), $user, true));
+    }
+
+    if ($params = route_param('/platform/domain-applications/{id}', $path)) {
+        if ($method === 'PUT') {
+            ok(update_domain_application(main_pdo(), (int)$params['id'], body_json()), '域名申请已处理');
+        }
+    }
+
     if ($method === 'GET' && $path === '/platform/deploy-nodes') {
         ok(list_deploy_nodes(main_pdo()));
     }
@@ -6833,6 +7026,14 @@ try {
 
     if ($method === 'GET' && $path === '/site/domains') {
         ok(list_site_domains(main_pdo(), requested_site_id()));
+    }
+
+    if ($method === 'GET' && $path === '/domain-applications') {
+        ok(list_domain_applications(main_pdo(), $user, false));
+    }
+
+    if ($method === 'POST' && $path === '/domain-applications') {
+        ok(create_domain_application(main_pdo(), requested_site_id(), body_json(), $user), '域名申请已提交');
     }
 
     if ($method === 'POST' && $path === '/site/domains') {
