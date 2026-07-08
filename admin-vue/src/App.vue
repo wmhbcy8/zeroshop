@@ -112,14 +112,34 @@
                 <template #header>
                   <div class="card-head">
                     <strong>站点工作台</strong>
-                    <el-button type="primary" @click="newSite">新建站点</el-button>
+                    <div class="head-actions">
+                      <el-button :loading="siteBatchRunning" @click="selectAllActiveSites">选择启用站点</el-button>
+                      <el-button :loading="siteBatchRunning" @click="runSiteBatch('deploy-check')">批量检查部署</el-button>
+                      <el-button :loading="siteBatchRunning" @click="runSiteBatch('package')">批量发布包</el-button>
+                      <el-button type="primary" :loading="siteBatchRunning" @click="runSiteBatch('generate')">批量生成</el-button>
+                      <el-button type="primary" @click="newSite">新建站点</el-button>
+                    </div>
                   </div>
                 </template>
+                <div class="site-batchbar">
+                  <el-checkbox v-model="allVisibleSitesSelected" :indeterminate="someVisibleSitesSelected">全选当前站点</el-checkbox>
+                  <span>已选择 {{ selectedSiteIds.length }} 个站点</span>
+                  <el-button v-if="selectedSiteIds.length" link type="primary" @click="selectedSiteIds = []">清空</el-button>
+                </div>
+                <el-alert v-if="siteBatchResults.length" class="mb16" type="info" show-icon :title="siteBatchSummary">
+                  <template #default>
+                    <div class="batch-result-list">
+                      <span v-for="item in siteBatchResults" :key="`${item.site_id}-${item.action}`">
+                        {{ item.site_name }}：{{ item.ok ? '完成' : '失败' }}{{ item.message ? ` - ${item.message}` : '' }}
+                      </span>
+                    </div>
+                  </template>
+                </el-alert>
                 <div class="site-grid">
                   <article v-for="item in sites" :key="item.id" class="site-card" :class="{ active: item.id === currentSiteId }" @click="openSite(item)">
                     <div class="site-card-head">
                       <div>
-                        <strong>{{ item.name }}</strong>
+                        <el-checkbox v-model="selectedSiteIds" :label="item.id" @click.stop>{{ item.name }}</el-checkbox>
                         <small>{{ item.domain || item.subdomain || item.site_key }}</small>
                       </div>
                       <el-tag size="small" :type="item.status === 'active' ? 'success' : 'info'">{{ item.status }}</el-tag>
@@ -782,6 +802,9 @@ const siteDrawerVisible = ref(false)
 const publishResult = ref<any>(null)
 const deployTesting = ref(false)
 const packaging = ref(false)
+const siteBatchRunning = ref(false)
+const selectedSiteIds = ref<Array<number | string>>([])
+const siteBatchResults = ref<any[]>([])
 
 const orderFilters = reactive({ keyword: '', payment_status: '', fulfillment_status: '' })
 const serviceFilters = reactive({ keyword: '', status: '', type: '' })
@@ -847,6 +870,21 @@ const authHeaders = computed(() => ({ Authorization: `Bearer ${token.value}` }))
 const imageMedia = computed(() => media.value.filter((item) => item.file_type === 'image'))
 const homeModuleItems = computed(() => (moduleRegistry.value.modules || []).filter((item: any) => item.scope === 'home'))
 const globalModuleItems = computed(() => (moduleRegistry.value.modules || []).filter((item: any) => item.scope === 'global'))
+const visibleSiteIds = computed(() => sites.value.map((item: any) => item.id))
+const selectedVisibleSiteCount = computed(() => visibleSiteIds.value.filter((id: any) => selectedSiteIds.value.some((selected) => String(selected) === String(id))).length)
+const someVisibleSitesSelected = computed(() => selectedVisibleSiteCount.value > 0 && selectedVisibleSiteCount.value < visibleSiteIds.value.length)
+const allVisibleSitesSelected = computed({
+  get: () => visibleSiteIds.value.length > 0 && selectedVisibleSiteCount.value === visibleSiteIds.value.length,
+  set: (checked: boolean) => {
+    selectedSiteIds.value = checked ? [...visibleSiteIds.value] : []
+  }
+})
+const siteBatchSummary = computed(() => {
+  const total = siteBatchResults.value.length
+  const success = siteBatchResults.value.filter((item) => item.ok).length
+  const failed = total - success
+  return total ? `批量任务完成：成功 ${success} 个，失败 ${failed} 个` : ''
+})
 
 async function request(path: string, options: any = {}) {
   const headers = {
@@ -1576,6 +1614,56 @@ async function generateSiteFor(item: any) {
   currentSiteId.value = item.id
   publishResult.value = null
   return generateSite()
+}
+
+function selectAllActiveSites() {
+  selectedSiteIds.value = sites.value.filter((item: any) => item.status === 'active').map((item: any) => item.id)
+}
+
+function siteBatchActionLabel(action: string) {
+  return ({ generate: '生成静态站', 'deploy-check': '检查部署', package: '生成发布包' } as any)[action] || action
+}
+
+async function runSiteBatch(action: 'generate' | 'deploy-check' | 'package') {
+  if (!selectedSiteIds.value.length) {
+    ElMessage.warning('请先选择站点')
+    return
+  }
+  const targets = sites.value.filter((item: any) => selectedSiteIds.value.some((id) => String(id) === String(item.id)))
+  const originalSiteId = currentSiteId.value
+  siteBatchRunning.value = true
+  siteBatchResults.value = []
+  publishResult.value = null
+  try {
+    for (const item of targets) {
+      currentSiteId.value = item.id
+      try {
+        const endpoint = action === 'generate' ? '/api/site/generate' : action === 'deploy-check' ? '/api/site/deploy-test' : '/api/site/package'
+        const data = await request(endpoint, { method: 'POST' })
+        siteBatchResults.value.push({
+          site_id: item.id,
+          site_name: item.name,
+          action,
+          ok: true,
+          message: data?.message || data?.version_no || siteBatchActionLabel(action)
+        })
+      } catch (error: any) {
+        siteBatchResults.value.push({
+          site_id: item.id,
+          site_name: item.name,
+          action,
+          ok: false,
+          message: error?.message || '执行失败'
+        })
+      }
+    }
+    currentSiteId.value = originalSiteId
+    await Promise.all([loadSites(), loadDashboard(), loadVersions()])
+    ElMessage.success(siteBatchSummary.value || '批量任务完成')
+  } finally {
+    currentSiteId.value = originalSiteId
+    siteBatchRunning.value = false
+  }
 }
 
 async function checkDeployConfig() {
