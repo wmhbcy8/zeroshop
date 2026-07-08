@@ -1665,13 +1665,16 @@
                   <el-form-item><el-input v-model="collectorFilters.keyword" placeholder="搜索采集源" clearable /></el-form-item>
                   <el-button type="primary" @click="loadCollectorSources">筛选</el-button>
                 </el-form>
-                <el-alert class="mb16" type="info" show-icon :closable="false" title="采集源会按入库方式自动转为文章草稿或直接发布；直接发布后会同步生成对应站点的静态页面。" />
+                <el-alert class="mb16" type="info" show-icon :closable="false" title="采集源会按发布范围自动转为文章草稿或直接发布；直接发布后会同步生成对应站点的静态页面。" />
                 <el-table :data="collectorSources" height="620" row-key="id">
                   <el-table-column label="采集源" min-width="220">
                     <template #default="{ row }">
                       <strong>{{ row.name }}</strong><br />
                       <small>{{ row.source_type?.toUpperCase() }} / {{ row.site_name || row.site_id }}</small>
                     </template>
+                  </el-table-column>
+                  <el-table-column label="发布范围" min-width="160">
+                    <template #default="{ row }"><small>{{ contentSiteLabel(row.site_ids || [row.site_id]) }}</small></template>
                   </el-table-column>
                   <el-table-column prop="last_result" label="最近结果" min-width="160" />
                   <el-table-column label="状态" width="90">
@@ -1706,6 +1709,29 @@
                   </el-form-item>
                   <el-button type="primary" @click="loadCollectorRecords">筛选</el-button>
                 </el-form>
+                <div class="content-distribution-bar mb16">
+                  <div>
+                    <strong>采集记录转文章范围</strong>
+                    <small>手动转草稿或发布时，会按这里绑定到一个站点、全部站点或指定站点。</small>
+                  </div>
+                  <el-radio-group v-model="collectorPublishScope.site_scope" size="small" @change="syncCollectorPublishScope">
+                    <el-radio-button label="current">当前站点</el-radio-button>
+                    <el-radio-button label="all">全部站点</el-radio-button>
+                    <el-radio-button label="selected">指定站点</el-radio-button>
+                  </el-radio-group>
+                  <el-select
+                    v-if="collectorPublishScope.site_scope === 'selected'"
+                    v-model="collectorPublishScope.site_ids"
+                    multiple
+                    filterable
+                    collapse-tags
+                    collapse-tags-tooltip
+                    placeholder="选择站点"
+                    class="bulk-site-select"
+                  >
+                    <el-option v-for="siteItem in sites" :key="siteItem.id" :label="siteItem.name" :value="siteItem.id" />
+                  </el-select>
+                </div>
                 <el-table :data="collectorRecords" height="620" row-key="id">
                   <el-table-column label="标题" min-width="260">
                     <template #default="{ row }">
@@ -1733,6 +1759,18 @@
               <el-form-item label="采集源名称"><el-input v-model="collectorForm.name" placeholder="例如：行业协会 RSS" /></el-form-item>
               <el-form-item label="所属站点">
                 <el-select v-model="collectorForm.site_id" filterable>
+                  <el-option v-for="item in sites" :key="item.id" :label="item.name" :value="item.id" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="发布范围">
+                <el-radio-group v-model="collectorForm.site_scope" @change="syncCollectorSourceScope">
+                  <el-radio-button label="current">当前站点</el-radio-button>
+                  <el-radio-button label="all">全部站点</el-radio-button>
+                  <el-radio-button label="selected">指定站点</el-radio-button>
+                </el-radio-group>
+              </el-form-item>
+              <el-form-item v-if="collectorForm.site_scope === 'selected'" label="选择站点">
+                <el-select v-model="collectorForm.site_ids" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择站点">
                   <el-option v-for="item in sites" :key="item.id" :label="item.name" :value="item.id" />
                 </el-select>
               </el-form-item>
@@ -2431,6 +2469,7 @@ const logFilters = reactive({ keyword: '', method: '', site_id: 'all' })
 const orderDetail = reactive<any>({})
 const formDetail = reactive<any>({})
 const collectorForm = reactive<any>({})
+const collectorPublishScope = reactive<any>({ site_scope: 'current', site_ids: [] })
 const domainForm = reactive<any>({})
 const domainApplicationForm = reactive<any>({})
 const platformDomainApplicationForm = reactive<any>({})
@@ -2546,7 +2585,7 @@ const navItems = [
   { key: 'forms', label: '留言', hint: '处理询盘线索和联系表单。', icon: 'ChatLineRound' },
   { key: 'collector', label: '采集', hint: '管理 RSS 和指定 URL 采集，沉淀 SEO 文章草稿。', icon: 'Connection' },
   { key: 'seo', label: 'SEO', hint: '检查站点基础信息、内容元信息、sitemap 和搜索索引准备度。', icon: 'TrendCharts' },
-  { key: 'publish', label: '部署', hint: '配置宝塔面板、生成静态站并查看发布记录。', icon: 'Upload' }
+  { key: 'publish', label: '发布部署', hint: '配置宝塔面板、生成静态站并查看发布记录。', icon: 'Upload' }
 ]
 const isPlatformAdmin = computed(() => ['admin', 'platform_admin', 'super_admin'].includes(String(currentUser.value?.role || '')))
 const visibleNavItems = computed(() => navItems.filter((item) => item.key !== 'platform' || isPlatformAdmin.value))
@@ -3959,6 +3998,35 @@ function syncAiSiteScope() {
   aiForm.site_ids = currentSiteIds()
 }
 
+function syncCollectorSourceScope() {
+  if (collectorForm.site_scope === 'all') {
+    collectorForm.site_ids = allSiteIds()
+    collectorForm.site_id = collectorForm.site_ids[0] || Number(currentSiteId.value || 10001)
+    return
+  }
+  if (collectorForm.site_scope === 'selected') {
+    collectorForm.site_ids = (collectorForm.site_ids || []).map((id: any) => Number(id)).filter((id: number) => id > 0)
+    collectorForm.site_id = collectorForm.site_ids[0] || Number(currentSiteId.value || 10001)
+    return
+  }
+  collectorForm.site_scope = 'current'
+  collectorForm.site_ids = currentSiteIds()
+  collectorForm.site_id = collectorForm.site_ids[0]
+}
+
+function syncCollectorPublishScope() {
+  if (collectorPublishScope.site_scope === 'all') {
+    collectorPublishScope.site_ids = allSiteIds()
+    return
+  }
+  if (collectorPublishScope.site_scope === 'selected') {
+    collectorPublishScope.site_ids = (collectorPublishScope.site_ids || []).map((id: any) => Number(id)).filter((id: number) => id > 0)
+    return
+  }
+  collectorPublishScope.site_scope = 'current'
+  collectorPublishScope.site_ids = currentSiteIds()
+}
+
 function applyAiQuickCommand(item: any) {
   aiForm.type = item.type
   aiForm.count = item.count
@@ -4529,6 +4597,8 @@ function resetCollectorForm() {
   Object.assign(collectorForm, {
     id: '',
     site_id: Number(currentSiteId.value || 10001),
+    site_scope: 'current',
+    site_ids: currentSiteIds(),
     name: '',
     source_type: 'rss',
     url: '',
@@ -4545,14 +4615,28 @@ function newCollectorSource() {
 
 function editCollectorSource(row: any) {
   resetCollectorForm()
-  Object.assign(collectorForm, { ...row, category_id: row.category_id || '' })
+  Object.assign(collectorForm, {
+    ...row,
+    category_id: row.category_id || '',
+    site_scope: inferSiteScope(row.site_ids || [row.site_id]),
+    site_ids: row.site_ids?.length ? row.site_ids : [row.site_id || currentSiteId.value]
+  })
   collectorDrawerVisible.value = true
 }
 
 async function saveCollectorSource() {
   const method = collectorForm.id ? 'PUT' : 'POST'
   const path = collectorForm.id ? `/api/collector/sources/${collectorForm.id}` : '/api/collector/sources'
-  await request(path, { method, data: { ...collectorForm, site_id: Number(collectorForm.site_id || currentSiteId.value || 10001) } })
+  if (!ensureSelectedSiteScope(collectorForm.site_scope, collectorForm.site_ids, '采集源发布范围')) return
+  syncCollectorSourceScope()
+  await request(path, {
+    method,
+    data: {
+      ...collectorForm,
+      site_id: Number(collectorForm.site_id || currentSiteId.value || 10001),
+      site_ids: siteIdsForScope(collectorForm.site_scope, collectorForm.site_ids)
+    }
+  })
   collectorDrawerVisible.value = false
   ElMessage.success('采集源已保存')
   await loadCollectorSources()
@@ -4580,11 +4664,17 @@ async function runCollectorSource(row: any) {
 }
 
 async function publishCollectorRecord(row: any, status: 'draft' | 'published') {
-  const data = await request(`/api/collector/records/${row.id}/publish`, { method: 'POST', data: { status } })
+  if (!ensureSelectedSiteScope(collectorPublishScope.site_scope, collectorPublishScope.site_ids, '采集记录转文章范围')) return
+  syncCollectorPublishScope()
+  const site_ids = siteIdsForScope(collectorPublishScope.site_scope, collectorPublishScope.site_ids)
+  const data = await request(`/api/collector/records/${row.id}/publish`, {
+    method: 'POST',
+    data: { status, site_scope: collectorPublishScope.site_scope, site_ids }
+  })
   ElMessage.success(status === 'published' ? '已转为发布文章' : '已转为文章草稿')
   await Promise.all([loadCollectorRecords(), loadArticles(), loadDashboard()])
   if (status === 'published') {
-    const siteIds = data.article?.site_ids?.length ? data.article.site_ids : [row.site_id || currentSiteId.value]
+    const siteIds = data.article?.site_ids?.length ? data.article.site_ids : site_ids
     await syncGeneratedSitesForContent(siteIds, '采集记录发布后自动生成')
   }
 }

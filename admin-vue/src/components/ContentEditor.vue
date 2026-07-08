@@ -17,7 +17,7 @@
         <article>
           <span>新建默认</span>
           <strong>{{ scopeLabel(bulkForm.site_scope) }}</strong>
-          <small>新建、AI 草稿和批量分发都沿用下方发布范围。</small>
+          <small>新建、AI 草稿、批量分发和保存后静态生成都沿用下方发布范围。</small>
         </article>
         <article>
           <span>内容模型</span>
@@ -114,7 +114,7 @@
           show-icon
           :closable="false"
           class="mb16"
-          :title="`这是一份中台内容，保存后会同步到：${siteNames(form)}。AI 生成草稿也沿用这个发布范围。`"
+          :title="`这是一份中台内容，保存后会同步到：${siteNames(form)}，并自动重新生成对应静态站。AI 生成草稿也沿用这个发布范围。`"
         />
         <el-form-item label="发布范围">
           <el-radio-group v-model="form.site_scope" @change="syncScope">

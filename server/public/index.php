@@ -5571,6 +5571,7 @@ function ensure_collector_tables(PDO $pdo): void
         INDEX idx_site_id (site_id),
         INDEX idx_status (status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    ensure_column($pdo, 'collector_sources', 'site_ids', 'TEXT');
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS collector_records (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
@@ -5711,8 +5712,15 @@ function normalize_collector_source(array $data, array $current = []): array
     $type = in_array(($data['source_type'] ?? $current['source_type'] ?? 'rss'), ['rss', 'url'], true) ? ($data['source_type'] ?? $current['source_type'] ?? 'rss') : 'rss';
     $url = trim((string)($data['url'] ?? ($current['url'] ?? '')));
     assert_collect_url($url);
+    if (!isset($data['site_scope']) && !isset($data['site_ids']) && !isset($data['distribution_site_ids']) && !empty($current)) {
+        $siteIds = collector_source_site_ids($current);
+    } else {
+        $siteIds = normalize_site_ids($data ?: $current);
+    }
+    $primarySiteId = (int)($siteIds[0] ?? ($data['site_id'] ?? $current['site_id'] ?? requested_site_id()));
     return [
-        'site_id' => (int)($data['site_id'] ?? $current['site_id'] ?? requested_site_id()),
+        'site_id' => $primarySiteId,
+        'site_ids' => json_encode($siteIds ?: [$primarySiteId], JSON_UNESCAPED_UNICODE),
         'name' => mb_substr(trim((string)($data['name'] ?? ($current['name'] ?? ''))), 0, 160, 'UTF-8'),
         'source_type' => $type,
         'url' => mb_substr($url, 0, 500, 'UTF-8'),
@@ -5722,6 +5730,19 @@ function normalize_collector_source(array $data, array $current = []): array
     ];
 }
 
+function collector_source_site_ids(array $source): array
+{
+    $ids = [];
+    if (!empty($source['site_ids'])) {
+        $decoded = json_decode((string)$source['site_ids'], true);
+        if (is_array($decoded)) {
+            $ids = array_map('intval', $decoded);
+        }
+    }
+    $ids = array_values(array_unique(array_filter($ids, fn($id) => $id > 0)));
+    return $ids ?: [(int)($source['site_id'] ?? requested_site_id())];
+}
+
 function list_collector_sources(PDO $pdo, ?PDO $main = null): array
 {
     ensure_collector_tables($pdo);
@@ -5729,6 +5750,10 @@ function list_collector_sources(PDO $pdo, ?PDO $main = null): array
     $where = $siteWhere !== '' ? [$siteWhere] : [];
     $result = paginate($pdo, 'collector_sources', $where, 'id DESC', 'name');
     $result['items'] = attach_site_names($result['items'], $main);
+    $result['items'] = array_map(function (array $item) {
+        $item['site_ids'] = collector_source_site_ids($item);
+        return $item;
+    }, $result['items']);
     return $result;
 }
 
@@ -5749,6 +5774,7 @@ function run_collector_source(PDO $pdo, int $sourceId): array
     if (!$source || ($source['status'] ?? '') !== 'active') {
         fail('采集源不存在或已停用', 'NOT_FOUND', 404);
     }
+    $siteIds = collector_source_site_ids($source);
     $body = fetch_collect_url((string)$source['url']);
     $items = array_slice(parse_collected_items((string)$source['source_type'], (string)$source['url'], $body), 0, 10);
     $created = [];
@@ -5779,7 +5805,7 @@ function run_collector_source(PDO $pdo, int $sourceId): array
     $rewriteMode = in_array(($source['rewrite_mode'] ?? 'draft'), ['draft', 'published'], true) ? (string)$source['rewrite_mode'] : 'draft';
     foreach ($created as $record) {
         if (!empty($record['id'])) {
-            $published = publish_collector_record($pdo, (int)$record['id'], $rewriteMode);
+            $published = publish_collector_record($pdo, (int)$record['id'], $rewriteMode, $siteIds);
             if (!empty($published['article'])) {
                 $createdArticles[] = $published['article'];
             }
@@ -5801,12 +5827,12 @@ function run_collector_source(PDO $pdo, int $sourceId): array
         'articles' => $createdArticles,
         'article_count' => count($createdArticles),
         'published_count' => $rewriteMode === 'published' ? count($createdArticles) : 0,
-        'site_ids' => [(int)$source['site_id']],
+        'site_ids' => $siteIds,
         'message' => $message,
     ];
 }
 
-function publish_collector_record(PDO $pdo, int $recordId, string $status = 'draft'): array
+function publish_collector_record(PDO $pdo, int $recordId, string $status = 'draft', ?array $siteIds = null): array
 {
     ensure_collector_tables($pdo);
     $record = fetch_one($pdo, 'collector_records', $recordId);
@@ -5814,10 +5840,13 @@ function publish_collector_record(PDO $pdo, int $recordId, string $status = 'dra
         fail('采集记录不存在', 'NOT_FOUND', 404);
     }
     if (!empty($record['article_id'])) {
-        return ['article' => fetch_one($pdo, 'articles', (int)$record['article_id']), 'record' => $record];
+        $article = fetch_one($pdo, 'articles', (int)$record['article_id']);
+        return ['article' => $article ? attach_distribution($pdo, 'article', [$article])[0] : null, 'record' => $record];
     }
     $slug = draft_slug((string)$record['title'], 'collected') . '-' . (int)$record['id'];
     $source = !empty($record['source_id']) ? fetch_one($pdo, 'collector_sources', (int)$record['source_id']) : null;
+    $siteIds = array_values(array_unique(array_filter(array_map('intval', $siteIds ?: ($source ? collector_source_site_ids($source) : [(int)$record['site_id']])), fn($id) => $id > 0)));
+    $siteIds = $siteIds ?: [(int)$record['site_id']];
     $articleId = insert_article($pdo, [
         'category_id' => $source['category_id'] ?? null,
         'title' => $record['title'],
@@ -5829,7 +5858,7 @@ function publish_collector_record(PDO $pdo, int $recordId, string $status = 'dra
         'status' => in_array($status, ['draft', 'published'], true) ? $status : 'draft',
         'published_at' => $status === 'published' ? now() : null,
     ]);
-    sync_content_distribution($pdo, 'article', $articleId, [(int)$record['site_id']]);
+    sync_content_distribution($pdo, 'article', $articleId, $siteIds);
     $update = $pdo->prepare("UPDATE collector_records SET article_id = :article_id, status = 'converted', updated_at = :updated_at WHERE id = :id");
     $update->execute(['id' => $recordId, 'article_id' => $articleId, 'updated_at' => now()]);
     return ['article' => attach_distribution($pdo, 'article', [fetch_one($pdo, 'articles', $articleId)])[0], 'record' => fetch_one($pdo, 'collector_records', $recordId)];
@@ -8019,8 +8048,8 @@ try {
         $data = body_json();
         require_fields($data, ['name', 'url']);
         $payload = normalize_collector_source($data);
-        $stmt = $pdo->prepare("INSERT INTO collector_sources (site_id, name, source_type, url, category_id, rewrite_mode, status, created_at, updated_at)
-            VALUES (:site_id, :name, :source_type, :url, :category_id, :rewrite_mode, :status, :created_at, :updated_at)");
+        $stmt = $pdo->prepare("INSERT INTO collector_sources (site_id, site_ids, name, source_type, url, category_id, rewrite_mode, status, created_at, updated_at)
+            VALUES (:site_id, :site_ids, :name, :source_type, :url, :category_id, :rewrite_mode, :status, :created_at, :updated_at)");
         $time = now();
         $stmt->execute($payload + ['created_at' => $time, 'updated_at' => $time]);
         ok(fetch_one($pdo, 'collector_sources', (int)$pdo->lastInsertId()), '采集源已创建');
@@ -8035,7 +8064,7 @@ try {
                 fail('采集源不存在', 'NOT_FOUND', 404);
             }
             $payload = normalize_collector_source(body_json(), $current);
-            $stmt = $pdo->prepare("UPDATE collector_sources SET site_id=:site_id, name=:name, source_type=:source_type, url=:url, category_id=:category_id, rewrite_mode=:rewrite_mode, status=:status, updated_at=:updated_at WHERE id=:id");
+            $stmt = $pdo->prepare("UPDATE collector_sources SET site_id=:site_id, site_ids=:site_ids, name=:name, source_type=:source_type, url=:url, category_id=:category_id, rewrite_mode=:rewrite_mode, status=:status, updated_at=:updated_at WHERE id=:id");
             $stmt->execute($payload + ['id' => $id, 'updated_at' => now()]);
             ok(fetch_one($pdo, 'collector_sources', $id), '采集源已保存');
         }
@@ -8066,7 +8095,7 @@ try {
     if ($params = route_param('/collector/records/{id}/publish', $path)) {
         if ($method === 'POST') {
             $data = body_json();
-            ok(publish_collector_record($pdo, (int)$params['id'], (string)($data['status'] ?? 'draft')), '已转为文章');
+            ok(publish_collector_record($pdo, (int)$params['id'], (string)($data['status'] ?? 'draft'), normalize_site_ids($data)), '已转为文章');
         }
     }
 
