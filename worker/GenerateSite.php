@@ -158,6 +158,7 @@ function load_data_from_mysql(PDO $pdo): array
     }
 
     $site = json_decode($setting, true, 512, JSON_THROW_ON_ERROR);
+    $site['id'] = (int)(env_or_null('HJ_SITE_ID') ?: 10001);
     $categories = $pdo->query("SELECT id, name, slug, description FROM categories ORDER BY sort_order ASC, id ASC")->fetchAll();
     $productCategories = $pdo->query("SELECT id, name, slug, description FROM product_categories ORDER BY sort_order ASC, id ASC")->fetchAll();
     $articles = $pdo->query("SELECT id, category_id, title, slug, cover, summary, content, seo_title, seo_keywords, seo_description, published_at FROM articles WHERE status = 'published' ORDER BY published_at DESC, id DESC")->fetchAll();
@@ -615,6 +616,7 @@ if ($pdo) {
     $products = read_json($dataRoot . DIRECTORY_SEPARATOR . 'products.json');
     $dataSource = 'json';
 }
+$site['id'] = (int)($site['id'] ?? (env_or_null('HJ_SITE_ID') ?: 10001));
 
 $categoryMap = [];
 foreach ($categories as $category) {

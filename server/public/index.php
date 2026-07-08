@@ -364,6 +364,59 @@ function ensure_column(PDO $pdo, string $table, string $column, string $definiti
     }
 }
 
+function resolve_request_site_id(array $data = []): int
+{
+    $candidates = [
+        $data['site_id'] ?? null,
+        $_GET['site_id'] ?? null,
+        $_SERVER['HTTP_X_SITE_ID'] ?? null,
+    ];
+    foreach ($candidates as $candidate) {
+        if (is_numeric($candidate) && (int)$candidate > 0) {
+            return (int)$candidate;
+        }
+    }
+    return 10001;
+}
+
+function requested_site_filter(): ?int
+{
+    $raw = $_GET['site_id'] ?? 'all';
+    if ($raw === '' || $raw === 'all') {
+        return null;
+    }
+    return resolve_request_site_id(['site_id' => $raw]);
+}
+
+function site_name_map(PDO $main): array
+{
+    ensure_center_tables($main);
+    $rows = $main->query('SELECT id, name FROM sites ORDER BY id ASC')->fetchAll();
+    $map = [];
+    foreach ($rows as $row) {
+        $map[(int)$row['id']] = (string)($row['name'] ?? '');
+    }
+    return $map;
+}
+
+function attach_site_names(array $items, ?PDO $main = null): array
+{
+    $map = [];
+    if ($main) {
+        try {
+            $map = site_name_map($main);
+        } catch (Throwable $error) {
+            $map = [];
+        }
+    }
+    return array_map(static function (array $item) use ($map) {
+        $siteId = (int)($item['site_id'] ?? 10001);
+        $item['site_id'] = $siteId;
+        $item['site_name'] = $map[$siteId] ?? ('Site ' . $siteId);
+        return $item;
+    }, $items);
+}
+
 function append_order_note(string $remark, string $note): string
 {
     $note = trim($note);
@@ -546,9 +599,68 @@ function resolve_order_service_requests(PDO $pdo): array
     ];
 }
 
+function list_order_service_requests_scoped(PDO $pdo, ?PDO $main = null): array
+{
+    $status = trim((string)($_GET['status'] ?? ''));
+    $type = trim((string)($_GET['type'] ?? ''));
+    $keyword = trim((string)($_GET['keyword'] ?? ''));
+    $siteId = requested_site_filter();
+    $clauses = ["remark IS NOT NULL", "remark <> ''"];
+    $params = [];
+    if ($siteId) {
+        $clauses[] = 'site_id = :site_id';
+        $params['site_id'] = $siteId;
+    }
+    $stmt = $pdo->prepare('SELECT * FROM orders WHERE ' . implode(' AND ', $clauses) . ' ORDER BY id DESC LIMIT 1000');
+    $stmt->execute($params);
+    $items = [];
+    while ($order = $stmt->fetch()) {
+        foreach (service_requests_from_order($order) as $request) {
+            if ($status !== '' && $request['status'] !== $status) {
+                continue;
+            }
+            if ($type !== '' && $request['type'] !== $type) {
+                continue;
+            }
+            if ($keyword !== '') {
+                $haystack = implode(' ', [
+                    $request['order_no'],
+                    $request['customer_name'],
+                    $request['phone'],
+                    $request['type'],
+                    $request['message'],
+                ]);
+                if (mb_stripos($haystack, $keyword, 0, 'UTF-8') === false) {
+                    continue;
+                }
+            }
+            $request['site_id'] = (int)($order['site_id'] ?? 10001);
+            $items[] = $request;
+        }
+    }
+    usort($items, static fn($a, $b) => strcmp((string)($b['time'] ?? ''), (string)($a['time'] ?? '')));
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $total = count($items);
+    $pagedItems = array_slice($items, ($page - 1) * $pageSize, $pageSize);
+    return [
+        'items' => attach_site_names(array_values($pagedItems), $main),
+        'pagination' => [
+            'page' => $page,
+            'page_size' => $pageSize,
+            'total' => $total,
+            'total_pages' => (int)ceil($total / $pageSize),
+        ],
+        'total' => $total,
+        'pending' => count(array_filter($items, static fn($item) => $item['status'] === 'pending')),
+        'handled' => count(array_filter($items, static fn($item) => $item['status'] === 'handled')),
+    ];
+}
+
 function record_site_visit(PDO $pdo): array
 {
     $data = body_json();
+    $siteId = resolve_request_site_id($data);
     $path = trim((string)($data['path'] ?? ''));
     $title = trim((string)($data['title'] ?? ''));
     $referrer = trim((string)($data['referrer'] ?? ''));
@@ -560,9 +672,10 @@ function record_site_visit(PDO $pdo): array
     $userAgent = substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255);
     $visitorSeed = $sessionId !== '' ? $sessionId : $ip . '|' . $userAgent;
     $visitorKey = hash('sha256', $visitorSeed);
-    $stmt = $pdo->prepare("INSERT INTO site_visits (visitor_key, session_id, path, title, referrer, ip_address, user_agent, created_at)
-        VALUES (:visitor_key, :session_id, :path, :title, :referrer, :ip_address, :user_agent, :created_at)");
+    $stmt = $pdo->prepare("INSERT INTO site_visits (site_id, visitor_key, session_id, path, title, referrer, ip_address, user_agent, created_at)
+        VALUES (:site_id, :visitor_key, :session_id, :path, :title, :referrer, :ip_address, :user_agent, :created_at)");
     $stmt->execute([
+        'site_id' => $siteId,
         'visitor_key' => $visitorKey,
         'session_id' => $sessionId,
         'path' => substr($path, 0, 255),
@@ -578,8 +691,14 @@ function record_site_visit(PDO $pdo): array
 function dashboard_metrics(PDO $pdo): array
 {
     $today = date('Y-m-d');
-    $visitStmt = $pdo->prepare("SELECT COUNT(*) AS views, COUNT(DISTINCT visitor_key) AS visitors FROM site_visits WHERE created_at >= :today");
-    $visitStmt->execute(['today' => $today . ' 00:00:00']);
+    $siteId = requested_site_filter();
+    $siteClause = $siteId ? ' AND site_id = :site_id' : '';
+    $visitParams = ['today' => $today . ' 00:00:00'];
+    if ($siteId) {
+        $visitParams['site_id'] = $siteId;
+    }
+    $visitStmt = $pdo->prepare("SELECT COUNT(*) AS views, COUNT(DISTINCT visitor_key) AS visitors FROM site_visits WHERE created_at >= :today{$siteClause}");
+    $visitStmt->execute($visitParams);
     $visitStats = $visitStmt->fetch() ?: [];
     $views = (int)($visitStats['views'] ?? 0);
     $visitors = (int)($visitStats['visitors'] ?? 0);
@@ -589,8 +708,12 @@ function dashboard_metrics(PDO $pdo): array
         SUM(payment_status = 'pending') AS pending_payment_orders,
         SUM(fulfillment_status IN ('new', 'confirmed')) AS pending_orders,
         SUM(payment_status = 'paid' AND fulfillment_status IN ('new', 'confirmed')) AS pending_fulfillment_orders
-        FROM orders");
-    $orderStmt->execute(['today' => $today . ' 00:00:00']);
+        FROM orders" . ($siteId ? ' WHERE site_id = :site_id' : ''));
+    $orderParams = ['today' => $today . ' 00:00:00'];
+    if ($siteId) {
+        $orderParams['site_id'] = $siteId;
+    }
+    $orderStmt->execute($orderParams);
     $orderStats = $orderStmt->fetch() ?: [];
 
     return [
@@ -672,26 +795,38 @@ function center_site_items(PDO $main, PDO $sitePdo): array
     $items = $main->query('SELECT * FROM sites ORDER BY id ASC')->fetchAll();
     $articleCounts = distribution_site_counts($sitePdo, 'article');
     $productCounts = distribution_site_counts($sitePdo, 'product');
-    $currentStats = [
-        'articles' => $articleCounts[10001] ?? site_table_count($sitePdo, 'articles'),
-        'products' => $productCounts[10001] ?? site_table_count($sitePdo, 'products'),
-        'orders' => site_table_count($sitePdo, 'orders'),
-        'pending_orders' => site_table_count($sitePdo, 'orders', " WHERE payment_status = 'pending' OR fulfillment_status IN ('new', 'confirmed')"),
-        'forms' => site_table_count($sitePdo, 'form_submissions'),
-        'pending_forms' => site_table_count($sitePdo, 'form_submissions', " WHERE status = 'pending'"),
-    ];
+    $orderCounts = site_group_counts($sitePdo, 'orders');
+    $pendingOrderCounts = site_group_counts($sitePdo, 'orders', "payment_status = 'pending' OR fulfillment_status IN ('new', 'confirmed')");
+    $formCounts = site_group_counts($sitePdo, 'form_submissions');
+    $pendingFormCounts = site_group_counts($sitePdo, 'form_submissions', "status IN ('new', 'pending')");
 
-    return array_map(function (array $item) use ($currentStats, $articleCounts, $productCounts) {
-        $stats = (int)$item['id'] === 10001 ? $currentStats : [
-            'articles' => $articleCounts[(int)$item['id']] ?? 0,
-            'products' => $productCounts[(int)$item['id']] ?? 0,
-            'orders' => 0,
-            'pending_orders' => 0,
-            'forms' => 0,
-            'pending_forms' => 0,
+    return array_map(function (array $item) use ($articleCounts, $productCounts, $orderCounts, $pendingOrderCounts, $formCounts, $pendingFormCounts) {
+        $siteId = (int)$item['id'];
+        $stats = [
+            'articles' => $articleCounts[$siteId] ?? 0,
+            'products' => $productCounts[$siteId] ?? 0,
+            'orders' => $orderCounts[$siteId] ?? 0,
+            'pending_orders' => $pendingOrderCounts[$siteId] ?? 0,
+            'forms' => $formCounts[$siteId] ?? 0,
+            'pending_forms' => $pendingFormCounts[$siteId] ?? 0,
         ];
         return $item + ['stats' => $stats];
     }, $items);
+}
+
+function site_group_counts(PDO $pdo, string $table, string $where = ''): array
+{
+    try {
+        $whereSql = $where !== '' ? " WHERE {$where}" : '';
+        $rows = $pdo->query("SELECT site_id, COUNT(*) AS total FROM {$table}{$whereSql} GROUP BY site_id")->fetchAll();
+        $counts = [];
+        foreach ($rows as $row) {
+            $counts[(int)($row['site_id'] ?? 10001)] = (int)($row['total'] ?? 0);
+        }
+        return $counts;
+    } catch (Throwable $error) {
+        return [];
+    }
 }
 
 function center_overview(array $sites): array
@@ -894,7 +1029,7 @@ function public_order_view(array $order): array
     ];
 }
 
-function list_orders(PDO $pdo): array
+function list_orders(PDO $pdo, ?PDO $main = null): array
 {
     $page = max(1, (int)($_GET['page'] ?? 1));
     $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
@@ -902,6 +1037,7 @@ function list_orders(PDO $pdo): array
     $keyword = trim((string)($_GET['keyword'] ?? ''));
     $paymentStatus = trim((string)($_GET['payment_status'] ?? ''));
     $fulfillmentStatus = trim((string)($_GET['fulfillment_status'] ?? ''));
+    $siteId = requested_site_filter();
 
     $keywordClause = '';
     $keywordParams = [];
@@ -923,6 +1059,10 @@ function list_orders(PDO $pdo): array
     if ($fulfillmentStatus !== '') {
         $clauses[] = 'fulfillment_status = :fulfillment_status';
         $params['fulfillment_status'] = $fulfillmentStatus;
+    }
+    if ($siteId) {
+        $clauses[] = 'site_id = :site_id';
+        $params['site_id'] = $siteId;
     }
 
     $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
@@ -946,7 +1086,7 @@ function list_orders(PDO $pdo): array
     $stats = $statsStmt->fetch() ?: [];
 
     return [
-        'items' => $stmt->fetchAll(),
+        'items' => attach_site_names($stmt->fetchAll(), $main),
         'pagination' => [
             'page' => $page,
             'page_size' => $pageSize,
@@ -965,11 +1105,51 @@ function list_orders(PDO $pdo): array
     ];
 }
 
+function list_form_submissions(PDO $pdo, ?PDO $main = null): array
+{
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $offset = ($page - 1) * $pageSize;
+    $keyword = trim((string)($_GET['keyword'] ?? ''));
+    $status = trim((string)($_GET['status'] ?? ''));
+    $siteId = requested_site_filter();
+    $clauses = [];
+    $params = [];
+    if ($keyword !== '') {
+        $clauses[] = '(form_key LIKE :keyword OR source_url LIKE :keyword OR data LIKE :keyword OR remark LIKE :keyword)';
+        $params['keyword'] = '%' . $keyword . '%';
+    }
+    if ($status !== '') {
+        $clauses[] = 'status = :status';
+        $params['status'] = $status;
+    }
+    if ($siteId) {
+        $clauses[] = 'site_id = :site_id';
+        $params['site_id'] = $siteId;
+    }
+    $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
+    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM form_submissions{$whereSql}");
+    $countStmt->execute($params);
+    $total = (int)$countStmt->fetchColumn();
+    $stmt = $pdo->prepare("SELECT * FROM form_submissions{$whereSql} ORDER BY id DESC LIMIT {$pageSize} OFFSET {$offset}");
+    $stmt->execute($params);
+    return [
+        'items' => attach_site_names($stmt->fetchAll(), $main),
+        'pagination' => [
+            'page' => $page,
+            'page_size' => $pageSize,
+            'total' => $total,
+            'total_pages' => (int)ceil($total / $pageSize),
+        ],
+    ];
+}
+
 function export_orders_csv(PDO $pdo): void
 {
     $keyword = trim((string)($_GET['keyword'] ?? ''));
     $paymentStatus = trim((string)($_GET['payment_status'] ?? ''));
     $fulfillmentStatus = trim((string)($_GET['fulfillment_status'] ?? ''));
+    $siteId = requested_site_filter();
 
     $clauses = [];
     $params = [];
@@ -984,6 +1164,10 @@ function export_orders_csv(PDO $pdo): void
     if ($fulfillmentStatus !== '') {
         $clauses[] = 'fulfillment_status = :fulfillment_status';
         $params['fulfillment_status'] = $fulfillmentStatus;
+    }
+    if ($siteId) {
+        $clauses[] = 'site_id = :site_id';
+        $params['site_id'] = $siteId;
     }
 
     $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
@@ -1483,9 +1667,29 @@ function ensure_auth_tables(PDO $pdo): void
     ensure_column($pdo, 'orders', 'tracking_no', 'VARCHAR(100)');
     ensure_column($pdo, 'orders', 'paid_at', 'DATETIME');
     ensure_column($pdo, 'orders', 'shipped_at', 'DATETIME');
+    ensure_column($pdo, 'orders', 'site_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 10001');
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS form_submissions (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        site_id BIGINT UNSIGNED NOT NULL DEFAULT 10001,
+        form_key VARCHAR(80) NOT NULL,
+        source_url VARCHAR(255),
+        data TEXT,
+        ip_address VARCHAR(80),
+        user_agent VARCHAR(255),
+        status VARCHAR(30) NOT NULL DEFAULT 'new',
+        remark TEXT,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_site_id (site_id),
+        INDEX idx_status (status),
+        INDEX idx_created_at (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    ensure_column($pdo, 'form_submissions', 'site_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 10001');
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS site_visits (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        site_id BIGINT UNSIGNED NOT NULL DEFAULT 10001,
         visitor_key CHAR(64) NOT NULL,
         session_id VARCHAR(80),
         path VARCHAR(255),
@@ -1497,6 +1701,7 @@ function ensure_auth_tables(PDO $pdo): void
         INDEX idx_created_at (created_at),
         INDEX idx_visitor_key (visitor_key)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    ensure_column($pdo, 'site_visits', 'site_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 10001');
 
     $exists = (int)$pdo->query('SELECT COUNT(*) FROM admin_users')->fetchColumn();
     if ($exists === 0) {
@@ -1638,14 +1843,16 @@ try {
 
     if ($method === 'POST' && $path === '/forms/submit') {
         $data = body_json();
+        $siteId = resolve_request_site_id($data);
         require_fields($data, ['form_key', 'data']);
         if (!is_array($data['data'])) {
             fail('表单数据格式错误', 'VALIDATION_ERROR', 422);
         }
-        $stmt = $pdo->prepare("INSERT INTO form_submissions (form_key, source_url, data, ip_address, user_agent, status, created_at, updated_at)
-            VALUES (:form_key, :source_url, :data, :ip_address, :user_agent, 'new', :created_at, :updated_at)");
+        $stmt = $pdo->prepare("INSERT INTO form_submissions (site_id, form_key, source_url, data, ip_address, user_agent, status, created_at, updated_at)
+            VALUES (:site_id, :form_key, :source_url, :data, :ip_address, :user_agent, 'new', :created_at, :updated_at)");
         $time = now();
         $stmt->execute([
+            'site_id' => $siteId,
             'form_key' => $data['form_key'],
             'source_url' => $data['source_url'] ?? '',
             'data' => json_encode($data['data'], JSON_UNESCAPED_UNICODE),
@@ -1659,6 +1866,7 @@ try {
 
     if ($method === 'POST' && $path === '/orders') {
         $data = body_json();
+        $siteId = resolve_request_site_id($data);
         require_fields($data, ['customer_name', 'phone', 'items']);
         if (!is_array($data['items'])) {
             fail('订单商品格式错误', 'VALIDATION_ERROR', 422);
@@ -1669,9 +1877,10 @@ try {
         }
         $total = array_reduce($items, fn($sum, $item) => $sum + (float)$item['amount'], 0.0);
         $time = now();
-        $stmt = $pdo->prepare("INSERT INTO orders (order_no, customer_name, phone, email, address, items, total_amount, currency, payment_method, payment_status, fulfillment_status, remark, source_url, ip_address, user_agent, created_at, updated_at)
-            VALUES (:order_no, :customer_name, :phone, :email, :address, :items, :total_amount, :currency, :payment_method, 'pending', 'new', :remark, :source_url, :ip_address, :user_agent, :created_at, :updated_at)");
+        $stmt = $pdo->prepare("INSERT INTO orders (site_id, order_no, customer_name, phone, email, address, items, total_amount, currency, payment_method, payment_status, fulfillment_status, remark, source_url, ip_address, user_agent, created_at, updated_at)
+            VALUES (:site_id, :order_no, :customer_name, :phone, :email, :address, :items, :total_amount, :currency, :payment_method, 'pending', 'new', :remark, :source_url, :ip_address, :user_agent, :created_at, :updated_at)");
         $stmt->execute([
+            'site_id' => $siteId,
             'order_no' => create_order_no(),
             'customer_name' => trim((string)$data['customer_name']),
             'phone' => trim((string)$data['phone']),
@@ -2191,7 +2400,7 @@ try {
     }
 
     if ($method === 'GET' && $path === '/orders') {
-        ok(list_orders($pdo));
+        ok(list_orders($pdo, main_pdo()));
     }
 
     if ($method === 'GET' && $path === '/orders/export') {
@@ -2199,7 +2408,7 @@ try {
     }
 
     if ($method === 'GET' && $path === '/orders/service-requests') {
-        ok(list_order_service_requests($pdo));
+        ok(list_order_service_requests_scoped($pdo, main_pdo()));
     }
 
     if ($method === 'POST' && $path === '/orders/service-requests/resolve') {
@@ -2371,7 +2580,7 @@ try {
     }
 
     if ($method === 'GET' && $path === '/forms/submissions') {
-        ok(paginate($pdo, 'form_submissions', [], 'id DESC', 'source_url'));
+        ok(list_form_submissions($pdo, main_pdo()));
     }
 
     if ($params = route_param('/forms/submissions/{id}', $path)) {

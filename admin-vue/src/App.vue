@@ -433,12 +433,14 @@
               </div>
             </template>
             <el-form :inline="true" class="toolbar" @submit.prevent="applyOrderFilters">
+              <el-form-item><el-select v-model="operationSiteScope" placeholder="站点范围" style="width: 180px" @change="applyOperationSiteScope"><el-option label="全部站点" value="all" /><el-option v-for="item in sites" :key="item.id" :label="item.name" :value="String(item.id)" /></el-select></el-form-item>
               <el-form-item><el-input v-model="orderFilters.keyword" placeholder="订单号/客户/手机号" clearable /></el-form-item>
               <el-form-item><el-select v-model="orderFilters.payment_status" placeholder="支付" clearable><el-option label="待支付" value="pending" /><el-option label="已支付" value="paid" /></el-select></el-form-item>
               <el-form-item><el-select v-model="orderFilters.fulfillment_status" placeholder="履约" clearable><el-option label="新订单" value="new" /><el-option label="已确认" value="confirmed" /><el-option label="已发货" value="shipped" /><el-option label="已完成" value="finished" /></el-select></el-form-item>
               <el-button type="primary" @click="applyOrderFilters">筛选</el-button>
             </el-form>
             <el-table :data="orders" height="560" row-key="id" highlight-current-row @row-click="selectOrder">
+              <el-table-column prop="site_name" label="站点" width="150" />
               <el-table-column prop="order_no" label="订单号" min-width="170" />
               <el-table-column prop="customer_name" label="客户" min-width="150">
                 <template #default="{ row }"><strong>{{ row.customer_name }}</strong><br /><small>{{ row.phone }}</small></template>
@@ -476,6 +478,7 @@
               <div class="card-head"><strong>服务中心</strong><el-button type="primary" @click="resolveSelectedServices">批量标记已处理</el-button></div>
             </template>
             <el-form :inline="true" class="toolbar" @submit.prevent="loadServices">
+              <el-form-item><el-select v-model="operationSiteScope" placeholder="站点范围" style="width: 180px" @change="applyOperationSiteScope"><el-option label="全部站点" value="all" /><el-option v-for="item in sites" :key="item.id" :label="item.name" :value="String(item.id)" /></el-select></el-form-item>
               <el-form-item><el-input v-model="serviceFilters.keyword" placeholder="搜索订单/客户/请求内容" clearable /></el-form-item>
               <el-form-item><el-select v-model="serviceFilters.status" placeholder="状态" clearable><el-option label="待处理" value="pending" /><el-option label="已处理" value="handled" /></el-select></el-form-item>
               <el-form-item><el-select v-model="serviceFilters.type" placeholder="类型" clearable><el-option label="催发货" value="催发货" /><el-option label="改地址" value="修改收货信息" /><el-option label="售后" value="售后问题" /><el-option label="其他" value="其他服务" /></el-select></el-form-item>
@@ -483,6 +486,7 @@
             </el-form>
             <el-table :data="services" height="600" @selection-change="selectedServiceIds = $event.map((item: any) => item.id)">
               <el-table-column type="selection" width="48" :selectable="(row: any) => row.status === 'pending'" />
+              <el-table-column prop="site_name" label="站点" width="150" />
               <el-table-column prop="type" label="类型" width="130" />
               <el-table-column prop="message" label="请求内容" min-width="260" />
               <el-table-column label="客户" width="170"><template #default="{ row }">{{ row.customer_name }}<br /><small>{{ row.phone }}</small></template></el-table-column>
@@ -527,7 +531,14 @@
         <section v-if="view === 'forms'">
           <el-card class="panel" shadow="never">
             <template #header><strong>留言线索</strong></template>
+            <el-form :inline="true" class="toolbar" @submit.prevent="applyFormFilters">
+              <el-form-item><el-select v-model="operationSiteScope" placeholder="站点范围" style="width: 180px" @change="applyOperationSiteScope"><el-option label="全部站点" value="all" /><el-option v-for="item in sites" :key="item.id" :label="item.name" :value="String(item.id)" /></el-select></el-form-item>
+              <el-form-item><el-input v-model="formFilters.keyword" placeholder="搜索来源/内容" clearable /></el-form-item>
+              <el-form-item><el-select v-model="formFilters.status" placeholder="状态" clearable><el-option label="新线索" value="new" /><el-option label="待处理" value="pending" /><el-option label="已处理" value="handled" /></el-select></el-form-item>
+              <el-button type="primary" @click="applyFormFilters">筛选</el-button>
+            </el-form>
             <el-table :data="forms" height="650">
+              <el-table-column prop="site_name" label="站点" width="150" />
               <el-table-column prop="form_key" label="来源" width="140" />
               <el-table-column label="内容" min-width="340"><template #default="{ row }"><pre>{{ pretty(row.data) }}</pre></template></el-table-column>
               <el-table-column prop="status" label="状态" width="120" />
@@ -619,6 +630,7 @@ const versions = ref<any[]>([])
 const sites = ref<any[]>([])
 const centerOverview = ref<any>({})
 const currentSiteId = ref<number | string>(10001)
+const operationSiteScope = ref('all')
 const templates = ref<any[]>([])
 const moduleRegistry = ref<any>({ scopes: [], modules: [] })
 const servicePending = ref(0)
@@ -632,6 +644,7 @@ const packaging = ref(false)
 
 const orderFilters = reactive({ keyword: '', payment_status: '', fulfillment_status: '' })
 const serviceFilters = reactive({ keyword: '', status: '', type: '' })
+const formFilters = reactive({ keyword: '', status: '' })
 const mediaFilters = reactive({ keyword: '', file_type: '' })
 const orderDetail = reactive<any>({})
 const publishDetail = reactive<any>({})
@@ -1131,6 +1144,7 @@ async function loadOrders() {
   const params = new URLSearchParams()
   params.set('page', String(orderPager.page))
   params.set('page_size', String(orderPager.page_size))
+  params.set('site_id', operationSiteScope.value)
   Object.entries(orderFilters).forEach(([key, value]) => value && params.set(key, value))
   const data = await request(`/api/orders?${params.toString()}`)
   orders.value = data.items || []
@@ -1143,6 +1157,14 @@ function applyOrderFilters() {
 function changeOrderPage(page: number) {
   orderPager.page = page
   loadOrders()
+}
+function applyOperationSiteScope() {
+  orderPager.page = 1
+  servicePager.page = 1
+  formPager.page = 1
+  if (view.value === 'orders') loadOrders()
+  if (view.value === 'service') loadServices()
+  if (view.value === 'forms') loadForms()
 }
 function selectOrder(row: any) {
   Object.assign(orderDetail, row, { followup_note: '' })
@@ -1175,6 +1197,7 @@ async function loadServices() {
   const params = new URLSearchParams()
   params.set('page', String(servicePager.page))
   params.set('page_size', String(servicePager.page_size))
+  params.set('site_id', operationSiteScope.value)
   Object.entries(serviceFilters).forEach(([key, value]) => value && params.set(key, value))
   const data = await request(`/api/orders/service-requests?${params.toString()}`)
   services.value = data.items || []
@@ -1219,9 +1242,18 @@ async function copyMediaPath(path: string) {
   }
 }
 async function loadForms() {
-  const data = await request(`/api/forms/submissions?page=${formPager.page}&page_size=${formPager.page_size}`)
+  const params = new URLSearchParams()
+  params.set('page', String(formPager.page))
+  params.set('page_size', String(formPager.page_size))
+  params.set('site_id', operationSiteScope.value)
+  Object.entries(formFilters).forEach(([key, value]) => value && params.set(key, value))
+  const data = await request(`/api/forms/submissions?${params.toString()}`)
   forms.value = data.items || []
   formPager.total = data.pagination?.total || forms.value.length
+}
+function applyFormFilters() {
+  formPager.page = 1
+  loadForms()
 }
 function changeFormPage(page: number) {
   formPager.page = page

@@ -14,12 +14,18 @@ function getVisitId() {
   }
 }
 
+function getCurrentSiteId() {
+  const value = Number(window.HUAJIAN_SITE_ID || 10001);
+  return value > 0 ? value : 10001;
+}
+
 function trackSiteVisit() {
   if (location.protocol === 'file:') return;
   fetch('/api/analytics/visit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
+      site_id: getCurrentSiteId(),
       session_id: getVisitId(),
       path: location.pathname || '/',
       title: document.title || '',
@@ -73,6 +79,7 @@ document.addEventListener('submit', function (event) {
 
   const formData = new FormData(form);
   const payload = {
+    site_id: getCurrentSiteId(),
     form_key: formData.get('form_key') || 'contact',
     source_url: location.pathname,
     data: {}
@@ -152,6 +159,7 @@ function submitOrderForm(form) {
   const quantity = Math.max(1, Number(formData.get('quantity') || 1));
   const price = Math.max(0, Number(formData.get('price') || 0));
   const payload = {
+    site_id: getCurrentSiteId(),
     customer_name: formData.get('customer_name') || '',
     phone: formData.get('phone') || '',
     email: formData.get('email') || '',
