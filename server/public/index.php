@@ -398,6 +398,11 @@ function publish_version_root(array $site): string
     return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'publish_versions' . DIRECTORY_SEPARATOR . (string)($site['site_key'] ?? 'site_10001');
 }
 
+function site_backup_root(array $site): string
+{
+    return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'site_backups' . DIRECTORY_SEPARATOR . (string)($site['site_key'] ?? 'site_10001');
+}
+
 function assert_workspace_path(string $path): void
 {
     $root = realpath(dirname(__DIR__, 2));
@@ -446,6 +451,35 @@ function copy_directory(string $src, string $dst): int
         $fileCount++;
     }
     return $fileCount;
+}
+
+function directory_size(string $dir): int
+{
+    $root = realpath($dir);
+    if (!$root || !is_dir($root)) {
+        return 0;
+    }
+    $size = 0;
+    $items = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+    foreach ($items as $item) {
+        if ($item->isFile()) {
+            $size += (int)$item->getSize();
+        }
+    }
+    return $size;
+}
+
+function remove_directory_tree(string $dir): void
+{
+    if (!is_dir($dir)) {
+        return;
+    }
+    remove_dir_contents($dir);
+    assert_workspace_path($dir);
+    rmdir($dir);
 }
 
 function create_static_package(?array $site = null): array
@@ -3001,6 +3035,168 @@ function rollback_publish_version(PDO $pdo, array $site, int $versionId): array
         'created_at' => now(),
     ]);
     return $rollbackSummary + ['version_no' => $rollbackNo];
+}
+
+function ensure_site_backups_table(PDO $pdo): void
+{
+    $pdo->exec("CREATE TABLE IF NOT EXISTS site_backups (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        site_id BIGINT UNSIGNED NOT NULL DEFAULT 10001,
+        backup_no VARCHAR(120) NOT NULL,
+        backup_type VARCHAR(40) NOT NULL DEFAULT 'manual',
+        snapshot_path VARCHAR(255) NOT NULL,
+        file_count INT UNSIGNED NOT NULL DEFAULT 0,
+        file_size BIGINT UNSIGNED NOT NULL DEFAULT 0,
+        status VARCHAR(30) NOT NULL DEFAULT 'success',
+        summary TEXT,
+        created_at DATETIME NOT NULL,
+        restored_at DATETIME,
+        UNIQUE KEY uk_backup_no (backup_no),
+        INDEX idx_site_id (site_id),
+        INDEX idx_created_at (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    ensure_column($pdo, 'site_backups', 'site_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 10001');
+    ensure_column($pdo, 'site_backups', 'backup_type', "VARCHAR(40) NOT NULL DEFAULT 'manual'");
+    ensure_column($pdo, 'site_backups', 'file_size', 'BIGINT UNSIGNED NOT NULL DEFAULT 0');
+    ensure_column($pdo, 'site_backups', 'restored_at', 'DATETIME');
+}
+
+function normalize_site_backup(array $row): array
+{
+    $row['id'] = (int)($row['id'] ?? 0);
+    $row['site_id'] = (int)($row['site_id'] ?? 10001);
+    $row['file_count'] = (int)($row['file_count'] ?? 0);
+    $row['file_size'] = (int)($row['file_size'] ?? 0);
+    $summary = json_decode((string)($row['summary'] ?? ''), true);
+    $row['summary_json'] = is_array($summary) ? $summary : [];
+    return $row;
+}
+
+function list_site_backups(PDO $pdo, int $siteId): array
+{
+    ensure_site_backups_table($pdo);
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $offset = ($page - 1) * $pageSize;
+    $count = $pdo->prepare('SELECT COUNT(*) FROM site_backups WHERE site_id = ?');
+    $count->execute([$siteId]);
+    $total = (int)$count->fetchColumn();
+    $stmt = $pdo->prepare("SELECT * FROM site_backups WHERE site_id = ? ORDER BY id DESC LIMIT {$pageSize} OFFSET {$offset}");
+    $stmt->execute([$siteId]);
+    return [
+        'items' => array_map('normalize_site_backup', $stmt->fetchAll()),
+        'pagination' => [
+            'page' => $page,
+            'page_size' => $pageSize,
+            'total' => $total,
+            'total_pages' => (int)ceil($total / $pageSize),
+        ],
+    ];
+}
+
+function create_site_backup(PDO $pdo, array $site, string $backupType = 'manual', string $message = ''): array
+{
+    ensure_site_backups_table($pdo);
+    $publicRoot = site_public_root($site);
+    if (!is_dir($publicRoot)) {
+        fail('请先生成静态站，再创建备份', 'STATIC_SITE_MISSING', 422);
+    }
+    $backupNo = (string)$site['site_key'] . '_backup_' . date('Ymd_His') . '_' . strtoupper(substr(bin2hex(random_bytes(2)), 0, 4));
+    $snapshotRoot = site_backup_root($site) . DIRECTORY_SEPARATOR . $backupNo;
+    remove_dir_contents($snapshotRoot);
+    $fileCount = copy_directory($publicRoot, $snapshotRoot);
+    $fileSize = directory_size($snapshotRoot);
+    $relative = str_replace(DIRECTORY_SEPARATOR, '/', substr($snapshotRoot, strlen(dirname(__DIR__, 2)) + 1));
+    $summary = [
+        'site_id' => (int)$site['id'],
+        'site_key' => (string)$site['site_key'],
+        'site_name' => (string)$site['name'],
+        'backup_type' => $backupType,
+        'file_count' => $fileCount,
+        'file_size' => $fileSize,
+        'snapshot_path' => $relative,
+        'message' => $message ?: '站点静态文件备份已创建',
+    ];
+    $stmt = $pdo->prepare("INSERT INTO site_backups (site_id, backup_no, backup_type, snapshot_path, file_count, file_size, status, summary, created_at)
+        VALUES (:site_id, :backup_no, :backup_type, :snapshot_path, :file_count, :file_size, 'success', :summary, :created_at)");
+    $stmt->execute([
+        'site_id' => (int)$site['id'],
+        'backup_no' => $backupNo,
+        'backup_type' => $backupType,
+        'snapshot_path' => $relative,
+        'file_count' => $fileCount,
+        'file_size' => $fileSize,
+        'summary' => json_encode($summary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'created_at' => now(),
+    ]);
+    return normalize_site_backup(fetch_one($pdo, 'site_backups', (int)$pdo->lastInsertId()) ?: []);
+}
+
+function restore_site_backup(PDO $pdo, array $site, int $backupId): array
+{
+    ensure_site_backups_table($pdo);
+    $stmt = $pdo->prepare("SELECT * FROM site_backups WHERE id = ? AND site_id = ? AND status = 'success' LIMIT 1");
+    $stmt->execute([$backupId, (int)$site['id']]);
+    $backup = $stmt->fetch();
+    if (!$backup) {
+        fail('备份不存在或不可恢复', 'BACKUP_NOT_FOUND', 404);
+    }
+    $snapshotRelative = (string)($backup['snapshot_path'] ?? '');
+    if ($snapshotRelative === '' || str_contains($snapshotRelative, '..')) {
+        fail('备份快照路径不安全', 'INVALID_BACKUP_PATH', 422);
+    }
+    $snapshotRoot = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $snapshotRelative);
+    if (!is_dir($snapshotRoot)) {
+        fail('备份快照不存在', 'BACKUP_SNAPSHOT_MISSING', 404);
+    }
+    $preRestore = create_site_backup($pdo, $site, 'before-restore', '恢复备份前自动保存当前站点状态');
+    $publicRoot = site_public_root($site);
+    remove_dir_contents($publicRoot);
+    $fileCount = copy_directory($snapshotRoot, $publicRoot);
+    $fileSize = directory_size($publicRoot);
+    $pdo->prepare('UPDATE site_backups SET restored_at = :restored_at WHERE id = :id')
+        ->execute(['id' => $backupId, 'restored_at' => now()]);
+    $restoreNo = (string)$site['site_key'] . '_restore_' . date('Ymd_His');
+    $summary = [
+        'site_id' => (int)$site['id'],
+        'site_key' => (string)$site['site_key'],
+        'site_name' => (string)$site['name'],
+        'restore_from' => (string)$backup['backup_no'],
+        'restore_backup_id' => (int)$backup['id'],
+        'pre_restore_backup_no' => $preRestore['backup_no'] ?? '',
+        'file_count' => $fileCount,
+        'file_size' => $fileSize,
+        'message' => '已恢复站点备份 ' . $backup['backup_no'],
+    ];
+    ensure_publish_versions_site_column($pdo);
+    $insert = $pdo->prepare("INSERT INTO publish_versions (site_id, version_no, publish_type, file_path, status, summary, created_at)
+        VALUES (:site_id, :version_no, 'restore', :file_path, 'success', :summary, :created_at)");
+    $insert->execute([
+        'site_id' => (int)$site['id'],
+        'version_no' => $restoreNo,
+        'file_path' => str_replace(DIRECTORY_SEPARATOR, '/', site_public_path($site)),
+        'summary' => json_encode($summary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'created_at' => now(),
+    ]);
+    return $summary + ['version_no' => $restoreNo, 'pre_restore_backup' => $preRestore];
+}
+
+function delete_site_backup(PDO $pdo, array $site, int $backupId): array
+{
+    ensure_site_backups_table($pdo);
+    $stmt = $pdo->prepare('SELECT * FROM site_backups WHERE id = ? AND site_id = ? LIMIT 1');
+    $stmt->execute([$backupId, (int)$site['id']]);
+    $backup = $stmt->fetch();
+    if (!$backup) {
+        fail('备份不存在', 'BACKUP_NOT_FOUND', 404);
+    }
+    $snapshotRelative = (string)($backup['snapshot_path'] ?? '');
+    if ($snapshotRelative !== '' && !str_contains($snapshotRelative, '..')) {
+        $snapshotRoot = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $snapshotRelative);
+        remove_directory_tree($snapshotRoot);
+    }
+    $pdo->prepare('DELETE FROM site_backups WHERE id = ? AND site_id = ?')->execute([$backupId, (int)$site['id']]);
+    return ['id' => $backupId];
 }
 
 function public_order_view(array $order): array
@@ -6152,6 +6348,36 @@ try {
         $main = main_pdo();
         $currentSite = current_site($main, $pdo);
         ok(list_publish_versions($pdo, (int)$currentSite['id']));
+    }
+
+    if ($method === 'GET' && $path === '/site/backups') {
+        $main = main_pdo();
+        $currentSite = current_site($main, $pdo);
+        ok(list_site_backups($pdo, (int)$currentSite['id']));
+    }
+
+    if ($method === 'POST' && $path === '/site/backups') {
+        $main = main_pdo();
+        $currentSite = current_site($main, $pdo);
+        $data = body_json();
+        $backupType = in_array(($data['backup_type'] ?? 'manual'), ['manual', 'before-deploy', 'before-restore'], true) ? (string)($data['backup_type'] ?? 'manual') : 'manual';
+        ok(create_site_backup($pdo, $currentSite, $backupType, (string)($data['message'] ?? '')), '站点备份已创建');
+    }
+
+    if ($params = route_param('/site/backups/{id}/restore', $path)) {
+        if ($method === 'POST') {
+            $main = main_pdo();
+            $currentSite = current_site($main, $pdo);
+            ok(restore_site_backup($pdo, $currentSite, (int)$params['id']), '站点备份已恢复');
+        }
+    }
+
+    if ($params = route_param('/site/backups/{id}', $path)) {
+        if ($method === 'DELETE') {
+            $main = main_pdo();
+            $currentSite = current_site($main, $pdo);
+            ok(delete_site_backup($pdo, $currentSite, (int)$params['id']), '站点备份已删除');
+        }
     }
 
     if ($method === 'POST' && $path === '/site/rollback') {

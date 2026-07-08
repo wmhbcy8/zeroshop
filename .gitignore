@@ -8,6 +8,7 @@
 /storage-api-*.log
 /storage/packages/
 /storage/publish_versions/
+/storage/site_backups/
 /storage/build/
 /storage/secret.key
 /*.png

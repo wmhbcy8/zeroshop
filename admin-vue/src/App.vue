@@ -1502,6 +1502,40 @@
           <el-card class="panel mt16" shadow="never">
             <template #header>
               <div class="card-head">
+                <strong>站点备份</strong>
+                <div class="head-actions">
+                  <el-button @click="loadSiteBackups">刷新备份</el-button>
+                  <el-button type="primary" :loading="backingUp" @click="createSiteBackup">创建备份</el-button>
+                </div>
+              </div>
+            </template>
+            <el-alert title="备份保存当前站点 public 静态目录。恢复备份前，系统会自动再保存一份当前状态，便于回退。" type="info" show-icon class="mb16" />
+            <el-table :data="siteBackups" height="300" row-key="id">
+              <el-table-column label="备份号" min-width="220">
+                <template #default="{ row }">
+                  <strong>{{ row.backup_no }}</strong><br />
+                  <small>{{ row.snapshot_path || '-' }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column prop="backup_type" label="类型" width="120" />
+              <el-table-column label="文件" width="130">
+                <template #default="{ row }">{{ row.file_count || 0 }} / {{ formatFileSize(row.file_size || 0) }}</template>
+              </el-table-column>
+              <el-table-column prop="created_at" label="创建时间" width="170" />
+              <el-table-column prop="restored_at" label="最近恢复" width="170">
+                <template #default="{ row }">{{ row.restored_at || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="150">
+                <template #default="{ row }">
+                  <el-button link type="warning" @click="restoreSiteBackup(row)">恢复</el-button>
+                  <el-button link type="danger" @click="deleteSiteBackup(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+          <el-card class="panel mt16" shadow="never">
+            <template #header>
+              <div class="card-head">
                 <strong>部署任务</strong>
                 <el-button @click="loadDeployTasks">刷新任务</el-button>
               </div>
@@ -1731,6 +1765,7 @@ const seoAudit = ref<any>({})
 const versions = ref<any[]>([])
 const batchTasks = ref<any[]>([])
 const deployTasks = ref<any[]>([])
+const siteBackups = ref<any[]>([])
 const operationLogs = ref<any[]>([])
 const batchTaskOverview = ref<any>({})
 const sites = ref<any[]>([])
@@ -1765,6 +1800,7 @@ const publishResult = ref<any>(null)
 const deployTesting = ref(false)
 const packaging = ref(false)
 const deploying = ref(false)
+const backingUp = ref(false)
 const siteBatchRunning = ref(false)
 const selectedSiteIds = ref<Array<number | string>>([])
 const siteBatchResults = ref<any[]>([])
@@ -1969,7 +2005,7 @@ function setView(key: string) {
   if (key === 'forms') loadForms()
   if (key === 'collector') loadCollector()
   if (key === 'seo') loadSeoAudit()
-  if (key === 'publish') Promise.all([loadVersions(), loadDeployTasks()])
+  if (key === 'publish') Promise.all([loadVersions(), loadDeployTasks(), loadSiteBackups()])
 }
 
 function refreshCurrentView() {
@@ -1994,7 +2030,7 @@ function refreshCurrentView() {
     forms: loadForms,
     collector: loadCollector,
     seo: loadSeoAudit,
-    publish: async () => { await Promise.all([loadVersions(), loadDeployTasks()]) }
+    publish: async () => { await Promise.all([loadVersions(), loadDeployTasks(), loadSiteBackups()]) }
   }
   loaders[view.value]?.().then(() => ElMessage.success('当前页面已刷新'))
 }
@@ -2029,6 +2065,7 @@ async function loadAll() {
     loadPaymentChannels(),
     loadBatchTasks(),
     loadDeployTasks(),
+    loadSiteBackups(),
     loadOperationLogs(),
     loadMedia(),
     loadForms(),
@@ -3457,6 +3494,11 @@ async function loadDeployTasks() {
   deployTasks.value = data.items || []
 }
 
+async function loadSiteBackups() {
+  const data = await request('/api/site/backups?page_size=20')
+  siteBackups.value = data.items || []
+}
+
 async function loadBatchTasks() {
   const query = batchTaskQuery()
   const data = await request(`/api/batch/tasks${query.toString() ? `?${query.toString()}` : ''}`)
@@ -3739,6 +3781,35 @@ async function rollbackVersion(row: any) {
   publishDrawerVisible.value = false
   ElMessage.success('已回滚到所选版本')
   await Promise.all([loadVersions(), loadSites(), loadDashboard()])
+}
+
+async function createSiteBackup() {
+  backingUp.value = true
+  try {
+    const data = await request('/api/site/backups', {
+      method: 'POST',
+      data: { backup_type: 'manual', message: '后台手动创建站点备份' }
+    })
+    ElMessage.success(data?.backup_no ? `备份已创建：${data.backup_no}` : '站点备份已创建')
+    await loadSiteBackups()
+  } finally {
+    backingUp.value = false
+  }
+}
+
+async function restoreSiteBackup(row: any) {
+  await ElMessageBox.confirm(`确定恢复备份 ${row.backup_no} 吗？系统会先自动备份当前站点 public 目录。`)
+  const data = await request(`/api/site/backups/${row.id}/restore`, { method: 'POST' })
+  publishResult.value = data || { message: '站点备份已恢复' }
+  ElMessage.success('站点备份已恢复')
+  await Promise.all([loadSiteBackups(), loadVersions(), loadSites(), loadDashboard()])
+}
+
+async function deleteSiteBackup(row: any) {
+  await ElMessageBox.confirm(`确定删除备份 ${row.backup_no} 吗？对应快照目录也会删除。`)
+  await request(`/api/site/backups/${row.id}`, { method: 'DELETE' })
+  ElMessage.success('站点备份已删除')
+  await loadSiteBackups()
 }
 
 function openBatchTask(row: any) {
