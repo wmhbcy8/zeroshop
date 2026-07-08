@@ -1,13 +1,18 @@
-const latestOrderStorageKey = 'huajian_latest_order';
-const visitStorageKey = 'huajian_visit_id';
-const cartStorageKey = 'huajian_cart_items';
+const latestOrderStorageBaseKey = 'huajian_latest_order';
+const visitStorageBaseKey = 'huajian_visit_id';
+const cartStorageBaseKey = 'huajian_cart_items';
+
+function siteStorageKey(baseKey) {
+  return baseKey + '_' + getCurrentSiteId();
+}
 
 function getVisitId() {
   try {
-    let value = localStorage.getItem(visitStorageKey);
+    const key = siteStorageKey(visitStorageBaseKey);
+    let value = localStorage.getItem(key);
     if (!value) {
       value = 'v_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
-      localStorage.setItem(visitStorageKey, value);
+      localStorage.setItem(key, value);
     }
     return value;
   } catch (error) {
@@ -143,7 +148,7 @@ function getOrderLookupHref(orderNo, phone) {
 function saveLatestOrder(orderNo, phone) {
   if (!orderNo || !phone) return;
   try {
-    localStorage.setItem(latestOrderStorageKey, JSON.stringify({
+    localStorage.setItem(siteStorageKey(latestOrderStorageBaseKey), JSON.stringify({
       order_no: orderNo,
       phone: phone,
       saved_at: new Date().toISOString()
@@ -153,7 +158,7 @@ function saveLatestOrder(orderNo, phone) {
 
 function readLatestOrder() {
   try {
-    return JSON.parse(localStorage.getItem(latestOrderStorageKey) || '{}') || {};
+    return JSON.parse(localStorage.getItem(siteStorageKey(latestOrderStorageBaseKey)) || '{}') || {};
   } catch {
     return {};
   }
@@ -161,7 +166,7 @@ function readLatestOrder() {
 
 function readCartItems() {
   try {
-    const items = JSON.parse(localStorage.getItem(cartStorageKey) || '[]');
+    const items = JSON.parse(localStorage.getItem(siteStorageKey(cartStorageBaseKey)) || '[]');
     return Array.isArray(items) ? items : [];
   } catch {
     return [];
@@ -170,7 +175,7 @@ function readCartItems() {
 
 function saveCartItems(items) {
   try {
-    localStorage.setItem(cartStorageKey, JSON.stringify(items));
+    localStorage.setItem(siteStorageKey(cartStorageBaseKey), JSON.stringify(items));
   } catch {}
 }
 
