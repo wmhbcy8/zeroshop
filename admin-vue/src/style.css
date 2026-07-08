@@ -380,6 +380,11 @@ body {
   flex-wrap: wrap;
   gap: 8px;
 }
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .mt16 {
   margin-top: 16px;
 }

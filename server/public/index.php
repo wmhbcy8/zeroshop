@@ -970,7 +970,10 @@ function normalize_site_deploy_config(array $data, array $current = []): array
         $deploy = is_array($decoded) ? $decoded : [];
     }
     $mode = trim((string)($deploy['mode'] ?? 'manual'));
-    if (!in_array($mode, ['manual', 'package', 'bt-api'], true)) {
+    if ($mode === 'bt_api') {
+        $mode = 'bt-api';
+    }
+    if (!in_array($mode, ['manual', 'package', 'bt-api', 'ftp'], true)) {
         $mode = 'manual';
     }
 
@@ -1454,6 +1457,23 @@ function seed_content_distribution(PDO $pdo, string $type, string $table): void
 
 function normalize_site_ids(array $data): array
 {
+    $scope = (string)($data['site_scope'] ?? $data['distribution_scope'] ?? '');
+    if ($scope === 'all') {
+        try {
+            $main = main_pdo();
+            ensure_center_tables($main);
+            $ids = $main->query('SELECT id FROM sites ORDER BY id ASC')->fetchAll(PDO::FETCH_COLUMN);
+            $ids = array_values(array_unique(array_filter(array_map('intval', $ids), fn($id) => $id > 0)));
+            if ($ids) {
+                return $ids;
+            }
+        } catch (Throwable $error) {
+            return [requested_site_id()];
+        }
+    }
+    if ($scope === 'current') {
+        return [requested_site_id()];
+    }
     $ids = $data['site_ids'] ?? $data['distribution_site_ids'] ?? [requested_site_id()];
     if (!is_array($ids)) {
         $ids = [$ids];

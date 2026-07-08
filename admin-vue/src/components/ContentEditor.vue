@@ -56,7 +56,14 @@
         </el-form-item>
         <el-form-item label="摘要"><el-input v-model="form.summary" type="textarea" :rows="3" /></el-form-item>
         <el-form-item :label="type === 'article' ? '正文' : '描述'"><el-input v-model="form[bodyField]" type="textarea" :rows="7" /></el-form-item>
-        <el-form-item label="分发站点">
+        <el-form-item label="发布范围">
+          <el-radio-group v-model="form.site_scope" @change="syncScope">
+            <el-radio-button label="current">当前站点</el-radio-button>
+            <el-radio-button label="all">全部站点</el-radio-button>
+            <el-radio-button label="selected">指定站点</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="form.site_scope === 'selected'" label="选择站点">
           <el-select v-model="form.site_ids" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择站点">
             <el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id" />
           </el-select>
@@ -121,6 +128,7 @@ function openEdit(row: any) {
 }
 
 function saveForm() {
+  syncScope()
   emit('save')
 }
 
@@ -133,5 +141,16 @@ function siteNames(row: any) {
 function selectCover(item: any) {
   props.form.cover = item.file_path
   mediaDrawerVisible.value = false
+}
+
+function syncScope() {
+  if (props.form.site_scope === 'all') {
+    props.form.site_ids = props.sites.map((site: any) => Number(site.id))
+    return
+  }
+  if (props.form.site_scope === 'current' || !props.form.site_scope) {
+    props.form.site_scope = 'current'
+    props.form.site_ids = [Number(props.currentSiteId || 10001)]
+  }
 }
 </script>

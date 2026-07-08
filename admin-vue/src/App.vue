@@ -305,36 +305,6 @@
                 </el-table-column>
               </el-table>
               <el-button @click="addNavItem">新增导航</el-button>
-              <el-divider content-position="left">AI 与支付</el-divider>
-              <el-row :gutter="16">
-                <el-col :span="12"><el-form-item label="AI 服务商"><el-input v-model="site.ai.provider" /></el-form-item></el-col>
-                <el-col :span="12"><el-form-item label="模型名称"><el-input v-model="site.ai.model" /></el-form-item></el-col>
-              </el-row>
-              <el-form-item label="AI API 地址"><el-input v-model="site.ai.endpoint" /></el-form-item>
-              <el-form-item label="AI API Key"><el-input v-model="site.ai.api_key" type="password" show-password /></el-form-item>
-              <el-row :gutter="16">
-                <el-col :span="12"><el-form-item label="支付模式"><el-select v-model="site.payment.mode"><el-option label="人工确认" value="manual" /><el-option label="微信支付" value="wechat" /><el-option label="支付宝" value="alipay" /><el-option label="Stripe" value="stripe" /></el-select></el-form-item></el-col>
-                <el-col :span="12"><el-form-item label="默认币种"><el-input v-model="site.payment.currency" /></el-form-item></el-col>
-              </el-row>
-              <el-form-item label="付款说明"><el-input v-model="site.payment.guide" type="textarea" :rows="3" /></el-form-item>
-              <el-divider content-position="left">宝塔部署配置</el-divider>
-              <el-row :gutter="16">
-                <el-col :span="12"><el-form-item label="面板地址"><el-input v-model="site.deploy.bt_panel_url" placeholder="https://server:8888" /></el-form-item></el-col>
-                <el-col :span="12"><el-form-item label="站点目录"><el-input v-model="site.deploy.site_path" placeholder="/www/wwwroot/example.com" /></el-form-item></el-col>
-              </el-row>
-              <el-row :gutter="16">
-                <el-col :span="12">
-                  <el-form-item label="部署模式">
-                    <el-select v-model="site.deploy.mode">
-                      <el-option label="手动确认" value="manual" />
-                      <el-option label="宝塔 API" value="bt_api" />
-                      <el-option label="FTP/SFTP" value="ftp" />
-                    </el-select>
-                  </el-form-item>
-                </el-col>
-                <el-col :span="12"><el-form-item label="发布后动作"><el-input v-model="site.deploy.after_action" placeholder="reload_nginx" /></el-form-item></el-col>
-              </el-row>
-              <el-form-item label="部署备注"><el-input v-model="site.deploy.note" type="textarea" :rows="2" placeholder="记录服务器、站点、证书和备份策略" /></el-form-item>
             </el-form>
           </el-card>
         </section>
@@ -466,6 +436,18 @@
               <el-card class="panel" shadow="never">
                 <template #header><strong>AI 内容生产</strong></template>
                 <el-form :model="aiForm" label-width="96px">
+                  <el-form-item label="发布范围">
+                    <el-radio-group v-model="aiForm.site_scope" @change="syncAiSiteScope">
+                      <el-radio-button label="current">当前站点</el-radio-button>
+                      <el-radio-button label="all">全部站点</el-radio-button>
+                      <el-radio-button label="selected">指定站点</el-radio-button>
+                    </el-radio-group>
+                  </el-form-item>
+                  <el-form-item v-if="aiForm.site_scope === 'selected'" label="选择站点">
+                    <el-select v-model="aiForm.site_ids" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择要发布到的站点">
+                      <el-option v-for="item in sites" :key="item.id" :label="item.name" :value="item.id" />
+                    </el-select>
+                  </el-form-item>
                   <el-form-item label="内容类型">
                     <el-segmented v-model="aiForm.type" :options="[{ label: '文章', value: 'article' }, { label: '商品', value: 'product' }]" />
                   </el-form-item>
@@ -485,6 +467,19 @@
                     <el-button type="primary" :loading="aiLoading" @click="generateAiPreview">生成预览</el-button>
                     <el-button :loading="aiBatchLoading" @click="batchCreateAiContent">批量入库</el-button>
                   </el-form-item>
+                </el-form>
+              </el-card>
+              <el-card class="panel mt16" shadow="never">
+                <template #header><strong>AI 接口配置</strong></template>
+                <el-form :model="site.ai" label-width="96px">
+                  <el-form-item label="服务商"><el-input v-model="site.ai.provider" placeholder="OpenAI / DeepSeek / 通义千问" /></el-form-item>
+                  <el-form-item label="模型名称"><el-input v-model="site.ai.model" placeholder="例如：gpt-4.1-mini" /></el-form-item>
+                  <el-form-item label="API 地址"><el-input v-model="site.ai.endpoint" placeholder="https://api.example.com/v1/chat/completions" /></el-form-item>
+                  <el-form-item label="API Key"><el-input v-model="site.ai.api_key" type="password" show-password /></el-form-item>
+                  <div class="form-actions">
+                    <el-button @click="saveSettings">保存当前站点 AI</el-button>
+                    <el-button @click="saveSettingsAsDefault">保存为公共默认</el-button>
+                  </div>
                 </el-form>
               </el-card>
             </el-col>
@@ -711,6 +706,35 @@
         </section>
 
         <section v-if="view === 'payments'">
+          <el-card class="panel mb16" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>当前站点支付配置</strong>
+                <div class="head-actions">
+                  <el-button @click="saveSettings">保存当前站点支付</el-button>
+                  <el-button @click="saveSettingsAsDefault">保存为公共默认</el-button>
+                </div>
+              </div>
+            </template>
+            <el-form :model="site.payment" label-width="100px" class="wide-form">
+              <el-row :gutter="16">
+                <el-col :span="8">
+                  <el-form-item label="支付模式">
+                    <el-select v-model="site.payment.mode">
+                      <el-option label="人工确认" value="manual" />
+                      <el-option label="微信支付" value="wechat" />
+                      <el-option label="支付宝" value="alipay" />
+                      <el-option label="Stripe" value="stripe" />
+                      <el-option label="PayPal" value="paypal" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8"><el-form-item label="默认币种"><el-input v-model="site.payment.currency" /></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="收款账号"><el-input v-model="site.payment.account" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="付款说明"><el-input v-model="site.payment.guide" type="textarea" :rows="3" placeholder="展示给前台订单页的付款方式、备注格式和客服确认流程" /></el-form-item>
+            </el-form>
+          </el-card>
           <el-card class="panel" shadow="never">
             <template #header>
               <div class="card-head">
@@ -772,6 +796,37 @@
         </section>
 
         <section v-if="view === 'publish'">
+          <el-card class="panel mb16" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>当前站点部署配置</strong>
+                <div class="head-actions">
+                  <el-button @click="saveSettings">保存部署配置</el-button>
+                  <el-button @click="saveSettingsAsDefault">保存为公共默认</el-button>
+                </div>
+              </div>
+            </template>
+            <el-form :model="site.deploy" label-width="100px" class="wide-form">
+              <el-row :gutter="16">
+                <el-col :span="12"><el-form-item label="面板地址"><el-input v-model="site.deploy.bt_panel_url" placeholder="https://server:8888" /></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="站点目录"><el-input v-model="site.deploy.site_path" placeholder="/www/wwwroot/example.com" /></el-form-item></el-col>
+              </el-row>
+              <el-row :gutter="16">
+                <el-col :span="12">
+                  <el-form-item label="部署模式">
+                    <el-select v-model="site.deploy.mode">
+                      <el-option label="手动发布" value="manual" />
+                      <el-option label="发布包上传" value="package" />
+                      <el-option label="宝塔 API" value="bt-api" />
+                      <el-option label="FTP/SFTP" value="ftp" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12"><el-form-item label="发布后动作"><el-input v-model="site.deploy.after_action" placeholder="reload_nginx" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="部署备注"><el-input v-model="site.deploy.note" type="textarea" :rows="2" placeholder="记录服务器、站点、证书和备份策略" /></el-form-item>
+            </el-form>
+          </el-card>
           <el-card class="panel" shadow="never">
             <template #header>
               <div class="card-head">
@@ -996,7 +1051,7 @@ const productForm = reactive<any>({})
 const siteEditingId = ref<number | string>('')
 const emptyDeploy = () => ({ bt_panel_url: '', site_path: '', mode: 'manual', after_action: '', note: '' })
 const siteForm = reactive<any>({ name: '', domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active', deploy: emptyDeploy() })
-const aiForm = reactive({ type: 'article', prompt: '围绕自主品牌商品、行业解决方案和独立站 SEO 关键词生成内容', count: 5, status: 'draft' })
+const aiForm = reactive<any>({ type: 'article', prompt: '围绕自主品牌商品、行业解决方案和独立站 SEO 关键词生成内容', count: 5, status: 'draft', site_scope: 'current', site_ids: [] })
 const pageBuilder = reactive({ prompt: '围绕自主品牌商品、行业解决方案、SEO 内容沉淀和询盘转化，生成一个企业官网 + 博客知识库 + 独立站商城首页方案' })
 const articlePager = reactive({ page: 1, page_size: 10, total: 0 })
 const productPager = reactive({ page: 1, page_size: 10, total: 0 })
@@ -1018,7 +1073,7 @@ const siteCreating = ref(false)
 const navItems = [
   { key: 'dashboard', label: '概览', hint: '查看运营指标、内容数量和站点状态。', icon: 'Odometer' },
   { key: 'sites', label: '站点', hint: '管理客户名下所有前台站点。', icon: 'Grid' },
-  { key: 'settings', label: '设置', hint: '维护当前站点信息、SEO、AI、支付和发布配置。', icon: 'Setting' },
+  { key: 'settings', label: '设置', hint: '维护当前站点基础信息、SEO、导航和全站页面结构。', icon: 'Setting' },
   { key: 'templates', label: '模板', hint: '选择主题模板，启用首页与全站模块。', icon: 'Grid' },
   { key: 'ai', label: 'AI', hint: '批量生成文章、商品文案和封面素材。', icon: 'MagicStick' },
   { key: 'articles', label: '文章', hint: '管理 SEO 文章和知识库内容。', icon: 'Document' },
@@ -1523,12 +1578,50 @@ function changeProductPage(page: number) {
   loadProducts()
 }
 
-function newArticle() { Object.assign(articleForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', site_ids: [Number(currentSiteId.value || 10001)] }) }
-function editArticle(item: any) { Object.assign(articleForm, { ...item, site_ids: item.site_ids?.length ? item.site_ids : [Number(currentSiteId.value || 10001)] }) }
+function allSiteIds() {
+  return sites.value.map((item: any) => Number(item.id)).filter((id) => id > 0)
+}
+
+function currentSiteIds() {
+  return [Number(currentSiteId.value || 10001)]
+}
+
+function siteIdsForScope(scope: string, selected: any[] = []) {
+  if (scope === 'all') return allSiteIds()
+  if (scope === 'selected') {
+    const ids = (selected || []).map((id: any) => Number(id)).filter((id) => id > 0)
+    return ids.length ? ids : currentSiteIds()
+  }
+  return currentSiteIds()
+}
+
+function inferSiteScope(siteIds: any[] = []) {
+  const ids = (siteIds || []).map((id: any) => Number(id)).filter((id) => id > 0)
+  const allIds = allSiteIds()
+  if (allIds.length && ids.length === allIds.length && allIds.every((id) => ids.includes(id))) return 'all'
+  if (ids.length === 1 && ids[0] === Number(currentSiteId.value || 10001)) return 'current'
+  return 'selected'
+}
+
+function normalizeDistributionPayload(form: any) {
+  const site_scope = form.site_scope || inferSiteScope(form.site_ids || [])
+  return {
+    ...form,
+    site_scope,
+    site_ids: siteIdsForScope(site_scope, form.site_ids)
+  }
+}
+
+function syncAiSiteScope() {
+  aiForm.site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
+}
+
+function newArticle() { Object.assign(articleForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', site_scope: 'current', site_ids: currentSiteIds() }) }
+function editArticle(item: any) { Object.assign(articleForm, { ...item, site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds() }) }
 async function saveArticle() {
   const method = articleForm.id ? 'PUT' : 'POST'
   const path = articleForm.id ? `/api/articles/${articleForm.id}` : '/api/articles'
-  await request(path, { method, data: { ...articleForm } })
+  await request(path, { method, data: normalizeDistributionPayload(articleForm) })
   ElMessage.success('文章已保存')
   articlePager.page = articleForm.id ? articlePager.page : 1
   await loadArticles()
@@ -1543,12 +1636,12 @@ async function generateArticleDraft(prompt: string) {
   Object.assign(articleForm, data.draft || data)
 }
 
-function newProduct() { Object.assign(productForm, { id: '', title: '', slug: '', sku: '', cover: '', summary: '', description: '', price: 0, stock: 0, status: 'draft', site_ids: [Number(currentSiteId.value || 10001)] }) }
-function editProduct(item: any) { Object.assign(productForm, { ...item, site_ids: item.site_ids?.length ? item.site_ids : [Number(currentSiteId.value || 10001)] }) }
+function newProduct() { Object.assign(productForm, { id: '', title: '', slug: '', sku: '', cover: '', summary: '', description: '', price: 0, stock: 0, status: 'draft', site_scope: 'current', site_ids: currentSiteIds() }) }
+function editProduct(item: any) { Object.assign(productForm, { ...item, site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds() }) }
 async function saveProduct() {
   const method = productForm.id ? 'PUT' : 'POST'
   const path = productForm.id ? `/api/products/${productForm.id}` : '/api/products'
-  await request(path, { method, data: { ...productForm } })
+  await request(path, { method, data: normalizeDistributionPayload(productForm) })
   ElMessage.success('商品已保存')
   productPager.page = productForm.id ? productPager.page : 1
   await loadProducts()
@@ -1603,11 +1696,12 @@ async function generateAiPreview() {
 }
 
 async function saveAiDraft(item: any, index: number) {
+  const site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
   if (item.type === 'article') {
-    await request('/api/articles', { method: 'POST', data: { ...item, status: 'draft', site_ids: [Number(currentSiteId.value || 10001)] } })
+    await request('/api/articles', { method: 'POST', data: { ...item, status: 'draft', site_scope: aiForm.site_scope, site_ids } })
     await loadArticles()
   } else {
-    await request('/api/products', { method: 'POST', data: { ...item, status: 'draft', site_ids: [Number(currentSiteId.value || 10001)] } })
+    await request('/api/products', { method: 'POST', data: { ...item, status: 'draft', site_scope: aiForm.site_scope, site_ids } })
     await loadProducts()
   }
   aiDrafts.value.splice(index, 1)
@@ -1619,7 +1713,7 @@ async function batchCreateAiContent() {
   aiBatchLoading.value = true
   try {
     const path = aiForm.type === 'article' ? '/api/ai/batch-articles' : '/api/ai/batch-products'
-    const data = await request(path, { method: 'POST', data: { prompt: aiForm.prompt, count: aiForm.count, status: aiForm.status, site_ids: [Number(currentSiteId.value || 10001)] } })
+    const data = await request(path, { method: 'POST', data: { prompt: aiForm.prompt, count: aiForm.count, status: aiForm.status, site_scope: aiForm.site_scope, site_ids: siteIdsForScope(aiForm.site_scope, aiForm.site_ids) } })
     ElMessage.success(`已批量生成 ${data.count || 0} 条内容`)
     await Promise.all([loadArticles(), loadProducts(), loadDashboard()])
   } finally {
