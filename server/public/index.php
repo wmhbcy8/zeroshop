@@ -3691,7 +3691,7 @@ function ensure_pages_table(PDO $pdo): void
 
 function reserved_page_slugs(): array
 {
-    return ['index', 'contact', 'search', 'order', 'news', 'products', 'category', 'product-category', 'assets', 'api', 'admin', 'admin-vue', 's'];
+    return ['index', 'contact', 'search', 'order', 'cart', 'news', 'products', 'category', 'product-category', 'assets', 'api', 'admin', 'admin-vue', 's'];
 }
 
 function assert_page_slug_available(PDO $pdo, string $slug, ?int $ignoreId = null): void
@@ -4607,6 +4607,7 @@ function site_static_pages(PDO $pdo): array
         ['type' => 'system', 'title' => '联系我们', 'url' => 'contact.html'],
         ['type' => 'system', 'title' => '搜索', 'url' => 'search.html'],
         ['type' => 'system', 'title' => '查订单', 'url' => 'order.html'],
+        ['type' => 'system', 'title' => '购物车', 'url' => 'cart.html'],
     ];
 
     $relationExists = (bool)$pdo->query("SHOW TABLES LIKE 'content_site_relations'")->fetchColumn();

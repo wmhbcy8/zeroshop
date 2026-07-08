@@ -3027,7 +3027,8 @@ function defaultNavItems() {
     { title: '产品中心', url: 'products/index.html' },
     { title: '联系我们', url: 'contact.html' },
     { title: '搜索', url: 'search.html' },
-    { title: '查订单', url: 'order.html' }
+    { title: '查订单', url: 'order.html' },
+    { title: '购物车', url: 'cart.html' }
   ]
 }
 

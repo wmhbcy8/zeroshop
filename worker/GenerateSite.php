@@ -330,6 +330,7 @@ function reset_generated_output(string $publicRoot): void
         'contact.html',
         'search.html',
         'order.html',
+        'cart.html',
         '404.html',
         'sitemap.xml',
         'robots.txt',
@@ -359,6 +360,7 @@ function site_for(array $site, string $rootBase): array
         ['title' => '联系我们', 'url' => 'contact.html'],
         ['title' => '搜索', 'url' => 'search.html'],
         ['title' => '查订单', 'url' => 'order.html'],
+        ['title' => '购物车', 'url' => 'cart.html'],
     ];
     $site['nav'] = array_map(function (array $item) use ($rootBase) {
         $url = $item['url'] ?? '#';
@@ -428,7 +430,7 @@ function site_for(array $site, string $rootBase): array
         'faqs' => [
             ['question' => '静态站还能管理商品吗？', 'answer' => '可以。商品在后台维护，发布时生成商品列表页和详情页；询盘、订单、支付等动态能力通过 API 承接。'],
             ['question' => '客户修改内容后需要手动改代码吗？', 'answer' => '不需要。客户在后台保存内容后，点击生成静态站即可同步到前台页面。'],
-            ['question' => '这种方式适合批量独立站吗？', 'answer' => '适合。每个站点可以独立数据库或独立配置，前台产物是静态文件，便于批量部署和缓存。'],
+            ['question' => '这种方式适合批量独立站吗？', 'answer' => '适合。每个站点可以独立配置，前台产物是静态文件，便于批量部署和缓存。'],
         ],
     ], $site['home_content'] ?? []);
     $modules = $site['home_modules'] ?? [
@@ -545,15 +547,15 @@ function floating_actions_html(array $site, string $rootBase): string
     }
 
     $actions = [];
-    $text = trim((string)($modules['floating_text'] ?? '立即咨询')) ?: '立即咨询';
+    $text = trim((string)($modules['floating_text'] ?? '绔嬪嵆鍜ㄨ')) ?: '绔嬪嵆鍜ㄨ';
     $actions[] = ['label' => $text, 'href' => $rootBase . 'contact.html', 'class' => 'primary'];
     $phone = trim((string)($modules['floating_phone'] ?? ($site['phone'] ?? '')));
     if ($phone !== '') {
-        $actions[] = ['label' => '电话', 'href' => 'tel:' . preg_replace('/\s+/', '', $phone), 'class' => 'phone'];
+        $actions[] = ['label' => '鐢佃瘽', 'href' => 'tel:' . preg_replace('/\s+/', '', $phone), 'class' => 'phone'];
     }
     $email = trim((string)($modules['floating_email'] ?? ($site['email'] ?? '')));
     if ($email !== '') {
-        $actions[] = ['label' => '邮箱', 'href' => 'mailto:' . $email, 'class' => 'email'];
+        $actions[] = ['label' => '閭', 'href' => 'mailto:' . $email, 'class' => 'email'];
     }
     $whatsapp = trim((string)($modules['floating_whatsapp'] ?? ''));
     if ($whatsapp !== '') {
@@ -704,9 +706,9 @@ function home_modules_html(array $site, array $articles, array $products, string
             $html .= '<p>' . e($sections['about_body']) . '</p>';
             $html .= '</div>';
             $html .= '<div class="about-metrics">';
-            $html .= '<div><strong>' . count($productItems) . '</strong><span>产品展示</span></div>';
-            $html .= '<div><strong>' . count($articleItems) . '</strong><span>内容页面</span></div>';
-            $html .= '<div><strong>HTML</strong><span>静态发布</span></div>';
+            $html .= '<div><strong>' . count($productItems) . '</strong><span>浜у搧灞曠ず</span></div>';
+            $html .= '<div><strong>' . count($articleItems) . '</strong><span>鍐呭椤甸潰</span></div>';
+            $html .= '<div><strong>HTML</strong><span>闈欐€佸彂甯?/span></div>';
             $html .= '</div>';
             $html .= '</section>';
         }
@@ -747,7 +749,7 @@ function home_modules_html(array $site, array $articles, array $products, string
                 $html .= '<img src="' . e($product['cover'] ?? '') . '" alt="' . e($product['title'] ?? '') . '">';
                 $html .= '<h3>' . e($product['title'] ?? '') . '</h3>';
                 $html .= '<p>' . e($product['summary'] ?? '') . '</p>';
-                $html .= '<span class="price">￥' . e($product['price'] ?? '') . '</span>';
+                $html .= '<span class="price">¥' . e($product['price'] ?? '') . '</span>';
                 $html .= '</a>';
             }
             $html .= '</div></section>';
@@ -892,6 +894,14 @@ write_file($publicRoot . DIRECTORY_SEPARATOR . 'order.html', $engine->renderFile
     ],
 ]));
 
+write_file($publicRoot . DIRECTORY_SEPARATOR . 'cart.html', $engine->renderFile('pages/cart.html', base_context($site, $categories, $productCategories, $articles, $products) + [
+    'seo' => [
+        'title' => '购物车 - ' . ($site['name'] ?? ''),
+        'description' => '核对' . ($site['name'] ?? '') . '商城商品并提交多商品订单。',
+        'keywords' => $site['keywords'] ?? '',
+    ],
+]));
+
 write_file($publicRoot . DIRECTORY_SEPARATOR . '404.html', $engine->renderFile('pages/404.html', base_context($site, $categories, $productCategories, $articles, $products) + [
     'seo' => [
         'title' => '页面不存在 - ' . ($site['name'] ?? ''),
@@ -904,7 +914,7 @@ write_file($publicRoot . DIRECTORY_SEPARATOR . 'news' . DIRECTORY_SEPARATOR . 'i
     'articles' => with_urls($articles, ''),
     'seo' => [
         'title' => '行业资讯 - ' . ($site['name'] ?? ''),
-        'description' => '低空经济、无人机和数字化转型行业资讯。',
+        'description' => '行业资讯、产品知识和解决方案内容。',
         'keywords' => $site['keywords'] ?? '',
     ],
 ]));
@@ -945,17 +955,17 @@ foreach ($articles as $article) {
     $relatedArticles = array_map(fn($item) => [
         'title' => $item['title'] ?? '',
         'url' => $item['slug'] . '.html',
-        'meta' => $item['published_at'] ?? '文章',
+        'meta' => $item['published_at'] ?? '鏂囩珷',
     ], $relatedArticles);
     write_file($publicRoot . DIRECTORY_SEPARATOR . 'news' . DIRECTORY_SEPARATOR . $article['slug'] . '.html', $engine->renderFile('pages/article.html', array_replace(base_context($site, $categories, $productCategories, $articles, $products, '../', '../'), [
         'article' => $article,
         'article_tags_html' => article_tags_html($article, '../'),
         'breadcrumb_html' => breadcrumb_html($site, [
-            ['title' => '首页', 'url' => '../index.html'],
-            ['title' => '行业资讯', 'url' => 'index.html'],
+            ['title' => '棣栭〉', 'url' => '../index.html'],
+            ['title' => '琛屼笟璧勮', 'url' => 'index.html'],
             ['title' => $article['title'] ?? '', 'url' => ''],
         ]),
-        'related_html' => related_html($site, $relatedArticles, '相关阅读'),
+        'related_html' => related_html($site, $relatedArticles, '鐩稿叧闃呰'),
         'seo' => [
             'title' => $article['seo_title'] ?? $article['title'],
             'description' => $article['seo_description'] ?? $article['summary'],
@@ -968,7 +978,7 @@ write_file($publicRoot . DIRECTORY_SEPARATOR . 'products' . DIRECTORY_SEPARATOR 
     'products' => with_urls($products, ''),
     'seo' => [
         'title' => '产品中心 - ' . ($site['name'] ?? ''),
-        'description' => '无人机产品和低空经济数字化系统。',
+        'description' => '产品中心、商品展示和采购下单入口。',
         'keywords' => $site['keywords'] ?? '',
     ],
 ]));
@@ -993,7 +1003,7 @@ foreach ($products as $product) {
     $relatedProducts = array_map(fn($item) => [
         'title' => $item['title'] ?? '',
         'url' => $item['slug'] . '.html',
-        'meta' => isset($item['price']) ? ('￥' . $item['price']) : '产品',
+        'meta' => isset($item['price']) ? ('¥' . $item['price']) : '产品',
     ], $relatedProducts);
     write_file($publicRoot . DIRECTORY_SEPARATOR . 'products' . DIRECTORY_SEPARATOR . $product['slug'] . '.html', $engine->renderFile('pages/product.html', array_replace(base_context($site, $categories, $productCategories, $articles, $products, '../', '../'), [
         'product' => $product,
@@ -1032,6 +1042,7 @@ $sitemap[] = '  <url><loc>' . $origin . '/index.html</loc></url>';
 $sitemap[] = '  <url><loc>' . $origin . '/contact.html</loc></url>';
 $sitemap[] = '  <url><loc>' . $origin . '/search.html</loc></url>';
 $sitemap[] = '  <url><loc>' . $origin . '/order.html</loc></url>';
+$sitemap[] = '  <url><loc>' . $origin . '/cart.html</loc></url>';
 foreach ($categories as $category) {
     if (category_items($articles, (int)$category['id'])) {
         $sitemap[] = '  <url><loc>' . $origin . '/category/' . $category['slug'] . '/index.html</loc></url>';

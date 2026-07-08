@@ -1,0 +1,30 @@
+{{ include "partials/header.html" }}
+
+<main class="page">
+  <section class="page-title order-title">
+    <span class="eyebrow">Cart</span>
+    <h1>购物车</h1>
+    <p>核对商品和数量后提交订单，订单会进入后台统一处理。</p>
+  </section>
+
+  <section class="cart-panel" data-cart-page data-payment-account="{{ site.payment.account }}" data-payment-instructions="{{ site.payment.instructions }}">
+    <div class="cart-list" data-cart-list></div>
+    <form class="cart-order-form" data-api="/api/orders">
+      <input type="hidden" name="currency" value="{{ site.payment.currency }}">
+      <div class="form-grid compact">
+        <input type="text" name="customer_name" placeholder="姓名" required>
+        <input type="tel" name="phone" placeholder="电话" required>
+      </div>
+      <div class="form-grid compact">
+        <input type="email" name="email" placeholder="邮箱">
+        <input type="text" name="address" placeholder="收货地址或项目地址">
+      </div>
+      <textarea name="remark" placeholder="补充采购需求、发票、配送或项目说明"></textarea>
+      <button type="submit">提交购物车订单</button>
+      <p class="form-status" data-cart-status></p>
+      <div class="order-receipt" data-order-receipt hidden></div>
+    </form>
+  </section>
+</main>
+
+{{ include "partials/footer.html" }}

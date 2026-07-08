@@ -1,5 +1,6 @@
 const latestOrderStorageKey = 'huajian_latest_order';
 const visitStorageKey = 'huajian_visit_id';
+const cartStorageKey = 'huajian_cart_items';
 
 function getVisitId() {
   try {
@@ -38,6 +39,12 @@ trackSiteVisit();
 
 document.addEventListener('submit', function (event) {
   const form = event.target;
+  if (form.matches('.cart-order-form')) {
+    event.preventDefault();
+    submitCartOrderForm(form);
+    return;
+  }
+
   if (form.matches('.order-form')) {
     event.preventDefault();
     submitOrderForm(form);
@@ -107,6 +114,25 @@ document.addEventListener('submit', function (event) {
     });
 });
 
+document.addEventListener('click', function (event) {
+  const addButton = event.target.closest?.('.add-cart-button');
+  if (addButton) {
+    addCartItemFromButton(addButton);
+    return;
+  }
+
+  const quantityButton = event.target.closest?.('[data-cart-quantity]');
+  if (quantityButton) {
+    updateCartQuantity(quantityButton.getAttribute('data-product-id'), Number(quantityButton.getAttribute('data-cart-quantity') || 1));
+    return;
+  }
+
+  const removeButton = event.target.closest?.('[data-cart-remove]');
+  if (removeButton) {
+    removeCartItem(removeButton.getAttribute('data-cart-remove'));
+  }
+});
+
 function getOrderLookupHref(orderNo, phone) {
   const params = new URLSearchParams();
   if (orderNo) params.set('order_no', orderNo);
@@ -131,6 +157,170 @@ function readLatestOrder() {
   } catch {
     return {};
   }
+}
+
+function readCartItems() {
+  try {
+    const items = JSON.parse(localStorage.getItem(cartStorageKey) || '[]');
+    return Array.isArray(items) ? items : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCartItems(items) {
+  try {
+    localStorage.setItem(cartStorageKey, JSON.stringify(items));
+  } catch {}
+}
+
+function addCartItemFromButton(button) {
+  const productId = String(button.getAttribute('data-product-id') || '');
+  if (!productId) return;
+  const items = readCartItems();
+  const current = items.find(function (item) { return String(item.product_id) === productId; });
+  if (current) {
+    current.quantity = Math.max(1, Number(current.quantity || 1)) + 1;
+  } else {
+    items.push({
+      product_id: Number(productId),
+      title: button.getAttribute('data-title') || '',
+      sku: button.getAttribute('data-sku') || '',
+      price: Math.max(0, Number(button.getAttribute('data-price') || 0)),
+      cover: button.getAttribute('data-cover') || '',
+      quantity: 1
+    });
+  }
+  saveCartItems(items);
+  button.textContent = '已加入购物车';
+  setTimeout(function () { button.textContent = '加入购物车'; }, 1600);
+}
+
+function cartTotal(items) {
+  return items.reduce(function (sum, item) {
+    return sum + Math.max(0, Number(item.price || 0)) * Math.max(1, Number(item.quantity || 1));
+  }, 0);
+}
+
+function renderCartPage() {
+  const page = document.querySelector('[data-cart-page]');
+  if (!page) return;
+  const list = page.querySelector('[data-cart-list]');
+  const form = page.querySelector('.cart-order-form');
+  const items = readCartItems();
+  if (!items.length) {
+    list.innerHTML = '<div class="cart-empty"><strong>购物车为空</strong><p>请先到产品中心选择商品。</p><a class="btn primary" href="products/index.html">去选商品</a></div>';
+    if (form) form.hidden = true;
+    return;
+  }
+  if (form) form.hidden = false;
+  list.innerHTML = [
+    '<div class="cart-items">',
+    items.map(function (item) {
+      const quantity = Math.max(1, Number(item.quantity || 1));
+      const subtotal = Math.max(0, Number(item.price || 0)) * quantity;
+      return [
+        '<article class="cart-item">',
+        item.cover ? '<img src="' + escapeHtml(item.cover) + '" alt="' + escapeHtml(item.title) + '">' : '<div class="cart-thumb"></div>',
+        '<div><strong>' + escapeHtml(item.title || '未命名商品') + '</strong><small>' + escapeHtml(item.sku || '-') + '</small></div>',
+        '<div class="cart-quantity">',
+        '<button type="button" data-product-id="' + escapeHtml(item.product_id) + '" data-cart-quantity="-1">-</button>',
+        '<span>' + quantity + '</span>',
+        '<button type="button" data-product-id="' + escapeHtml(item.product_id) + '" data-cart-quantity="1">+</button>',
+        '</div>',
+        '<div class="cart-subtotal">CNY ' + subtotal.toFixed(2) + '</div>',
+        '<button type="button" class="cart-remove" data-cart-remove="' + escapeHtml(item.product_id) + '">移除</button>',
+        '</article>'
+      ].join('');
+    }).join(''),
+    '</div>',
+    '<div class="cart-summary"><span>合计</span><strong>CNY ' + cartTotal(items).toFixed(2) + '</strong></div>'
+  ].join('');
+}
+
+function updateCartQuantity(productId, delta) {
+  const id = String(productId || '');
+  const items = readCartItems().map(function (item) {
+    if (String(item.product_id) === id) {
+      item.quantity = Math.max(1, Number(item.quantity || 1) + delta);
+    }
+    return item;
+  });
+  saveCartItems(items);
+  renderCartPage();
+}
+
+function removeCartItem(productId) {
+  const id = String(productId || '');
+  saveCartItems(readCartItems().filter(function (item) { return String(item.product_id) !== id; }));
+  renderCartPage();
+}
+
+function submitCartOrderForm(form) {
+  const api = form.getAttribute('data-api');
+  const status = form.querySelector('[data-cart-status]');
+  const items = readCartItems();
+  if (!items.length) {
+    if (status) status.textContent = '购物车为空，请先选择商品。';
+    return;
+  }
+  if (!api || location.protocol === 'file:') {
+    alert('演示站已收到购物车订单。部署后会提交到后台订单列表。');
+    return;
+  }
+
+  const formData = new FormData(form);
+  const payload = {
+    site_id: getCurrentSiteId(),
+    customer_name: formData.get('customer_name') || '',
+    phone: formData.get('phone') || '',
+    email: formData.get('email') || '',
+    address: formData.get('address') || '',
+    currency: formData.get('currency') || 'CNY',
+    payment_method: 'manual',
+    source_url: location.pathname,
+    remark: formData.get('remark') || '',
+    items: items.map(function (item) {
+      return {
+        product_id: Number(item.product_id || 0),
+        title: item.title || '',
+        sku: item.sku || '',
+        quantity: Math.max(1, Number(item.quantity || 1)),
+        price: Math.max(0, Number(item.price || 0))
+      };
+    })
+  };
+
+  if (status) status.textContent = '正在提交购物车订单...';
+  form.querySelectorAll('button, input, textarea').forEach(function (item) {
+    item.disabled = true;
+  });
+
+  fetch(api, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(function (response) { return response.json(); })
+    .then(function (result) {
+      if (!result.success) throw new Error(result.message || '购物车订单提交失败');
+      const order = result.data || {};
+      const orderNo = order.order_no || order.id || '';
+      saveLatestOrder(orderNo, payload.phone);
+      saveCartItems([]);
+      form.reset();
+      renderCartPage();
+      renderOrderReceipt(form, order, payload.phone);
+      if (status) status.textContent = '购物车订单提交成功，订单号：' + (orderNo || '-');
+    })
+    .catch(function (error) {
+      if (status) status.textContent = error.message || '购物车订单提交失败，请稍后再试。';
+    })
+    .finally(function () {
+      form.querySelectorAll('button, input, textarea').forEach(function (item) {
+        item.disabled = false;
+      });
+    });
 }
 
 function renderOrderReceiptLegacy(form, order, phone) {
@@ -699,4 +889,5 @@ function initStaticSearch() {
 document.addEventListener('DOMContentLoaded', function () {
   initStaticSearch();
   initOrderLookup();
+  renderCartPage();
 });
