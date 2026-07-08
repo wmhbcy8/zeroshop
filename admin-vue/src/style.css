@@ -71,9 +71,18 @@ body {
 .topbar p { margin: 5px 0 0; color: var(--hj-muted); }
 .work-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
   margin-top: 10px;
+}
+.site-switcher {
+  width: 240px;
+}
+.option-domain {
+  float: right;
+  margin-left: 18px;
+  color: var(--hj-muted);
 }
 .top-actions { display: flex; gap: 10px; }
 .main { padding: 22px; }
@@ -129,6 +138,50 @@ body {
 .table-pager {
   justify-content: flex-end;
   margin-top: 14px;
+}
+.site-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+.site-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--hj-line);
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+}
+.site-card.active,
+.site-card:hover {
+  border-color: var(--hj-primary);
+  box-shadow: 0 10px 28px rgba(22, 119, 255, .12);
+}
+.site-card strong,
+.site-card small {
+  display: block;
+}
+.site-card small {
+  margin-top: 5px;
+  color: var(--hj-muted);
+}
+.site-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.site-stats span,
+.capability-list span {
+  padding: 8px 10px;
+  border: 1px solid var(--hj-line);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #334155;
+}
+.capability-list {
+  display: grid;
+  gap: 10px;
 }
 .el-drawer__body {
   padding-top: 10px;

@@ -121,6 +121,21 @@ function site_pdo(): PDO
     ]);
 }
 
+function main_pdo(): PDO
+{
+    $host = env_value('HJ_DB_HOST');
+    $port = env_value('HJ_DB_PORT', '3306');
+    $database = env_value('HJ_DB_MAIN', 'huajian_main');
+    $user = env_value('HJ_DB_USERNAME');
+    $password = env_value('HJ_DB_PASSWORD', '');
+    $dsn = "mysql:host={$host};port={$port};dbname={$database};charset=utf8mb4";
+
+    return new PDO($dsn, $user, $password, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    ]);
+}
+
 function body_json(): array
 {
     $raw = file_get_contents('php://input');
@@ -568,6 +583,103 @@ function dashboard_metrics(PDO $pdo): array
         'pending_fulfillment_orders' => (int)($orderStats['pending_fulfillment_orders'] ?? 0),
         'currency' => 'CNY',
     ];
+}
+
+function ensure_center_tables(PDO $main): void
+{
+    $main->exec("CREATE TABLE IF NOT EXISTS customers (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(100) NOT NULL,
+        phone VARCHAR(50),
+        email VARCHAR(120),
+        company VARCHAR(150),
+        status VARCHAR(30) NOT NULL DEFAULT 'active',
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $main->exec("CREATE TABLE IF NOT EXISTS sites (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        customer_id BIGINT UNSIGNED NOT NULL,
+        name VARCHAR(120) NOT NULL,
+        site_key VARCHAR(80) NOT NULL UNIQUE,
+        domain VARCHAR(180),
+        subdomain VARCHAR(180),
+        language VARCHAR(20) DEFAULT 'zh-CN',
+        template_key VARCHAR(100),
+        database_name VARCHAR(120),
+        public_path VARCHAR(255),
+        status VARCHAR(30) NOT NULL DEFAULT 'active',
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_customer_id (customer_id),
+        INDEX idx_domain (domain),
+        INDEX idx_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $now = now();
+    $main->exec("INSERT INTO customers (id, name, phone, email, company, status, created_at, updated_at)
+        VALUES (1, '默认客户', '', '', '', 'active', '{$now}', '{$now}')
+        ON DUPLICATE KEY UPDATE updated_at=VALUES(updated_at)");
+}
+
+function site_table_count(PDO $pdo, string $table, string $where = ''): int
+{
+    try {
+        return (int)$pdo->query("SELECT COUNT(*) FROM {$table}{$where}")->fetchColumn();
+    } catch (Throwable $error) {
+        return 0;
+    }
+}
+
+function center_site_items(PDO $main, PDO $sitePdo): array
+{
+    ensure_center_tables($main);
+    $settings = site_settings($sitePdo);
+    $now = now();
+    $stmt = $main->prepare("INSERT INTO sites (id, customer_id, name, site_key, domain, subdomain, language, template_key, database_name, public_path, status, created_at, updated_at)
+        VALUES (10001, 1, :name, 'site_10001', :domain, 'site10001.huajian.local', :language, :template_key, :database_name, 'sites/site_10001/public', 'active', :created_at, :updated_at)
+        ON DUPLICATE KEY UPDATE name=VALUES(name), domain=VALUES(domain), language=VALUES(language), template_key=VALUES(template_key), updated_at=VALUES(updated_at)");
+    $stmt->execute([
+        'name' => (string)($settings['name'] ?? '默认站点'),
+        'domain' => (string)($settings['domain'] ?? ''),
+        'language' => (string)($settings['language'] ?? 'zh-CN'),
+        'template_key' => (string)($settings['template_key'] ?? 'business-clean'),
+        'database_name' => env_value('HJ_DB_SITE', 'huajian_site_10001'),
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+
+    $items = $main->query('SELECT * FROM sites ORDER BY id ASC')->fetchAll();
+    $currentStats = [
+        'articles' => site_table_count($sitePdo, 'articles'),
+        'products' => site_table_count($sitePdo, 'products'),
+        'orders' => site_table_count($sitePdo, 'orders'),
+        'pending_orders' => site_table_count($sitePdo, 'orders', " WHERE payment_status = 'pending' OR fulfillment_status IN ('new', 'confirmed')"),
+        'forms' => site_table_count($sitePdo, 'form_submissions'),
+        'pending_forms' => site_table_count($sitePdo, 'form_submissions', " WHERE status = 'pending'"),
+    ];
+
+    return array_map(function (array $item) use ($currentStats) {
+        $stats = (int)$item['id'] === 10001 ? $currentStats : [
+            'articles' => 0,
+            'products' => 0,
+            'orders' => 0,
+            'pending_orders' => 0,
+            'forms' => 0,
+            'pending_forms' => 0,
+        ];
+        return $item + ['stats' => $stats];
+    }, $items);
+}
+
+function center_overview(array $sites): array
+{
+    $totals = ['sites' => count($sites), 'articles' => 0, 'products' => 0, 'orders' => 0, 'pending_orders' => 0, 'forms' => 0, 'pending_forms' => 0];
+    foreach ($sites as $site) {
+        foreach (['articles', 'products', 'orders', 'pending_orders', 'forms', 'pending_forms'] as $key) {
+            $totals[$key] += (int)($site['stats'][$key] ?? 0);
+        }
+    }
+    return $totals;
 }
 
 function public_order_view(array $order): array
@@ -1516,6 +1628,56 @@ try {
 
     if ($method === 'GET' && $path === '/dashboard/metrics') {
         ok(dashboard_metrics($pdo));
+    }
+
+    if ($method === 'GET' && $path === '/sites') {
+        $main = main_pdo();
+        $items = center_site_items($main, $pdo);
+        ok([
+            'items' => $items,
+            'overview' => center_overview($items),
+            'current_site_id' => 10001,
+        ]);
+    }
+
+    if ($method === 'POST' && $path === '/sites') {
+        $data = body_json();
+        require_fields($data, ['name']);
+        $main = main_pdo();
+        ensure_center_tables($main);
+        $name = trim((string)$data['name']);
+        $domain = trim((string)($data['domain'] ?? ''));
+        $language = trim((string)($data['language'] ?? 'zh-CN')) ?: 'zh-CN';
+        $templateKey = trim((string)($data['template_key'] ?? 'business-clean')) ?: 'business-clean';
+        $now = now();
+        $stmt = $main->prepare("INSERT INTO sites (customer_id, name, site_key, domain, subdomain, language, template_key, database_name, public_path, status, created_at, updated_at)
+            VALUES (1, :name, '', :domain, '', :language, :template_key, :database_name, '', 'active', :created_at, :updated_at)");
+        $stmt->execute([
+            'name' => $name,
+            'domain' => $domain,
+            'language' => $language,
+            'template_key' => $templateKey,
+            'database_name' => env_value('HJ_DB_SITE', 'huajian_site_10001'),
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        $id = (int)$main->lastInsertId();
+        $siteKey = 'site_' . $id;
+        $publicPath = 'sites/' . $siteKey . '/public';
+        ensure_dir(dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'sites' . DIRECTORY_SEPARATOR . $siteKey . DIRECTORY_SEPARATOR . 'public');
+        $update = $main->prepare('UPDATE sites SET site_key = :site_key, subdomain = :subdomain, public_path = :public_path WHERE id = :id');
+        $update->execute([
+            'id' => $id,
+            'site_key' => $siteKey,
+            'subdomain' => $siteKey . '.huajian.local',
+            'public_path' => $publicPath,
+        ]);
+        $items = center_site_items($main, $pdo);
+        ok([
+            'site' => fetch_one($main, 'sites', $id),
+            'items' => $items,
+            'overview' => center_overview($items),
+        ], '站点已创建');
     }
 
     if ($method === 'GET' && $path === '/site/settings') {

@@ -22,7 +22,7 @@
         <span>简</span>
         <div>
           <strong>化简</strong>
-          <small>ZeroShop Admin</small>
+          <small>客户中台</small>
         </div>
       </div>
       <el-menu :default-active="view" class="menu" @select="setView">
@@ -41,6 +41,12 @@
           <p>{{ currentNav?.hint }}</p>
           <div class="work-tabs">
             <el-tag effect="plain">{{ currentNav?.label || '工作台' }}</el-tag>
+            <el-select v-model="currentSiteId" class="site-switcher" placeholder="选择站点" @change="switchSite">
+              <el-option v-for="item in sites" :key="item.id" :label="item.name" :value="item.id">
+                <span>{{ item.name }}</span>
+                <small class="option-domain">{{ item.domain || item.subdomain || item.site_key }}</small>
+              </el-option>
+            </el-select>
             <el-button link type="primary" @click="refreshCurrentView">刷新当前页</el-button>
             <el-button link @click="openLegacyAdmin">旧版后台</el-button>
           </div>
@@ -55,25 +61,94 @@
       <el-main class="main">
         <section v-if="view === 'dashboard'">
           <div class="metric-grid">
+            <MetricCard title="站点总数" :value="centerOverview.sites || sites.length" note="客户名下前台站点" icon="Grid" />
             <MetricCard title="今日访客" :value="metrics.today_visitors || 0" :note="`浏览 ${metrics.today_views || 0} 次`" icon="User" />
             <MetricCard title="访问深度" :value="metrics.visit_depth || 0" note="人均浏览页数" icon="TrendCharts" />
             <MetricCard title="今日支付金额" :value="metrics.today_paid_amount || '0.00'" :suffix="`/ ${metrics.currency || 'CNY'}`" note="已支付订单金额" icon="Money" />
-            <MetricCard title="待处理订单" :value="metrics.pending_orders || 0" :note="`待付款 ${metrics.pending_payment_orders || 0} / 待发货 ${metrics.pending_fulfillment_orders || 0}`" icon="Tickets" />
-            <MetricCard title="文章" :value="totals.articles" note="SEO 内容库" icon="Document" />
-            <MetricCard title="商品" :value="totals.products" note="独立站商品" icon="Goods" />
-            <MetricCard title="订单" :value="totals.orders" note="商城订单" icon="ShoppingCart" />
-            <MetricCard title="留言" :value="totals.forms" note="询盘线索" icon="ChatLineRound" />
+            <MetricCard title="待处理订单" :value="centerOverview.pending_orders || metrics.pending_orders || 0" :note="`全部订单 ${centerOverview.orders || totals.orders || 0}`" icon="Tickets" />
+            <MetricCard title="待处理询盘" :value="centerOverview.pending_forms || 0" :note="`全部留言 ${centerOverview.forms || totals.forms || 0}`" icon="ChatLineRound" />
+            <MetricCard title="内容库文章" :value="centerOverview.articles || totals.articles" note="可分发到多个站点" icon="Document" />
+            <MetricCard title="商品库商品" :value="centerOverview.products || totals.products" note="可发布到多个前台" icon="Goods" />
           </div>
           <el-card class="panel" shadow="never">
-            <template #header><strong>站点信息</strong></template>
-            <el-descriptions :column="2" border>
-              <el-descriptions-item label="站点名称">{{ site.name || '-' }}</el-descriptions-item>
-              <el-descriptions-item label="域名">{{ site.domain || '-' }}</el-descriptions-item>
-              <el-descriptions-item label="电话">{{ site.phone || '-' }}</el-descriptions-item>
-              <el-descriptions-item label="邮箱">{{ site.email || '-' }}</el-descriptions-item>
-              <el-descriptions-item label="地址" :span="2">{{ site.address || '-' }}</el-descriptions-item>
-            </el-descriptions>
+            <template #header><strong>全局任务池</strong></template>
+            <el-table :data="sites" row-key="id">
+              <el-table-column label="站点" min-width="220">
+                <template #default="{ row }">
+                  <strong>{{ row.name }}</strong><br />
+                  <small>{{ row.domain || row.subdomain || row.site_key }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column label="文章" width="90"><template #default="{ row }">{{ row.stats?.articles || 0 }}</template></el-table-column>
+              <el-table-column label="商品" width="90"><template #default="{ row }">{{ row.stats?.products || 0 }}</template></el-table-column>
+              <el-table-column label="订单" width="90"><template #default="{ row }">{{ row.stats?.orders || 0 }}</template></el-table-column>
+              <el-table-column label="待处理" width="110"><template #default="{ row }">{{ row.stats?.pending_orders || 0 }}</template></el-table-column>
+              <el-table-column label="询盘" width="90"><template #default="{ row }">{{ row.stats?.forms || 0 }}</template></el-table-column>
+              <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status }}</el-tag></template></el-table-column>
+              <el-table-column label="操作" width="120"><template #default="{ row }"><el-button link type="primary" @click="openSite(row)">进入站点</el-button></template></el-table-column>
+            </el-table>
           </el-card>
+        </section>
+
+        <section v-if="view === 'sites'">
+          <el-row :gutter="16">
+            <el-col :span="16">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>站点工作台</strong>
+                    <el-button type="primary" @click="siteDrawerVisible = true">新建站点</el-button>
+                  </div>
+                </template>
+                <div class="site-grid">
+                  <article v-for="item in sites" :key="item.id" class="site-card" :class="{ active: item.id === currentSiteId }" @click="openSite(item)">
+                    <div>
+                      <strong>{{ item.name }}</strong>
+                      <small>{{ item.domain || item.subdomain || item.site_key }}</small>
+                    </div>
+                    <el-tag size="small" :type="item.status === 'active' ? 'success' : 'info'">{{ item.status }}</el-tag>
+                    <div class="site-stats">
+                      <span>文章 {{ item.stats?.articles || 0 }}</span>
+                      <span>商品 {{ item.stats?.products || 0 }}</span>
+                      <span>订单 {{ item.stats?.orders || 0 }}</span>
+                      <span>待处理 {{ item.stats?.pending_orders || 0 }}</span>
+                    </div>
+                  </article>
+                </div>
+              </el-card>
+            </el-col>
+            <el-col :span="8">
+              <el-card class="panel" shadow="never">
+                <template #header><strong>中台能力规划</strong></template>
+                <div class="capability-list">
+                  <span>统一订单中心</span>
+                  <span>统一询盘处理</span>
+                  <span>内容库多站点分发</span>
+                  <span>商品库多站点上架</span>
+                  <span>全局支付通道</span>
+                  <span>批量生成与部署</span>
+                </div>
+              </el-card>
+            </el-col>
+          </el-row>
+          <el-drawer v-model="siteDrawerVisible" size="480px" title="新建站点">
+            <el-form :model="siteForm" label-width="92px">
+              <el-form-item label="站点名称"><el-input v-model="siteForm.name" placeholder="例如：农业无人机英文站" /></el-form-item>
+              <el-form-item label="绑定域名"><el-input v-model="siteForm.domain" placeholder="例如：www.example.com" /></el-form-item>
+              <el-form-item label="站点语言">
+                <el-select v-model="siteForm.language">
+                  <el-option label="中文" value="zh-CN" />
+                  <el-option label="英文" value="en-US" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="模板">
+                <el-select v-model="siteForm.template_key">
+                  <el-option v-for="item in templates" :key="item.key" :label="item.name" :value="item.key" />
+                </el-select>
+              </el-form-item>
+              <el-button type="primary" :loading="siteCreating" @click="createSite">创建站点</el-button>
+            </el-form>
+          </el-drawer>
         </section>
 
         <section v-if="view === 'settings'">
@@ -536,12 +611,16 @@ const services = ref<any[]>([])
 const media = ref<any[]>([])
 const forms = ref<any[]>([])
 const versions = ref<any[]>([])
+const sites = ref<any[]>([])
+const centerOverview = ref<any>({})
+const currentSiteId = ref<number | string>(10001)
 const templates = ref<any[]>([])
 const moduleRegistry = ref<any>({ scopes: [], modules: [] })
 const servicePending = ref(0)
 const selectedServiceIds = ref<string[]>([])
 const orderDrawerVisible = ref(false)
 const publishDrawerVisible = ref(false)
+const siteDrawerVisible = ref(false)
 const publishResult = ref<any>(null)
 const deployTesting = ref(false)
 const packaging = ref(false)
@@ -564,6 +643,7 @@ const publishResultSubtitle = computed(() => {
 })
 const articleForm = reactive<any>({})
 const productForm = reactive<any>({})
+const siteForm = reactive({ name: '', domain: '', language: 'zh-CN', template_key: 'business-clean' })
 const aiForm = reactive({ type: 'article', prompt: '围绕自主品牌商品、行业解决方案和独立站 SEO 关键词生成内容', count: 5, status: 'draft' })
 const pageBuilder = reactive({ prompt: '围绕自主品牌商品、行业解决方案、SEO 内容沉淀和询盘转化，生成一个企业官网 + 博客知识库 + 独立站商城首页方案' })
 const articlePager = reactive({ page: 1, page_size: 10, total: 0 })
@@ -580,10 +660,12 @@ const aiCoverLoading = ref('')
 const pagePlanLoading = ref(false)
 const pagePlanSaving = ref(false)
 const pagePlanPublishing = ref(false)
+const siteCreating = ref(false)
 
 const navItems = [
   { key: 'dashboard', label: '概览', hint: '查看运营指标、内容数量和站点状态。', icon: 'Odometer' },
-  { key: 'settings', label: '站点', hint: '维护企业信息、SEO、AI、支付和发布配置。', icon: 'Setting' },
+  { key: 'sites', label: '站点', hint: '管理客户名下所有前台站点。', icon: 'Grid' },
+  { key: 'settings', label: '设置', hint: '维护当前站点信息、SEO、AI、支付和发布配置。', icon: 'Setting' },
   { key: 'templates', label: '模板', hint: '选择主题模板，启用首页与全站模块。', icon: 'Grid' },
   { key: 'ai', label: 'AI', hint: '批量生成文章、商品文案和封面素材。', icon: 'MagicStick' },
   { key: 'articles', label: '文章', hint: '管理 SEO 文章和知识库内容。', icon: 'Document' },
@@ -636,6 +718,7 @@ async function logout() {
 function setView(key: string) {
   view.value = key
   if (key === 'dashboard') loadDashboard()
+  if (key === 'sites') loadSites()
   if (key === 'templates') Promise.all([loadTemplates(), loadModuleRegistry()])
   if (key === 'articles') loadArticles()
   if (key === 'products') loadProducts()
@@ -649,6 +732,7 @@ function setView(key: string) {
 function refreshCurrentView() {
   const loaders: Record<string, () => Promise<void>> = {
     dashboard: loadDashboard,
+    sites: loadSites,
     settings: loadSettings,
     templates: async () => { await Promise.all([loadTemplates(), loadModuleRegistry(), loadSettings()]) },
     ai: async () => {},
@@ -668,11 +752,12 @@ function openLegacyAdmin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadDashboard(), loadSettings(), loadTemplates(), loadModuleRegistry(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadMedia(), loadForms(), loadVersions()])
+  await Promise.all([loadSites(), loadDashboard(), loadSettings(), loadTemplates(), loadModuleRegistry(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadMedia(), loadForms(), loadVersions()])
 }
 
 async function loadDashboard() {
-  const [articleData, productData, orderData, mediaData, formData, metricData] = await Promise.all([
+  const [siteData, articleData, productData, orderData, mediaData, formData, metricData] = await Promise.all([
+    request('/api/sites'),
     request('/api/articles?page_size=1'),
     request('/api/products?page_size=1'),
     request('/api/orders?page_size=1'),
@@ -686,6 +771,43 @@ async function loadDashboard() {
   totals.media = mediaData.pagination?.total || 0
   totals.forms = formData.pagination?.total || 0
   metrics.value = metricData
+  sites.value = siteData.items || []
+  centerOverview.value = siteData.overview || {}
+  if (!currentSiteId.value) currentSiteId.value = siteData.current_site_id || sites.value[0]?.id || 10001
+}
+
+async function loadSites() {
+  const data = await request('/api/sites')
+  sites.value = data.items || []
+  centerOverview.value = data.overview || {}
+  if (!currentSiteId.value) currentSiteId.value = data.current_site_id || sites.value[0]?.id || 10001
+}
+
+function switchSite() {
+  ElMessage.success('已切换当前站点')
+  loadSettings()
+}
+
+function openSite(item: any) {
+  currentSiteId.value = item.id
+  view.value = 'settings'
+  ElMessage.success(`已进入：${item.name}`)
+  loadSettings()
+}
+
+async function createSite() {
+  siteCreating.value = true
+  try {
+    const data = await request('/api/sites', { method: 'POST', data: siteForm })
+    sites.value = data.items || sites.value
+    centerOverview.value = data.overview || centerOverview.value
+    if (data.site?.id) currentSiteId.value = data.site.id
+    Object.assign(siteForm, { name: '', domain: '', language: 'zh-CN', template_key: 'business-clean' })
+    siteDrawerVisible.value = false
+    ElMessage.success('站点已创建')
+  } finally {
+    siteCreating.value = false
+  }
 }
 
 async function loadSettings() {
