@@ -332,6 +332,7 @@ function reset_generated_output(string $publicRoot): void
         'order.html',
         'sitemap.xml',
         'robots.txt',
+        'rss.xml',
         'search.json',
     ];
     foreach ($generatedPaths as $relativePath) {
@@ -465,6 +466,65 @@ function with_urls(array $items, string $prefix): array
 function e(string|int|float|null $value): string
 {
     return htmlspecialchars((string)($value ?? ''), ENT_QUOTES, 'UTF-8');
+}
+
+function site_origin(array $site): string
+{
+    $domain = trim((string)($site['domain'] ?? ''));
+    if ($domain === '') {
+        $domain = 'demo.local';
+    }
+    if (preg_match('#^https?://#i', $domain)) {
+        return rtrim($domain, '/');
+    }
+    return 'https://' . trim($domain, '/');
+}
+
+function absolute_site_url(array $site, string $path = ''): string
+{
+    return site_origin($site) . '/' . ltrim($path, '/');
+}
+
+function rss_date(?string $value): string
+{
+    try {
+        if ($value) {
+            return (new DateTimeImmutable($value))->format(DATE_RSS);
+        }
+    } catch (Throwable $error) {
+    }
+    return (new DateTimeImmutable())->format(DATE_RSS);
+}
+
+function build_rss_xml(array $site, array $articles): string
+{
+    $title = (string)($site['name'] ?? 'Huajian Site');
+    $description = (string)($site['description'] ?? $title);
+    $rows = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">',
+        '  <channel>',
+        '    <title>' . e($title) . '</title>',
+        '    <link>' . e(absolute_site_url($site, 'index.html')) . '</link>',
+        '    <atom:link href="' . e(absolute_site_url($site, 'rss.xml')) . '" rel="self" type="application/rss+xml" />',
+        '    <description>' . e($description) . '</description>',
+        '    <language>' . e((string)($site['language'] ?? 'zh-CN')) . '</language>',
+        '    <lastBuildDate>' . rss_date(null) . '</lastBuildDate>',
+    ];
+    foreach (array_slice($articles, 0, 50) as $article) {
+        $url = absolute_site_url($site, 'news/' . ($article['slug'] ?? '') . '.html');
+        $summary = strip_tags((string)($article['summary'] ?? $article['content'] ?? ''));
+        $rows[] = '    <item>';
+        $rows[] = '      <title>' . e((string)($article['title'] ?? '')) . '</title>';
+        $rows[] = '      <link>' . e($url) . '</link>';
+        $rows[] = '      <guid isPermaLink="true">' . e($url) . '</guid>';
+        $rows[] = '      <description>' . e($summary) . '</description>';
+        $rows[] = '      <pubDate>' . rss_date((string)($article['published_at'] ?? '')) . '</pubDate>';
+        $rows[] = '    </item>';
+    }
+    $rows[] = '  </channel>';
+    $rows[] = '</rss>';
+    return implode(PHP_EOL, $rows) . PHP_EOL;
 }
 
 function global_modules(array $site): array
@@ -925,39 +985,40 @@ foreach ($pages as $page) {
     ])));
 }
 
-$domain = $site['domain'] ?? 'demo.local';
+$origin = site_origin($site);
 $sitemap = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'];
-$sitemap[] = '  <url><loc>https://' . $domain . '/index.html</loc></url>';
-$sitemap[] = '  <url><loc>https://' . $domain . '/contact.html</loc></url>';
-$sitemap[] = '  <url><loc>https://' . $domain . '/search.html</loc></url>';
-$sitemap[] = '  <url><loc>https://' . $domain . '/order.html</loc></url>';
+$sitemap[] = '  <url><loc>' . $origin . '/index.html</loc></url>';
+$sitemap[] = '  <url><loc>' . $origin . '/contact.html</loc></url>';
+$sitemap[] = '  <url><loc>' . $origin . '/search.html</loc></url>';
+$sitemap[] = '  <url><loc>' . $origin . '/order.html</loc></url>';
 foreach ($categories as $category) {
     if (category_items($articles, (int)$category['id'])) {
-        $sitemap[] = '  <url><loc>https://' . $domain . '/category/' . $category['slug'] . '/index.html</loc></url>';
+        $sitemap[] = '  <url><loc>' . $origin . '/category/' . $category['slug'] . '/index.html</loc></url>';
     }
 }
 foreach ($articles as $article) {
-    $sitemap[] = '  <url><loc>https://' . $domain . '/news/' . $article['slug'] . '.html</loc></url>';
+    $sitemap[] = '  <url><loc>' . $origin . '/news/' . $article['slug'] . '.html</loc></url>';
 }
 foreach ($tags as $tag) {
     if (tag_items($articles, (string)$tag['slug'])) {
-        $sitemap[] = '  <url><loc>https://' . $domain . '/tag/' . $tag['slug'] . '/index.html</loc></url>';
+        $sitemap[] = '  <url><loc>' . $origin . '/tag/' . $tag['slug'] . '/index.html</loc></url>';
     }
 }
 foreach ($productCategories as $category) {
     if (category_items($products, (int)$category['id'])) {
-        $sitemap[] = '  <url><loc>https://' . $domain . '/product-category/' . $category['slug'] . '/index.html</loc></url>';
+        $sitemap[] = '  <url><loc>' . $origin . '/product-category/' . $category['slug'] . '/index.html</loc></url>';
     }
 }
 foreach ($products as $product) {
-    $sitemap[] = '  <url><loc>https://' . $domain . '/products/' . $product['slug'] . '.html</loc></url>';
+    $sitemap[] = '  <url><loc>' . $origin . '/products/' . $product['slug'] . '.html</loc></url>';
 }
 foreach ($pages as $page) {
-    $sitemap[] = '  <url><loc>https://' . $domain . '/' . $page['slug'] . '.html</loc></url>';
+    $sitemap[] = '  <url><loc>' . $origin . '/' . $page['slug'] . '.html</loc></url>';
 }
 $sitemap[] = '</urlset>';
 write_file($publicRoot . DIRECTORY_SEPARATOR . 'sitemap.xml', implode(PHP_EOL, $sitemap));
-write_file($publicRoot . DIRECTORY_SEPARATOR . 'robots.txt', "User-agent: *\nAllow: /\nSitemap: https://{$domain}/sitemap.xml\n");
+write_file($publicRoot . DIRECTORY_SEPARATOR . 'robots.txt', "User-agent: *\nAllow: /\nSitemap: {$origin}/sitemap.xml\n");
+write_file($publicRoot . DIRECTORY_SEPARATOR . 'rss.xml', build_rss_xml($site, $articles));
 
 $search = [];
 foreach ($categories as $category) {
