@@ -1392,6 +1392,7 @@
                   <el-form-item><el-input v-model="collectorFilters.keyword" placeholder="搜索采集源" clearable /></el-form-item>
                   <el-button type="primary" @click="loadCollectorSources">筛选</el-button>
                 </el-form>
+                <el-alert class="mb16" type="info" show-icon :closable="false" title="采集源会按入库方式自动转为文章草稿或直接发布；直接发布后会同步生成对应站点的静态页面。" />
                 <el-table :data="collectorSources" height="620" row-key="id">
                   <el-table-column label="采集源" min-width="220">
                     <template #default="{ row }">
@@ -4014,16 +4015,23 @@ async function runCollectorSource(row: any) {
   try {
     const data = await request(`/api/collector/sources/${row.id}/run`, { method: 'POST' })
     ElMessage.success(data.message || '采集完成')
-    await Promise.all([loadCollectorSources(), loadCollectorRecords()])
+    await Promise.all([loadCollectorSources(), loadCollectorRecords(), loadArticles(), loadDashboard()])
+    if (Number(data.published_count || 0) > 0) {
+      await syncGeneratedSitesForContent(data.site_ids?.length ? data.site_ids : [row.site_id || currentSiteId.value], '采集内容发布后自动生成')
+    }
   } finally {
     collectorRunningId.value = ''
   }
 }
 
 async function publishCollectorRecord(row: any, status: 'draft' | 'published') {
-  await request(`/api/collector/records/${row.id}/publish`, { method: 'POST', data: { status } })
+  const data = await request(`/api/collector/records/${row.id}/publish`, { method: 'POST', data: { status } })
   ElMessage.success(status === 'published' ? '已转为发布文章' : '已转为文章草稿')
   await Promise.all([loadCollectorRecords(), loadArticles(), loadDashboard()])
+  if (status === 'published') {
+    const siteIds = data.article?.site_ids?.length ? data.article.site_ids : [row.site_id || currentSiteId.value]
+    await syncGeneratedSitesForContent(siteIds, '采集记录发布后自动生成')
+  }
 }
 
 async function deleteCollectorRecord(row: any) {

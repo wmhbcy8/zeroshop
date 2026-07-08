@@ -5261,7 +5261,35 @@ function run_collector_source(PDO $pdo, int $sourceId): array
     $result = '采集到 ' . count($items) . ' 条，新增 ' . count($created) . ' 条';
     $update = $pdo->prepare('UPDATE collector_sources SET last_run_at = :last_run_at, last_result = :last_result, updated_at = :updated_at WHERE id = :id');
     $update->execute(['id' => $sourceId, 'last_run_at' => $time, 'last_result' => $result, 'updated_at' => $time]);
-    return ['source' => fetch_one($pdo, 'collector_sources', $sourceId), 'items' => $created, 'message' => $result];
+    $createdArticles = [];
+    $rewriteMode = in_array(($source['rewrite_mode'] ?? 'draft'), ['draft', 'published'], true) ? (string)$source['rewrite_mode'] : 'draft';
+    foreach ($created as $record) {
+        if (!empty($record['id'])) {
+            $published = publish_collector_record($pdo, (int)$record['id'], $rewriteMode);
+            if (!empty($published['article'])) {
+                $createdArticles[] = $published['article'];
+            }
+        }
+    }
+    $message = $result;
+    if ($createdArticles) {
+        $message .= '，已转文章 ' . count($createdArticles) . ' 条';
+        if ($rewriteMode === 'published') {
+            $message .= '并发布';
+        }
+    }
+    if ($message !== $result) {
+        $update->execute(['id' => $sourceId, 'last_run_at' => $time, 'last_result' => $message, 'updated_at' => now()]);
+    }
+    return [
+        'source' => fetch_one($pdo, 'collector_sources', $sourceId),
+        'items' => $created,
+        'articles' => $createdArticles,
+        'article_count' => count($createdArticles),
+        'published_count' => $rewriteMode === 'published' ? count($createdArticles) : 0,
+        'site_ids' => [(int)$source['site_id']],
+        'message' => $message,
+    ];
 }
 
 function publish_collector_record(PDO $pdo, int $recordId, string $status = 'draft'): array
