@@ -304,6 +304,25 @@ function renderServiceRequestForm(order, phone) {
   ].join('');
 }
 
+function renderServiceTimeline(order) {
+  const items = Array.isArray(order.service_timeline) ? order.service_timeline : [];
+  if (!items.length) return '';
+  return [
+    '<div class="service-timeline order-lookup-block">',
+    '<h2>服务进度</h2>',
+    items.map(function (item) {
+      return [
+        '<div class="service-timeline-item">',
+        '<span></span>',
+        '<div><small>' + escapeHtml(item.time || '') + '</small>',
+        '<p>' + escapeHtml(item.text || '') + '</p></div>',
+        '</div>'
+      ].join('');
+    }).join(''),
+    '</div>'
+  ].join('');
+}
+
 function renderShipmentCard(order) {
   const tracking = [order.tracking_company, order.tracking_no].filter(Boolean).join(' / ') || '';
   let title = '等待付款确认';
@@ -339,6 +358,7 @@ function renderOrderLookup(order) {
   const guideHtml = order.payment_status === 'pending' ? renderPaymentGuide(readPaymentGuide(document), order) : '';
   const proofHtml = renderPaymentProofForm(order, phone);
   const serviceHtml = renderServiceRequestForm(order, phone);
+  const timelineHtml = renderServiceTimeline(order);
   return [
     '<div class="order-status-grid">',
     '<div><span>订单号</span><strong>' + escapeHtml(order.order_no) + '</strong></div>',
@@ -357,6 +377,7 @@ function renderOrderLookup(order) {
     '<p>发货时间：' + escapeHtml(order.shipped_at || '-') + '</p>',
     '</div>',
     renderShipmentCard(order),
+    timelineHtml,
     guideHtml,
     proofHtml,
     serviceHtml,

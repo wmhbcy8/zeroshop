@@ -243,6 +243,38 @@ function append_order_note(string $remark, string $note): string
     return trim($remark) === '' ? $line : rtrim($remark) . "\n" . $line;
 }
 
+function public_order_timeline(string $remark): array
+{
+    $items = [];
+    foreach (preg_split('/\r?\n/', $remark) ?: [] as $line) {
+        $line = trim($line);
+        if ($line === '') {
+            continue;
+        }
+        $text = $line;
+        $time = '';
+        if (preg_match('/^\[(.+?)\]\s*(.+)$/u', $line, $matches)) {
+            $time = $matches[1];
+            $text = $matches[2];
+        }
+        $visible = false;
+        foreach (['客户服务请求', '客户提交', '客服回复', '客服已处理', '订单标记', '发货', '支付'] as $keyword) {
+            if (strpos($text, $keyword) !== false) {
+                $visible = true;
+                break;
+            }
+        }
+        if (!$visible) {
+            continue;
+        }
+        $items[] = [
+            'time' => $time,
+            'text' => $text,
+        ];
+    }
+    return $items;
+}
+
 function public_order_view(array $order): array
 {
     $items = [];
@@ -264,6 +296,7 @@ function public_order_view(array $order): array
         'tracking_no' => $order['tracking_no'] ?? '',
         'paid_at' => $order['paid_at'] ?? '',
         'shipped_at' => $order['shipped_at'] ?? '',
+        'service_timeline' => public_order_timeline((string)($order['remark'] ?? '')),
         'created_at' => $order['created_at'] ?? '',
         'updated_at' => $order['updated_at'] ?? '',
     ];
@@ -1487,8 +1520,11 @@ try {
             $fulfillmentStatus = $data['fulfillment_status'] ?? ($current['fulfillment_status'] ?? 'new');
             $trackingCompany = trim((string)($data['tracking_company'] ?? ($current['tracking_company'] ?? '')));
             $trackingNo = trim((string)($data['tracking_no'] ?? ($current['tracking_no'] ?? '')));
-            $remark = (string)($data['remark'] ?? ($current['remark'] ?? ''));
             $followupNote = trim((string)($data['followup_note'] ?? ''));
+            $remark = array_key_exists('remark', $data) ? (string)$data['remark'] : (string)($current['remark'] ?? '');
+            if ($followupNote !== '' && trim($remark) === '' && trim((string)($current['remark'] ?? '')) !== '') {
+                $remark = (string)$current['remark'];
+            }
             if ($followupNote !== '') {
                 $remark = append_order_note($remark, $followupNote);
             }

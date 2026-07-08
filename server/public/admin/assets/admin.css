@@ -322,6 +322,38 @@ tr.selected-row td { background: #f0f7ff; }
   grid-column: 1 / -1;
   justify-self: start;
 }
+.service-desk-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #b7d8ff;
+  border-radius: 8px;
+  background: #f6fbff;
+}
+.service-desk-panel > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+.service-desk-panel strong { color: var(--text); }
+.service-desk-panel small,
+.service-desk-panel p {
+  color: var(--muted);
+  margin: 0;
+}
+.service-desk-panel.pending {
+  border-color: #ffd591;
+  background: #fffaf0;
+}
+.service-desk-panel.done {
+  border-color: #b7eb8f;
+  background: #f6ffed;
+}
+.service-desk-panel.muted-panel {
+  border-color: var(--line);
+  background: #f8fafc;
+}
 .quick-note-row {
   margin-top: -4px;
 }

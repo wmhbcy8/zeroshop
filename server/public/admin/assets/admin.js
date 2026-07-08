@@ -1081,6 +1081,60 @@ function renderOrderTimeline(remark) {
   `;
 }
 
+function parseServiceRequestLine(text) {
+  const prefix = '客户服务请求-';
+  const start = String(text || '').indexOf(prefix);
+  if (start < 0) return null;
+  const content = String(text).slice(start + prefix.length);
+  const cnSplit = content.indexOf('：');
+  const enSplit = content.indexOf(':');
+  const split = cnSplit >= 0 ? cnSplit : enSplit;
+  return {
+    type: split >= 0 ? content.slice(0, split).trim() : '其他服务',
+    message: split >= 0 ? content.slice(split + 1).trim() : content.trim()
+  };
+}
+
+function latestServiceRequest(remark) {
+  const items = parseOrderTimeline(remark);
+  let latest = null;
+  items.forEach((item, index) => {
+    const request = parseServiceRequestLine(item.text);
+    if (request) latest = { ...request, time: item.time, index };
+  });
+  if (!latest) return null;
+  latest.handled = items.slice(latest.index + 1).some((item) => {
+    return item.text.includes(`客服回复服务请求-${latest.type}`)
+      || item.text.includes(`客服已处理服务请求-${latest.type}`);
+  });
+  return latest;
+}
+
+function renderServiceDeskPanel(item) {
+  const request = latestServiceRequest(item?.remark || '');
+  if (!request) {
+    return `
+      <div class="service-desk-panel muted-panel">
+        <strong>服务请求</strong>
+        <p>暂无客户服务请求。</p>
+      </div>
+    `;
+  }
+  return `
+    <div class="service-desk-panel ${request.handled ? 'done' : 'pending'}">
+      <div>
+        <strong>${escapeHtml(request.handled ? '服务请求已回复' : '待处理服务请求')}</strong>
+        <small>${escapeHtml(request.time || '-')}</small>
+      </div>
+      <p><b>${escapeHtml(request.type)}</b>：${escapeHtml(request.message || '-')}</p>
+      <div class="row-actions">
+        <button type="button" class="text-btn" data-service-desk-action="reply" data-service-order="${escapeHtml(item.id)}">填写客服回复</button>
+        <button type="button" class="primary-btn" data-service-desk-action="done" data-service-order="${escapeHtml(item.id)}">标记已处理</button>
+      </div>
+    </div>
+  `;
+}
+
 function copyText(value, label = '内容') {
   const text = String(value || '').trim();
   if (!text || text === '-') {
@@ -1188,6 +1242,7 @@ function fillOrderDetail(item) {
   detailBox.innerHTML = `
     ${paymentSummaryHtml}
     ${shipmentSummaryHtml}
+    ${renderServiceDeskPanel(item)}
     <div class="form-detail-meta">
       <div><strong>${escapeHtml(item.order_no)}</strong><br><small>${escapeHtml(item.customer_name)} / ${escapeHtml(item.phone)}</small></div>
       <span>${escapeHtml(item.created_at || '')}</span>
@@ -1942,6 +1997,24 @@ document.addEventListener('click', async (event) => {
     });
     toast('订单已确认');
     await Promise.all([loadOrders(), loadDashboard()]);
+  }
+
+  const serviceDeskAction = target.closest('[data-service-desk-action]');
+  if (serviceDeskAction) {
+    const current = state.orders.find((row) => String(row.id) === String(serviceDeskAction.dataset.serviceOrder));
+    const request = latestServiceRequest(current?.remark || '');
+    if (!current || !request) return;
+    const note = serviceDeskAction.dataset.serviceDeskAction === 'done'
+      ? `客服已处理服务请求-${request.type}：${request.message || '已处理'}`
+      : `客服回复服务请求-${request.type}：`;
+    if (serviceDeskAction.dataset.serviceDeskAction === 'reply') {
+      const field = $('#orderDetailForm textarea[name="followup_note"]');
+      field.value = note;
+      field.focus();
+      toast('已填入客服回复，请补充内容后保存');
+      return;
+    }
+    await updateSelectedOrder({ followup_note: note }, '服务请求已标记处理');
   }
 
   const orderDelete = target.closest('[data-delete-order]');
