@@ -834,10 +834,18 @@
               <el-button v-if="failedBatchTaskResults(batchTaskDetail).length" type="warning" :loading="siteBatchRunning" @click="retryFailedTask(batchTaskDetail)">重试失败站点</el-button>
             </div>
             <div class="batch-detail-list">
-              <strong>执行结果</strong>
-              <span v-for="item in batchTaskResults(batchTaskDetail)" :key="`${item.site_id}-${item.site_name}`" :class="{ failed: !item.ok }">
+              <div class="batch-detail-head">
+                <strong>执行结果</strong>
+                <el-radio-group v-model="batchTaskResultFilter" size="small">
+                  <el-radio-button label="all">全部</el-radio-button>
+                  <el-radio-button label="failed">失败</el-radio-button>
+                  <el-radio-button label="success">成功</el-radio-button>
+                </el-radio-group>
+              </div>
+              <span v-for="item in filteredBatchTaskResults(batchTaskDetail)" :key="`${item.site_id}-${item.site_name}`" :class="{ failed: !item.ok }">
                 {{ item.site_name || item.site_id }}：{{ item.ok ? '完成' : '失败' }}{{ item.message ? ` - ${item.message}` : '' }}
               </span>
+              <el-empty v-if="!filteredBatchTaskResults(batchTaskDetail).length" description="当前筛选没有结果" />
             </div>
           </el-drawer>
         </section>
@@ -893,6 +901,7 @@ const packaging = ref(false)
 const siteBatchRunning = ref(false)
 const selectedSiteIds = ref<Array<number | string>>([])
 const siteBatchResults = ref<any[]>([])
+const batchTaskResultFilter = ref('all')
 
 const orderFilters = reactive({ keyword: '', payment_status: '', fulfillment_status: '' })
 const serviceFilters = reactive({ keyword: '', status: '', type: '' })
@@ -1894,11 +1903,19 @@ function openPublishVersion(row: any) {
 
 function openBatchTask(row: any) {
   Object.assign(batchTaskDetail, row)
+  batchTaskResultFilter.value = 'all'
   batchTaskDrawerVisible.value = true
 }
 
 function batchTaskResults(row: any) {
   return row?.summary_data?.results || parseSummary(row?.summary)?.results || []
+}
+
+function filteredBatchTaskResults(row: any) {
+  const results = batchTaskResults(row)
+  if (batchTaskResultFilter.value === 'failed') return results.filter((item: any) => !item.ok)
+  if (batchTaskResultFilter.value === 'success') return results.filter((item: any) => item.ok)
+  return results
 }
 
 function failedBatchTaskResults(row: any) {
