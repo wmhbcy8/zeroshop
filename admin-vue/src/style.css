@@ -418,6 +418,33 @@ body {
   flex: 1;
   min-width: 220px;
 }
+.clone-task-list {
+  display: grid;
+  gap: 10px;
+}
+.clone-task-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+.clone-task-card div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.clone-task-card small,
+.clone-task-card span {
+  color: #64748b;
+  word-break: break-all;
+}
+.clone-task-actions {
+  flex-shrink: 0;
+}
 .mt16 {
   margin-top: 16px;
 }

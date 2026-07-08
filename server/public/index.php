@@ -963,6 +963,23 @@ function ensure_center_tables(PDO $main): void
         INDEX idx_status (status),
         INDEX idx_created_at (created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $main->exec("CREATE TABLE IF NOT EXISTS template_clone_tasks (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        task_no VARCHAR(80) NOT NULL UNIQUE,
+        target_url VARCHAR(500) NOT NULL,
+        template_key VARCHAR(120),
+        template_name VARCHAR(160),
+        source_title VARCHAR(255),
+        status VARCHAR(30) NOT NULL DEFAULT 'success',
+        module_plan_json TEXT,
+        source_excerpt MEDIUMTEXT,
+        message VARCHAR(500),
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_status (status),
+        INDEX idx_template_key (template_key),
+        INDEX idx_created_at (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $main->exec("CREATE TABLE IF NOT EXISTS operation_logs (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
         user_id BIGINT UNSIGNED,
@@ -1879,6 +1896,193 @@ function export_batch_tasks_csv(PDO $main): void
     }
     fclose($out);
     exit;
+}
+
+function normalize_template_clone_url(string $url): string
+{
+    $url = trim($url);
+    assert_collect_url($url);
+    return mb_substr($url, 0, 500, 'UTF-8');
+}
+
+function template_clone_key(string $url): string
+{
+    $host = (string)(parse_url($url, PHP_URL_HOST) ?: 'site');
+    $base = preg_replace('/[^a-z0-9]+/i', '-', strtolower($host));
+    $base = trim((string)$base, '-') ?: 'site';
+    $base = mb_substr($base, 0, 48, 'UTF-8');
+    return 'clone-' . $base . '-' . date('ymdHis') . '-' . strtolower(substr(bin2hex(random_bytes(2)), 0, 4));
+}
+
+function extract_html_title(string $html, string $fallback): string
+{
+    if (preg_match('/<title[^>]*>(.*?)<\/title>/is', $html, $match)) {
+        $title = html_entity_decode(trim(strip_tags($match[1])), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        if ($title !== '') {
+            return mb_substr($title, 0, 120, 'UTF-8');
+        }
+    }
+    return mb_substr($fallback, 0, 120, 'UTF-8');
+}
+
+function fetch_template_clone_html(string $url): array
+{
+    assert_collect_url($url);
+    if (!function_exists('curl_init')) {
+        $context = stream_context_create(['http' => ['timeout' => 8, 'user_agent' => 'HuajianTemplateClone/0.1']]);
+        $body = @file_get_contents($url, false, $context);
+        return is_string($body) && $body !== ''
+            ? ['html' => $body, 'message' => '已读取目标首页 HTML。']
+            : ['html' => '', 'message' => '目标网页暂未读取成功，已先按 URL 生成标准模板草稿。'];
+    }
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 3,
+        CURLOPT_TIMEOUT => 8,
+        CURLOPT_USERAGENT => 'HuajianTemplateClone/0.1',
+    ]);
+    $body = curl_exec($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = curl_error($ch);
+    curl_close($ch);
+    if (is_string($body) && $body !== '' && $status >= 200 && $status < 400) {
+        return ['html' => $body, 'message' => '已读取目标首页 HTML。'];
+    }
+    $suffix = $error ? '原因：' . $error : ($status ? 'HTTP 状态：' . $status : '');
+    return ['html' => '', 'message' => trim('目标网页暂未读取成功，已先按 URL 生成标准模板草稿。' . $suffix)];
+}
+
+function template_clone_module_plan(string $title, string $url, bool $fetched): array
+{
+    return [
+        ['module' => 'header', 'title' => '导航菜单', 'description' => '保留品牌、导航、咨询入口的标准头部。'],
+        ['module' => 'hero', 'title' => $title ?: '品牌首页首屏', 'description' => '将目标网站首屏改造成可编辑标题、副标题、按钮和背景图。'],
+        ['module' => 'advantages', 'title' => '核心优势', 'description' => '用卡片模块承载服务优势、产品卖点和企业能力。'],
+        ['module' => 'products', 'title' => '产品展示', 'description' => '对接中台商品库，自动输出商品列表和详情页。'],
+        ['module' => 'articles', 'title' => '内容与新闻', 'description' => '对接文章库和采集中心，沉淀 SEO 内容。'],
+        ['module' => 'contact', 'title' => '询盘转化', 'description' => '保留联系表单、悬浮咨询和订单/询盘入口。'],
+        ['module' => 'footer', 'title' => '页脚信息', 'description' => '沉淀联系方式、备案/版权、友情链接和站点地图入口。'],
+        ['module' => 'source', 'title' => $fetched ? '已读取目标 HTML' : '未读取目标 HTML', 'description' => $url],
+    ];
+}
+
+function write_template_clone_metadata(string $templateDir, string $key, string $name, string $url, array $modulePlan): void
+{
+    $meta = [
+        'name' => $name,
+        'key' => $key,
+        'version' => '0.1.0',
+        'author' => '化简模板克隆',
+        'type' => ['company', 'blog', 'shop'],
+        'supports' => ['page', 'article', 'product', 'seo', 'form', 'clone-draft'],
+        'entry' => 'pages/index.html',
+        'source_url' => $url,
+        'module_plan' => $modulePlan,
+    ];
+    file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'template.json', json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+    $readme = "# {$name}\n\n来源：{$url}\n\n这是化简根据目标 URL 生成的标准化模板草稿，已转换为可编辑的 header、hero、内容模块、商品、文章、表单和 footer 结构。\n";
+    file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'CLONE_SOURCE.md', $readme);
+}
+
+function create_template_clone_task(PDO $main, array $data): array
+{
+    ensure_center_tables($main);
+    require_fields($data, ['target_url']);
+    $url = normalize_template_clone_url((string)$data['target_url']);
+    $fetch = fetch_template_clone_html($url);
+    $html = (string)($fetch['html'] ?? '');
+    $fetched = $html !== '';
+    $message = ($fetch['message'] ?? '') . ' 模板草稿已生成。';
+    $host = (string)(parse_url($url, PHP_URL_HOST) ?: '目标网站');
+    $sourceTitle = extract_html_title($html, $host);
+    $key = template_clone_key($url);
+    $name = '克隆草稿 - ' . $sourceTitle;
+    $root = dirname(__DIR__, 2);
+    $baseTemplate = $root . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . 'business-clean';
+    $templateDir = $root . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . $key;
+    if (!is_dir($baseTemplate)) {
+        fail('基础模板不存在，无法生成草稿', 'TEMPLATE_BASE_MISSING', 500);
+    }
+    copy_directory($baseTemplate, $templateDir);
+    $modulePlan = template_clone_module_plan($sourceTitle, $url, $fetched);
+    write_template_clone_metadata($templateDir, $key, $name, $url, $modulePlan);
+    $now = now();
+    $taskNo = 'TC' . date('YmdHis') . strtoupper(substr(bin2hex(random_bytes(3)), 0, 6));
+    $stmt = $main->prepare("INSERT INTO template_clone_tasks (task_no, target_url, template_key, template_name, source_title, status, module_plan_json, source_excerpt, message, created_at, updated_at)
+        VALUES (:task_no, :target_url, :template_key, :template_name, :source_title, 'success', :module_plan_json, :source_excerpt, :message, :created_at, :updated_at)");
+    $stmt->execute([
+        'task_no' => $taskNo,
+        'target_url' => $url,
+        'template_key' => $key,
+        'template_name' => $name,
+        'source_title' => $sourceTitle,
+        'module_plan_json' => json_encode($modulePlan, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'source_excerpt' => mb_substr($html, 0, 20000, 'UTF-8'),
+        'message' => $message,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    return normalize_template_clone_task(fetch_one($main, 'template_clone_tasks', (int)$main->lastInsertId()) ?: []);
+}
+
+function normalize_template_clone_task(array $row): array
+{
+    $row['id'] = (int)($row['id'] ?? 0);
+    $plan = json_decode((string)($row['module_plan_json'] ?? ''), true);
+    $row['module_plan'] = is_array($plan) ? $plan : [];
+    unset($row['module_plan_json']);
+    return $row;
+}
+
+function list_template_clone_tasks(PDO $main): array
+{
+    ensure_center_tables($main);
+    $result = paginate($main, 'template_clone_tasks', [], 'id DESC', 'target_url');
+    $result['items'] = array_map('normalize_template_clone_task', $result['items']);
+    return $result;
+}
+
+function apply_template_clone_task(PDO $main, PDO $sitePdo, int $taskId): array
+{
+    ensure_center_tables($main);
+    $task = fetch_one($main, 'template_clone_tasks', $taskId);
+    if (!$task) {
+        fail('模板克隆任务不存在', 'NOT_FOUND', 404);
+    }
+    $task = normalize_template_clone_task($task);
+    $key = (string)($task['template_key'] ?? '');
+    if ($key === '' || !is_dir(dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . $key)) {
+        fail('模板草稿目录不存在', 'TEMPLATE_NOT_FOUND', 404);
+    }
+    $settings = site_settings($sitePdo);
+    $settings['template_key'] = $key;
+    $settings['template_clone'] = [
+        'task_id' => (int)$task['id'],
+        'target_url' => (string)$task['target_url'],
+        'template_key' => $key,
+        'applied_at' => now(),
+    ];
+    return ['task' => $task, 'site' => save_site_settings($sitePdo, $settings)];
+}
+
+function delete_template_clone_task(PDO $main, int $taskId): void
+{
+    ensure_center_tables($main);
+    $task = fetch_one($main, 'template_clone_tasks', $taskId);
+    if (!$task) {
+        fail('模板克隆任务不存在', 'NOT_FOUND', 404);
+    }
+    $key = (string)($task['template_key'] ?? '');
+    if (str_starts_with($key, 'clone-')) {
+        $dir = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . $key;
+        if (is_dir($dir)) {
+            remove_dir_contents($dir);
+            rmdir($dir);
+        }
+    }
+    $main->prepare('DELETE FROM template_clone_tasks WHERE id = ?')->execute([$taskId]);
 }
 
 function save_batch_task(PDO $main, array $data): array
@@ -4466,6 +4670,27 @@ try {
 
     if ($method === 'GET' && $path === '/site/templates') {
         ok(template_registry());
+    }
+
+    if ($method === 'GET' && $path === '/template-clone/tasks') {
+        ok(list_template_clone_tasks(main_pdo()));
+    }
+
+    if ($method === 'POST' && $path === '/template-clone/tasks') {
+        ok(create_template_clone_task(main_pdo(), body_json()), '模板草稿已生成');
+    }
+
+    if ($params = route_param('/template-clone/tasks/{id}/apply', $path)) {
+        if ($method === 'POST') {
+            ok(apply_template_clone_task(main_pdo(), $pdo, (int)$params['id']), '模板草稿已应用到当前站点');
+        }
+    }
+
+    if ($params = route_param('/template-clone/tasks/{id}', $path)) {
+        if ($method === 'DELETE') {
+            delete_template_clone_task(main_pdo(), (int)$params['id']);
+            ok([], '模板克隆任务已删除');
+        }
     }
 
     if ($method === 'GET' && $path === '/seo/audit') {

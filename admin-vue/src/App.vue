@@ -590,6 +590,35 @@
                   </article>
                 </div>
               </el-card>
+              <el-card class="panel mt16" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>目标网站转模板</strong>
+                    <el-button :loading="templateCloneLoading" type="primary" @click="createTemplateCloneTask">生成草稿</el-button>
+                  </div>
+                </template>
+                <el-form :model="templateCloneForm" label-width="72px">
+                  <el-form-item label="网址">
+                    <el-input v-model="templateCloneForm.target_url" placeholder="https://www.example.com" />
+                  </el-form-item>
+                </el-form>
+                <el-empty v-if="!templateCloneTasks.length" description="暂无模板克隆任务" />
+                <div v-else class="clone-task-list">
+                  <article v-for="item in templateCloneTasks" :key="item.id" class="clone-task-card">
+                    <div>
+                      <strong>{{ item.template_name || item.source_title || item.target_url }}</strong>
+                      <small>{{ item.template_key }} · {{ item.target_url }}</small>
+                      <span>{{ item.message || '-' }}</span>
+                    </div>
+                    <div class="clone-task-actions">
+                      <el-button size="small" :type="site.template_key === item.template_key ? 'primary' : 'default'" @click="applyTemplateCloneTask(item)">
+                        {{ site.template_key === item.template_key ? '当前模板' : '应用' }}
+                      </el-button>
+                      <el-button size="small" type="danger" plain @click="deleteTemplateCloneTask(item)">删除</el-button>
+                    </div>
+                  </article>
+                </div>
+              </el-card>
             </el-col>
             <el-col :span="15">
               <el-card class="panel" shadow="never">
@@ -1667,6 +1696,7 @@ const aiProviders = ref<any[]>([])
 const currentSiteId = ref<number | string>(10001)
 const operationSiteScope = ref('all')
 const templates = ref<any[]>([])
+const templateCloneTasks = ref<any[]>([])
 const moduleRegistry = ref<any>({ scopes: [], modules: [] })
 const staticPages = ref<any[]>([])
 const servicePending = ref(0)
@@ -1731,6 +1761,8 @@ const emptyDeploy = () => ({ bt_panel_url: '', site_path: '', mode: 'manual', af
 const siteForm = reactive<any>({ name: '', deploy_node_id: 0, domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active', deploy: emptyDeploy() })
 const aiForm = reactive<any>({ type: 'article', prompt: '围绕自主品牌商品、行业解决方案和独立站 SEO 关键词生成内容', count: 5, status: 'draft', site_scope: 'current', site_ids: [] })
 const pageBuilder = reactive({ prompt: '围绕自主品牌商品、行业解决方案、SEO 内容沉淀和询盘转化，生成一个企业官网 + 博客知识库 + 独立站商城首页方案' })
+const templateCloneForm = reactive({ target_url: '' })
+const templateCloneLoading = ref(false)
 const articlePager = reactive({ page: 1, page_size: 10, total: 0 })
 const productPager = reactive({ page: 1, page_size: 10, total: 0 })
 const pagePager = reactive({ page: 1, page_size: 10, total: 0 })
@@ -1863,7 +1895,7 @@ function setView(key: string) {
   if (key === 'dashboard') loadDashboard()
   if (key === 'sites') loadSites()
   if (key === 'domains') loadDomains()
-  if (key === 'templates') Promise.all([loadTemplates(), loadModuleRegistry()])
+  if (key === 'templates') Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry()])
   if (key === 'pages') loadPages()
   if (key === 'ai') Promise.all([loadAiTasks(), loadPlatform()])
   if (key === 'articles') loadArticles()
@@ -1888,7 +1920,7 @@ function refreshCurrentView() {
     sites: loadSites,
     domains: loadDomains,
     settings: async () => { await Promise.all([loadSettings(), loadStaticPages()]) },
-    templates: async () => { await Promise.all([loadTemplates(), loadModuleRegistry(), loadSettings(), loadStaticPages()]) },
+    templates: async () => { await Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry(), loadSettings(), loadStaticPages()]) },
     ai: async () => { await Promise.all([loadAiTasks(), loadPlatform()]) },
     pages: loadPages,
     articles: async () => { await Promise.all([loadArticles(), loadCategories()]) },
@@ -1913,7 +1945,7 @@ function openLegacyAdmin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadPlatform(), loadSites(), loadDomains(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadOperationLogs(), loadMedia(), loadForms(), loadCollector(), loadSeoAudit(), loadAiTasks(), loadVersions()])
+  await Promise.all([loadPlatform(), loadSites(), loadDomains(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadOperationLogs(), loadMedia(), loadForms(), loadCollector(), loadSeoAudit(), loadAiTasks(), loadVersions()])
 }
 
 async function loadPlatform() {
@@ -2419,6 +2451,43 @@ async function saveSettingsAndGenerate() {
 async function loadTemplates() {
   const data = await request('/api/site/templates')
   templates.value = data.items || []
+}
+
+async function loadTemplateCloneTasks() {
+  const data = await request('/api/template-clone/tasks?page_size=20')
+  templateCloneTasks.value = data.items || []
+}
+
+async function createTemplateCloneTask() {
+  if (!String(templateCloneForm.target_url || '').trim()) {
+    ElMessage.warning('请先输入目标网站 URL')
+    return
+  }
+  templateCloneLoading.value = true
+  try {
+    const task = await request('/api/template-clone/tasks', { method: 'POST', data: { ...templateCloneForm } })
+    ElMessage.success(task.message || '模板草稿已生成')
+    templateCloneForm.target_url = ''
+    await Promise.all([loadTemplates(), loadTemplateCloneTasks()])
+    site.template_key = task.template_key || site.template_key
+  } finally {
+    templateCloneLoading.value = false
+  }
+}
+
+async function applyTemplateCloneTask(item: any) {
+  const data = await request(`/api/template-clone/tasks/${item.id}/apply`, { method: 'POST' })
+  Object.assign(site, normalizeSite(data.site || site))
+  ElMessage.success(`已应用模板草稿：${item.template_name || item.template_key}`)
+  await Promise.all([loadTemplates(), loadSettings()])
+}
+
+async function deleteTemplateCloneTask(item: any) {
+  await ElMessageBox.confirm(`确定删除模板草稿「${item.template_name || item.template_key}」？`)
+  await request(`/api/template-clone/tasks/${item.id}`, { method: 'DELETE' })
+  if (site.template_key === item.template_key) site.template_key = 'business-clean'
+  ElMessage.success('模板草稿已删除')
+  await Promise.all([loadTemplates(), loadTemplateCloneTasks()])
 }
 
 async function loadModuleRegistry() {

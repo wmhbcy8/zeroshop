@@ -643,7 +643,6 @@ function base_context(array $site, array $categories, array $productCategories, 
 
 $root = dirname(__DIR__);
 $dataRoot = $root . DIRECTORY_SEPARATOR . 'demo-data';
-$templateRoot = $root . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . 'business-clean';
 $publicRoot = env_or_null('HJ_PUBLIC_PATH') ?: $root . DIRECTORY_SEPARATOR . 'sites' . DIRECTORY_SEPARATOR . 'site_10001' . DIRECTORY_SEPARATOR . 'public';
 
 $pdo = pdo_site();
@@ -660,6 +659,12 @@ if ($pdo) {
     $dataSource = 'json';
 }
 $site['id'] = (int)($site['id'] ?? (env_or_null('HJ_SITE_ID') ?: 10001));
+$templateKey = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($site['template_key'] ?? 'business-clean')) ?: 'business-clean';
+$templateRoot = $root . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . $templateKey;
+if (!is_dir($templateRoot) || !is_file($templateRoot . DIRECTORY_SEPARATOR . 'template.json')) {
+    $templateKey = 'business-clean';
+    $templateRoot = $root . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . $templateKey;
+}
 
 $categoryMap = [];
 foreach ($categories as $category) {
