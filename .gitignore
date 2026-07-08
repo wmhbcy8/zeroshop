@@ -7,6 +7,8 @@
 /admin-vue/dist/
 /storage-api-*.log
 /storage/packages/
+/storage/publish_versions/
+/storage/build/
 /*.png
 
 config/database.local.php

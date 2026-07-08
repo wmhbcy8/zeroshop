@@ -260,6 +260,61 @@ function package_root(): string
     return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'packages';
 }
 
+function publish_version_root(array $site): string
+{
+    return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'publish_versions' . DIRECTORY_SEPARATOR . (string)($site['site_key'] ?? 'site_10001');
+}
+
+function assert_workspace_path(string $path): void
+{
+    $root = realpath(dirname(__DIR__, 2));
+    $target = realpath($path);
+    if (!$root || !$target || !str_starts_with($target, $root)) {
+        fail('文件路径不安全', 'INVALID_PATH', 422);
+    }
+}
+
+function remove_dir_contents(string $dir): void
+{
+    ensure_dir($dir);
+    assert_workspace_path($dir);
+    $items = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+    foreach ($items as $item) {
+        $item->isDir() ? rmdir($item->getPathname()) : unlink($item->getPathname());
+    }
+}
+
+function copy_directory(string $src, string $dst): int
+{
+    $sourceRoot = realpath($src);
+    if (!$sourceRoot || !is_dir($sourceRoot)) {
+        fail('源目录不存在', 'SOURCE_DIR_MISSING', 404);
+    }
+    ensure_dir($dst);
+    assert_workspace_path($sourceRoot);
+    assert_workspace_path($dst);
+    $items = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($sourceRoot, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+    $fileCount = 0;
+    foreach ($items as $item) {
+        $relative = substr($item->getPathname(), strlen($sourceRoot) + 1);
+        $target = $dst . DIRECTORY_SEPARATOR . $relative;
+        if ($item->isDir()) {
+            ensure_dir($target);
+            continue;
+        }
+        ensure_dir(dirname($target));
+        copy($item->getPathname(), $target);
+        $fileCount++;
+    }
+    return $fileCount;
+}
+
 function create_static_package(?array $site = null): array
 {
     $siteKey = (string)($site['site_key'] ?? 'site_10001');
@@ -1594,6 +1649,76 @@ function list_publish_versions(PDO $pdo, int $siteId): array
             'total_pages' => (int)ceil($total / $pageSize),
         ],
     ];
+}
+
+function create_publish_snapshot(PDO $pdo, array $site, string $versionNo, string $publicPath, array $output): array
+{
+    $snapshotRoot = publish_version_root($site) . DIRECTORY_SEPARATOR . $versionNo;
+    remove_dir_contents($snapshotRoot);
+    $fileCount = copy_directory($publicPath, $snapshotRoot);
+    $summary = [
+        'site_id' => (int)$site['id'],
+        'site_key' => $site['site_key'],
+        'site_name' => $site['name'],
+        'file_count' => $fileCount,
+        'snapshot_path' => str_replace(DIRECTORY_SEPARATOR, '/', substr($snapshotRoot, strlen(dirname(__DIR__, 2)) + 1)),
+        'output' => $output,
+    ];
+    ensure_publish_versions_site_column($pdo);
+    $stmt = $pdo->prepare("INSERT INTO publish_versions (site_id, version_no, publish_type, file_path, status, summary, created_at)
+        VALUES (:site_id, :version_no, 'generate', :file_path, 'success', :summary, :created_at)");
+    $stmt->execute([
+        'site_id' => (int)$site['id'],
+        'version_no' => $versionNo,
+        'file_path' => str_replace(DIRECTORY_SEPARATOR, '/', site_public_path($site)),
+        'summary' => json_encode($summary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'created_at' => now(),
+    ]);
+    return $summary;
+}
+
+function rollback_publish_version(PDO $pdo, array $site, int $versionId): array
+{
+    ensure_publish_versions_site_column($pdo);
+    $stmt = $pdo->prepare("SELECT * FROM publish_versions WHERE id = ? AND site_id = ? AND publish_type = 'generate' AND status = 'success' LIMIT 1");
+    $stmt->execute([$versionId, (int)$site['id']]);
+    $version = $stmt->fetch();
+    if (!$version) {
+        fail('可回滚版本不存在', 'VERSION_NOT_FOUND', 404);
+    }
+    $summary = json_decode((string)($version['summary'] ?? '{}'), true);
+    $snapshotRelative = (string)($summary['snapshot_path'] ?? '');
+    if ($snapshotRelative === '' || str_contains($snapshotRelative, '..')) {
+        fail('版本快照不存在', 'SNAPSHOT_MISSING', 404);
+    }
+    $snapshotRoot = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $snapshotRelative);
+    $publicRoot = site_public_root($site);
+    if (!is_dir($snapshotRoot)) {
+        fail('版本快照不存在', 'SNAPSHOT_MISSING', 404);
+    }
+    remove_dir_contents($publicRoot);
+    $fileCount = copy_directory($snapshotRoot, $publicRoot);
+    $rollbackNo = (string)$site['site_key'] . '_rollback_' . date('Ymd_His');
+    $rollbackSummary = [
+        'site_id' => (int)$site['id'],
+        'site_key' => $site['site_key'],
+        'site_name' => $site['name'],
+        'rollback_from' => $version['version_no'],
+        'rollback_version_id' => (int)$version['id'],
+        'file_count' => $fileCount,
+        'snapshot_path' => $snapshotRelative,
+        'message' => '已回滚到版本 ' . $version['version_no'],
+    ];
+    $insert = $pdo->prepare("INSERT INTO publish_versions (site_id, version_no, publish_type, file_path, status, summary, created_at)
+        VALUES (:site_id, :version_no, 'rollback', :file_path, 'success', :summary, :created_at)");
+    $insert->execute([
+        'site_id' => (int)$site['id'],
+        'version_no' => $rollbackNo,
+        'file_path' => str_replace(DIRECTORY_SEPARATOR, '/', site_public_path($site)),
+        'summary' => json_encode($rollbackSummary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'created_at' => now(),
+    ]);
+    return $rollbackSummary + ['version_no' => $rollbackNo];
 }
 
 function public_order_view(array $order): array
@@ -3401,18 +3526,8 @@ try {
             fail('生成失败', 'GENERATE_FAILED', 500, ['output' => $output]);
         }
         $versionNo = (string)$currentSite['site_key'] . '_version_' . date('Ymd_His');
-        $fileCount = count(iterator_to_array(new RecursiveIteratorIterator(new RecursiveDirectoryIterator($publicPath, FilesystemIterator::SKIP_DOTS))));
-        ensure_publish_versions_site_column($pdo);
-        $stmt = $pdo->prepare("INSERT INTO publish_versions (site_id, version_no, publish_type, file_path, status, summary, created_at)
-            VALUES (:site_id, :version_no, 'generate', :file_path, 'success', :summary, :created_at)");
-        $stmt->execute([
-            'site_id' => (int)$currentSite['id'],
-            'version_no' => $versionNo,
-            'file_path' => str_replace(DIRECTORY_SEPARATOR, '/', site_public_path($currentSite)),
-            'summary' => json_encode(['site_id' => (int)$currentSite['id'], 'site_key' => $currentSite['site_key'], 'site_name' => $currentSite['name'], 'file_count' => $fileCount, 'output' => $output], JSON_UNESCAPED_UNICODE),
-            'created_at' => now(),
-        ]);
-        ok(['site_id' => (int)$currentSite['id'], 'site_key' => $currentSite['site_key'], 'site_name' => $currentSite['name'], 'version_no' => $versionNo, 'file_count' => $fileCount, 'output' => $output], '生成成功');
+        $summary = create_publish_snapshot($pdo, $currentSite, $versionNo, $publicPath, $output);
+        ok($summary + ['version_no' => $versionNo], '生成成功');
     }
 
     if ($method === 'POST' && $path === '/site/deploy-test') {
@@ -3494,6 +3609,17 @@ try {
         $main = main_pdo();
         $currentSite = current_site($main, $pdo);
         ok(list_publish_versions($pdo, (int)$currentSite['id']));
+    }
+
+    if ($method === 'POST' && $path === '/site/rollback') {
+        $data = body_json();
+        $versionId = (int)($data['version_id'] ?? 0);
+        if ($versionId <= 0) {
+            fail('请选择要回滚的版本', 'VALIDATION_ERROR', 422);
+        }
+        $main = main_pdo();
+        $currentSite = current_site($main, $pdo);
+        ok(rollback_publish_version($pdo, $currentSite, $versionId), '回滚成功');
     }
 
     fail('接口不存在', 'NOT_FOUND', 404);

@@ -948,6 +948,9 @@
             <div v-if="publishDetail.publish_type === 'package'" class="drawer-actions">
               <el-button type="primary" @click="downloadPackage(publishDetail.file_path || publishSummary.package_path)">下载发布包</el-button>
             </div>
+            <div v-if="publishDetail.publish_type === 'generate' && publishDetail.status === 'success'" class="drawer-actions">
+              <el-button type="warning" @click="rollbackVersion(publishDetail)">回滚到此版本</el-button>
+            </div>
             <el-alert v-if="publishSummary.output?.length" class="mt16" type="info" show-icon title="生成输出">
               <pre class="output-log">{{ publishSummary.output.join('\n') }}</pre>
             </el-alert>
@@ -2307,6 +2310,15 @@ async function downloadPackage(path: string) {
 function openPublishVersion(row: any) {
   Object.assign(publishDetail, row)
   publishDrawerVisible.value = true
+}
+
+async function rollbackVersion(row: any) {
+  await ElMessageBox.confirm(`确定回滚到版本 ${row.version_no} 吗？当前 public 目录会被该版本快照覆盖。`)
+  const data = await request('/api/site/rollback', { method: 'POST', data: { version_id: row.id } })
+  publishResult.value = data || { message: '回滚成功' }
+  publishDrawerVisible.value = false
+  ElMessage.success('已回滚到所选版本')
+  await Promise.all([loadVersions(), loadSites(), loadDashboard()])
 }
 
 function openBatchTask(row: any) {
