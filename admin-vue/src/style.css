@@ -407,6 +407,17 @@ body {
   flex-wrap: wrap;
   gap: 8px;
 }
+.inline-form-row {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+.inline-form-row .el-select {
+  flex: 1;
+  min-width: 220px;
+}
 .mt16 {
   margin-top: 16px;
 }

@@ -881,6 +881,28 @@ function ensure_center_tables(PDO $main): void
         INDEX idx_node_type (node_type),
         INDEX idx_status (status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $main->exec("CREATE TABLE IF NOT EXISTS ai_providers (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(120) NOT NULL,
+        provider VARCHAR(60) NOT NULL DEFAULT 'openai-compatible',
+        base_url VARCHAR(255),
+        api_key TEXT,
+        text_model VARCHAR(120),
+        image_model VARCHAR(120),
+        video_model VARCHAR(120),
+        status VARCHAR(30) NOT NULL DEFAULT 'enabled',
+        is_default TINYINT(1) NOT NULL DEFAULT 0,
+        last_checked_at DATETIME,
+        last_result VARCHAR(255),
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_provider (provider),
+        INDEX idx_status (status),
+        INDEX idx_default (is_default)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    ensure_column($main, 'ai_providers', 'is_default', 'TINYINT(1) NOT NULL DEFAULT 0');
+    ensure_column($main, 'ai_providers', 'last_checked_at', 'DATETIME');
+    ensure_column($main, 'ai_providers', 'last_result', 'VARCHAR(255)');
     $main->exec("CREATE TABLE IF NOT EXISTS payment_channels (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
         name VARCHAR(120) NOT NULL,
@@ -1506,6 +1528,134 @@ function test_deploy_node(PDO $main, int $id): array
     $main->prepare('UPDATE deploy_nodes SET last_checked_at=:last_checked_at, last_result=:last_result, updated_at=:updated_at WHERE id=:id')
         ->execute(['id' => $id, 'last_checked_at' => now(), 'last_result' => $result, 'updated_at' => now()]);
     return fetch_one($main, 'deploy_nodes', $id) ?: [];
+}
+
+function mask_secret(?string $value): string
+{
+    $value = trim((string)$value);
+    if ($value === '') {
+        return '';
+    }
+    $tail = mb_substr($value, -4, null, 'UTF-8');
+    return '****' . $tail;
+}
+
+function normalize_ai_base_url(string $baseUrl): string
+{
+    $baseUrl = rtrim(trim($baseUrl), '/');
+    if ($baseUrl === '') {
+        return '';
+    }
+    if (str_ends_with($baseUrl, '/chat/completions')) {
+        return $baseUrl;
+    }
+    return $baseUrl . '/chat/completions';
+}
+
+function hydrate_ai_provider(array $row, bool $includeSecret = false): array
+{
+    $row['id'] = (int)$row['id'];
+    $row['is_default'] = (int)($row['is_default'] ?? 0) === 1;
+    $row['api_key_masked'] = mask_secret($row['api_key'] ?? '');
+    if (!$includeSecret) {
+        unset($row['api_key']);
+    }
+    return $row;
+}
+
+function list_ai_providers(PDO $main): array
+{
+    ensure_center_tables($main);
+    $rows = $main->query('SELECT * FROM ai_providers ORDER BY is_default DESC, id DESC')->fetchAll();
+    return ['items' => array_map('hydrate_ai_provider', $rows)];
+}
+
+function ai_provider_payload(array $data, array $current = []): array
+{
+    $name = mb_substr(trim((string)($data['name'] ?? ($current['name'] ?? ''))), 0, 120, 'UTF-8');
+    if ($name === '') {
+        fail('AI 服务名称不能为空', 'VALIDATION_ERROR', 422);
+    }
+    $provider = mb_substr(trim((string)($data['provider'] ?? ($current['provider'] ?? 'openai-compatible'))), 0, 60, 'UTF-8') ?: 'openai-compatible';
+    $baseUrl = mb_substr(trim((string)($data['base_url'] ?? ($current['base_url'] ?? ''))), 0, 255, 'UTF-8');
+    $apiKey = array_key_exists('api_key', $data) && trim((string)$data['api_key']) !== ''
+        ? trim((string)$data['api_key'])
+        : (string)($current['api_key'] ?? '');
+    return [
+        'name' => $name,
+        'provider' => $provider,
+        'base_url' => $baseUrl,
+        'api_key' => $apiKey,
+        'text_model' => mb_substr(trim((string)($data['text_model'] ?? ($current['text_model'] ?? ''))), 0, 120, 'UTF-8'),
+        'image_model' => mb_substr(trim((string)($data['image_model'] ?? ($current['image_model'] ?? ''))), 0, 120, 'UTF-8'),
+        'video_model' => mb_substr(trim((string)($data['video_model'] ?? ($current['video_model'] ?? ''))), 0, 120, 'UTF-8'),
+        'status' => in_array(($data['status'] ?? ($current['status'] ?? 'enabled')), ['enabled', 'disabled'], true) ? (string)($data['status'] ?? ($current['status'] ?? 'enabled')) : 'enabled',
+        'is_default' => !empty($data['is_default']) ? 1 : 0,
+    ];
+}
+
+function save_ai_provider(PDO $main, array $data, ?int $id = null): array
+{
+    ensure_center_tables($main);
+    $current = $id ? fetch_one($main, 'ai_providers', $id) : [];
+    if ($id && !$current) {
+        fail('AI 服务不存在', 'NOT_FOUND', 404);
+    }
+    $payload = ai_provider_payload($data, $current ?: []);
+    $now = now();
+    if (!empty($payload['is_default'])) {
+        $main->exec('UPDATE ai_providers SET is_default = 0');
+    }
+    if ($id) {
+        $stmt = $main->prepare('UPDATE ai_providers SET name=:name, provider=:provider, base_url=:base_url, api_key=:api_key, text_model=:text_model, image_model=:image_model, video_model=:video_model, status=:status, is_default=:is_default, updated_at=:updated_at WHERE id=:id');
+        $stmt->execute($payload + ['id' => $id, 'updated_at' => $now]);
+    } else {
+        $stmt = $main->prepare('INSERT INTO ai_providers (name, provider, base_url, api_key, text_model, image_model, video_model, status, is_default, created_at, updated_at)
+            VALUES (:name, :provider, :base_url, :api_key, :text_model, :image_model, :video_model, :status, :is_default, :created_at, :updated_at)');
+        $stmt->execute($payload + ['created_at' => $now, 'updated_at' => $now]);
+        $id = (int)$main->lastInsertId();
+    }
+    return hydrate_ai_provider(fetch_one($main, 'ai_providers', (int)$id) ?: []);
+}
+
+function test_ai_provider(PDO $main, int $id): array
+{
+    ensure_center_tables($main);
+    $item = fetch_one($main, 'ai_providers', $id);
+    if (!$item) {
+        fail('AI 服务不存在', 'NOT_FOUND', 404);
+    }
+    $ready = trim((string)($item['base_url'] ?? '')) !== ''
+        && trim((string)($item['api_key'] ?? '')) !== ''
+        && trim((string)($item['text_model'] ?? '')) !== '';
+    $result = $ready ? '配置完整，可用于 OpenAI 兼容文本生成接口。' : '请补齐 API 地址、API Key 和文本模型。';
+    $main->prepare('UPDATE ai_providers SET last_checked_at=:last_checked_at, last_result=:last_result, updated_at=:updated_at WHERE id=:id')
+        ->execute(['id' => $id, 'last_checked_at' => now(), 'last_result' => $result, 'updated_at' => now()]);
+    return hydrate_ai_provider(fetch_one($main, 'ai_providers', $id) ?: []);
+}
+
+function apply_ai_provider_to_site(PDO $main, PDO $sitePdo, int $providerId): array
+{
+    ensure_center_tables($main);
+    $provider = fetch_one($main, 'ai_providers', $providerId);
+    if (!$provider) {
+        fail('AI 服务不存在', 'NOT_FOUND', 404);
+    }
+    if (($provider['status'] ?? '') !== 'enabled') {
+        fail('AI 服务未启用', 'VALIDATION_ERROR', 422);
+    }
+    $settings = site_settings($sitePdo);
+    $settings['ai'] = array_replace((array)($settings['ai'] ?? []), [
+        'provider_id' => (int)$provider['id'],
+        'provider' => (string)$provider['provider'],
+        'name' => (string)$provider['name'],
+        'endpoint' => normalize_ai_base_url((string)($provider['base_url'] ?? '')),
+        'api_key' => (string)($provider['api_key'] ?? ''),
+        'model' => (string)($provider['text_model'] ?? ''),
+        'image_model' => (string)($provider['image_model'] ?? ''),
+        'video_model' => (string)($provider['video_model'] ?? ''),
+    ]);
+    return ['provider' => hydrate_ai_provider($provider), 'site' => save_site_settings($sitePdo, $settings)];
 }
 
 function normalize_domain_name(string $domain): string
@@ -4127,6 +4277,8 @@ try {
             'active_sites' => (int)$main->query("SELECT COUNT(*) FROM sites WHERE status = 'active'")->fetchColumn(),
             'deploy_nodes' => (int)$main->query('SELECT COUNT(*) FROM deploy_nodes')->fetchColumn(),
             'active_deploy_nodes' => (int)$main->query("SELECT COUNT(*) FROM deploy_nodes WHERE status = 'active'")->fetchColumn(),
+            'ai_providers' => (int)$main->query('SELECT COUNT(*) FROM ai_providers')->fetchColumn(),
+            'active_ai_providers' => (int)$main->query("SELECT COUNT(*) FROM ai_providers WHERE status = 'enabled'")->fetchColumn(),
         ]);
     }
 
@@ -4176,6 +4328,39 @@ try {
 
     if ($method === 'GET' && $path === '/platform/deploy-nodes') {
         ok(list_deploy_nodes(main_pdo()));
+    }
+
+    if ($method === 'GET' && $path === '/platform/ai-providers') {
+        ok(list_ai_providers(main_pdo()));
+    }
+
+    if ($method === 'POST' && $path === '/platform/ai-providers') {
+        ok(save_ai_provider(main_pdo(), body_json()), 'AI 服务已保存');
+    }
+
+    if ($params = route_param('/platform/ai-providers/{id}/test', $path)) {
+        if ($method === 'POST') {
+            ok(test_ai_provider(main_pdo(), (int)$params['id']), 'AI 服务检查完成');
+        }
+    }
+
+    if ($params = route_param('/platform/ai-providers/{id}/apply', $path)) {
+        if ($method === 'POST') {
+            ok(apply_ai_provider_to_site(main_pdo(), $pdo, (int)$params['id']), 'AI 服务已应用到当前站点');
+        }
+    }
+
+    if ($params = route_param('/platform/ai-providers/{id}', $path)) {
+        $id = (int)$params['id'];
+        if ($method === 'PUT') {
+            ok(save_ai_provider(main_pdo(), body_json(), $id), 'AI 服务已保存');
+        }
+        if ($method === 'DELETE') {
+            $main = main_pdo();
+            ensure_center_tables($main);
+            $main->prepare('DELETE FROM ai_providers WHERE id = ?')->execute([$id]);
+            ok([], 'AI 服务已删除');
+        }
     }
 
     if ($method === 'POST' && $path === '/platform/deploy-nodes') {

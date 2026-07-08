@@ -64,6 +64,7 @@
             <MetricCard title="客户总数" :value="platformOverview.customers || 0" :note="`启用 ${platformOverview.active_customers || 0}`" icon="User" />
             <MetricCard title="站点总数" :value="platformOverview.sites || 0" :note="`启用 ${platformOverview.active_sites || 0}`" icon="Grid" />
             <MetricCard title="部署节点" :value="platformOverview.deploy_nodes || 0" :note="`可用 ${platformOverview.active_deploy_nodes || 0}`" icon="Upload" />
+            <MetricCard title="AI 服务" :value="platformOverview.ai_providers || 0" :note="`可用 ${platformOverview.active_ai_providers || 0}`" icon="MagicStick" />
             <MetricCard title="客户套餐" value="套餐/配额" note="控制站点数、AI额度和存储空间" icon="Tickets" />
           </div>
           <el-row :gutter="16">
@@ -132,6 +133,39 @@
             </el-col>
           </el-row>
           <el-card class="panel mt16" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>AI 服务配置</strong>
+                <el-button type="primary" @click="newAiProvider">新建服务</el-button>
+              </div>
+            </template>
+            <el-table :data="aiProviders" height="260" row-key="id">
+              <el-table-column label="服务" min-width="220">
+                <template #default="{ row }">
+                  <strong>{{ row.name }}</strong><br />
+                  <small>{{ row.provider }} / {{ row.text_model || '-' }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column prop="base_url" label="API 地址" min-width="240" />
+              <el-table-column label="密钥" width="120"><template #default="{ row }">{{ row.api_key_masked || '-' }}</template></el-table-column>
+              <el-table-column label="状态" width="140">
+                <template #default="{ row }">
+                  <el-tag :type="row.status === 'enabled' ? 'success' : 'info'">{{ row.status === 'enabled' ? '启用' : '停用' }}</el-tag>
+                  <el-tag v-if="row.is_default" class="ml6">默认</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="last_result" label="检查结果" min-width="180" />
+              <el-table-column label="操作" width="260">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="testAiProvider(row)">检查</el-button>
+                  <el-button link type="primary" @click="editAiProvider(row)">编辑</el-button>
+                  <el-button link type="success" @click="applyAiProviderToSite(row)">应用到当前站</el-button>
+                  <el-button link type="danger" @click="deleteAiProvider(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+          <el-card class="panel mt16" shadow="never">
             <template #header><strong>平台站点总览</strong></template>
             <el-table :data="platformSites" height="300" row-key="id">
               <el-table-column label="站点" min-width="220"><template #default="{ row }"><strong>{{ row.name }}</strong><br /><small>{{ row.domain || row.subdomain || row.site_key }}</small></template></el-table-column>
@@ -181,6 +215,37 @@
               <div class="drawer-actions">
                 <el-button @click="deployNodeDrawerVisible = false">取消</el-button>
                 <el-button type="primary" @click="saveDeployNode">保存节点</el-button>
+              </div>
+            </el-form>
+          </el-drawer>
+          <el-drawer v-model="aiProviderDrawerVisible" size="620px" :title="aiProviderForm.id ? '编辑 AI 服务' : '新建 AI 服务'">
+            <el-form :model="aiProviderForm" label-width="112px">
+              <el-form-item label="服务名称"><el-input v-model="aiProviderForm.name" placeholder="例如：默认 DeepSeek / OpenAI 兼容服务" /></el-form-item>
+              <el-row :gutter="12">
+                <el-col :span="12">
+                  <el-form-item label="服务商">
+                    <el-select v-model="aiProviderForm.provider" filterable allow-create>
+                      <el-option label="OpenAI 兼容" value="openai-compatible" />
+                      <el-option label="OpenAI" value="openai" />
+                      <el-option label="DeepSeek" value="deepseek" />
+                      <el-option label="通义千问" value="qwen" />
+                      <el-option label="智谱 GLM" value="zhipu" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12"><el-form-item label="状态"><el-select v-model="aiProviderForm.status"><el-option label="启用" value="enabled" /><el-option label="停用" value="disabled" /></el-select></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="API Base URL"><el-input v-model="aiProviderForm.base_url" placeholder="https://api.example.com/v1" /></el-form-item>
+              <el-form-item label="API Key"><el-input v-model="aiProviderForm.api_key" type="password" show-password placeholder="编辑时留空则保留原密钥" /></el-form-item>
+              <el-row :gutter="12">
+                <el-col :span="8"><el-form-item label="文本模型"><el-input v-model="aiProviderForm.text_model" placeholder="gpt-4.1-mini" /></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="图片模型"><el-input v-model="aiProviderForm.image_model" placeholder="可选" /></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="视频模型"><el-input v-model="aiProviderForm.video_model" placeholder="可选" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="默认服务"><el-switch v-model="aiProviderForm.is_default" /></el-form-item>
+              <div class="drawer-actions">
+                <el-button @click="aiProviderDrawerVisible = false">取消</el-button>
+                <el-button type="primary" @click="saveAiProvider">保存 AI 服务</el-button>
               </div>
             </el-form>
           </el-drawer>
@@ -672,6 +737,14 @@
               <el-card class="panel mt16" shadow="never">
                 <template #header><strong>AI 接口配置</strong></template>
                 <el-form :model="site.ai" label-width="96px">
+                  <el-form-item label="平台服务">
+                    <div class="inline-form-row">
+                      <el-select v-model="selectedAiProviderId" filterable placeholder="选择平台 AI 服务">
+                        <el-option v-for="item in aiProviders" :key="item.id" :label="`${item.name} / ${item.text_model || '-'}`" :value="item.id" />
+                      </el-select>
+                      <el-button :disabled="!selectedAiProviderId" @click="applySelectedAiProvider">导入到当前站</el-button>
+                    </div>
+                  </el-form-item>
                   <el-form-item label="服务商"><el-input v-model="site.ai.provider" placeholder="OpenAI / DeepSeek / 通义千问" /></el-form-item>
                   <el-form-item label="模型名称"><el-input v-model="site.ai.model" placeholder="例如：gpt-4.1-mini" /></el-form-item>
                   <el-form-item label="API 地址"><el-input v-model="site.ai.endpoint" placeholder="https://api.example.com/v1/chat/completions" /></el-form-item>
@@ -1590,6 +1663,7 @@ const platformOverview = ref<any>({})
 const platformCustomers = ref<any[]>([])
 const platformSites = ref<any[]>([])
 const deployNodes = ref<any[]>([])
+const aiProviders = ref<any[]>([])
 const currentSiteId = ref<number | string>(10001)
 const operationSiteScope = ref('all')
 const templates = ref<any[]>([])
@@ -1608,6 +1682,7 @@ const batchTaskDrawerVisible = ref(false)
 const categoryDrawerVisible = ref(false)
 const platformCustomerDrawerVisible = ref(false)
 const deployNodeDrawerVisible = ref(false)
+const aiProviderDrawerVisible = ref(false)
 const publishResult = ref<any>(null)
 const deployTesting = ref(false)
 const packaging = ref(false)
@@ -1635,6 +1710,8 @@ const categoryForm = reactive<any>({})
 const categoryType = ref<'article' | 'product'>('article')
 const platformCustomerForm = reactive<any>({})
 const deployNodeForm = reactive<any>({})
+const aiProviderForm = reactive<any>({})
+const selectedAiProviderId = ref<number | string>('')
 const publishSummary = computed(() => parseSummary(publishDetail.summary))
 const publishResultTitle = computed(() => {
   if (!publishResult.value) return ''
@@ -1788,7 +1865,7 @@ function setView(key: string) {
   if (key === 'domains') loadDomains()
   if (key === 'templates') Promise.all([loadTemplates(), loadModuleRegistry()])
   if (key === 'pages') loadPages()
-  if (key === 'ai') loadAiTasks()
+  if (key === 'ai') Promise.all([loadAiTasks(), loadPlatform()])
   if (key === 'articles') loadArticles()
   if (key === 'products') loadProducts()
   if (key === 'categories') loadCategories()
@@ -1812,7 +1889,7 @@ function refreshCurrentView() {
     domains: loadDomains,
     settings: async () => { await Promise.all([loadSettings(), loadStaticPages()]) },
     templates: async () => { await Promise.all([loadTemplates(), loadModuleRegistry(), loadSettings(), loadStaticPages()]) },
-    ai: loadAiTasks,
+    ai: async () => { await Promise.all([loadAiTasks(), loadPlatform()]) },
     pages: loadPages,
     articles: async () => { await Promise.all([loadArticles(), loadCategories()]) },
     products: async () => { await Promise.all([loadProducts(), loadCategories()]) },
@@ -1840,16 +1917,18 @@ async function loadAll() {
 }
 
 async function loadPlatform() {
-  const [overview, customers, siteData, nodes] = await Promise.all([
+  const [overview, customers, siteData, nodes, providers] = await Promise.all([
     request('/api/platform/overview'),
     request('/api/platform/customers?page_size=100'),
     request('/api/platform/sites'),
-    request('/api/platform/deploy-nodes')
+    request('/api/platform/deploy-nodes'),
+    request('/api/platform/ai-providers')
   ])
   platformOverview.value = overview || {}
   platformCustomers.value = customers.items || []
   platformSites.value = siteData.items || []
   deployNodes.value = nodes.items || []
+  aiProviders.value = providers.items || []
 }
 
 async function loadDashboard() {
@@ -2075,6 +2154,81 @@ async function deleteDeployNode(row: any) {
   await loadPlatform()
 }
 
+function resetAiProviderForm() {
+  Object.assign(aiProviderForm, {
+    id: '',
+    name: '',
+    provider: 'openai-compatible',
+    base_url: '',
+    api_key: '',
+    text_model: '',
+    image_model: '',
+    video_model: '',
+    status: 'enabled',
+    is_default: false
+  })
+}
+
+function newAiProvider() {
+  resetAiProviderForm()
+  aiProviderDrawerVisible.value = true
+}
+
+function editAiProvider(row: any) {
+  Object.assign(aiProviderForm, {
+    id: row.id,
+    name: row.name || '',
+    provider: row.provider || 'openai-compatible',
+    base_url: row.base_url || '',
+    api_key: '',
+    text_model: row.text_model || '',
+    image_model: row.image_model || '',
+    video_model: row.video_model || '',
+    status: row.status || 'enabled',
+    is_default: Boolean(row.is_default)
+  })
+  aiProviderDrawerVisible.value = true
+}
+
+async function saveAiProvider() {
+  const method = aiProviderForm.id ? 'PUT' : 'POST'
+  const path = aiProviderForm.id ? `/api/platform/ai-providers/${aiProviderForm.id}` : '/api/platform/ai-providers'
+  await request(path, { method, data: { ...aiProviderForm } })
+  aiProviderDrawerVisible.value = false
+  ElMessage.success('AI 服务已保存')
+  await loadPlatform()
+}
+
+async function testAiProvider(row: any) {
+  const data = await request(`/api/platform/ai-providers/${row.id}/test`, { method: 'POST' })
+  ElMessage.success(data.last_result || 'AI 服务检查完成')
+  await loadPlatform()
+}
+
+async function deleteAiProvider(row: any) {
+  await ElMessageBox.confirm(`确定删除 AI 服务「${row.name}」？已导入到站点的配置不会被自动清空。`)
+  await request(`/api/platform/ai-providers/${row.id}`, { method: 'DELETE' })
+  if (String(selectedAiProviderId.value) === String(row.id)) selectedAiProviderId.value = ''
+  ElMessage.success('AI 服务已删除')
+  await loadPlatform()
+}
+
+async function applyAiProviderToSite(row: any) {
+  const data = await request(`/api/platform/ai-providers/${row.id}/apply`, { method: 'POST' })
+  Object.assign(site, normalizeSite(data.site || site))
+  selectedAiProviderId.value = row.id
+  ElMessage.success(`AI 服务已应用到当前站点：${currentSite.value?.name || site.name || '默认站点'}`)
+}
+
+async function applySelectedAiProvider() {
+  const item = aiProviders.value.find((provider: any) => String(provider.id) === String(selectedAiProviderId.value))
+  if (!item) {
+    ElMessage.warning('请先选择平台 AI 服务')
+    return
+  }
+  await applyAiProviderToSite(item)
+}
+
 function switchSite() {
   ElMessage.success('已切换当前站点')
   publishResult.value = null
@@ -2150,6 +2304,7 @@ async function toggleSiteStatus(item: any) {
 async function loadSettings() {
   const data = await request('/api/site/settings')
   Object.assign(site, normalizeSite(data))
+  selectedAiProviderId.value = site.ai?.provider_id || ''
 }
 
 async function loadStaticPages() {
