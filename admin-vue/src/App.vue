@@ -448,6 +448,7 @@
                 <strong>域名管理</strong>
                 <div class="head-actions">
                   <el-button @click="loadDomains">刷新</el-button>
+                  <el-button :loading="domainChecking" @click="checkAllDomains">检查全部</el-button>
                   <el-button type="primary" @click="newDomain">绑定域名</el-button>
                 </div>
               </div>
@@ -462,8 +463,8 @@
                   <small>{{ row.domain_type }}</small>
                 </template>
               </el-table-column>
-              <el-table-column label="DNS" width="120"><template #default="{ row }"><el-tag>{{ row.dns_status }}</el-tag></template></el-table-column>
-              <el-table-column label="SSL" width="120"><template #default="{ row }"><el-tag>{{ row.ssl_status }}</el-tag></template></el-table-column>
+              <el-table-column label="DNS" width="120"><template #default="{ row }"><el-tag :type="domainDnsTag(row.dns_status)">{{ domainDnsLabel(row.dns_status) }}</el-tag></template></el-table-column>
+              <el-table-column label="SSL" width="120"><template #default="{ row }"><el-tag :type="domainSslTag(row.ssl_status)">{{ domainSslLabel(row.ssl_status) }}</el-tag></template></el-table-column>
               <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status }}</el-tag></template></el-table-column>
               <el-table-column prop="last_result" label="最近检查" min-width="220" />
               <el-table-column label="操作" width="260">
@@ -2094,6 +2095,7 @@ const packaging = ref(false)
 const deploying = ref(false)
 const deployTaskRetrying = ref(false)
 const backingUp = ref(false)
+const domainChecking = ref(false)
 const siteBatchRunning = ref(false)
 const selectedSiteIds = ref<Array<number | string>>([])
 const siteBatchResults = ref<any[]>([])
@@ -2563,9 +2565,25 @@ async function setPrimaryDomain(row: any) {
 }
 
 async function checkDomain(row: any) {
+  domainChecking.value = true
+  try {
   const data = await request(`/api/site/domains/${row.id}/check`, { method: 'POST' })
   ElMessage.success(data.last_result || '域名检查完成')
   await loadDomains()
+  } finally {
+    domainChecking.value = false
+  }
+}
+
+async function checkAllDomains() {
+  domainChecking.value = true
+  try {
+    const data = await request('/api/site/domains/check-all', { method: 'POST' })
+    ElMessage.success(data.message || '域名批量检查完成')
+    await Promise.all([loadDomains(), loadDeployPlan(), loadSites(), loadPlatform()])
+  } finally {
+    domainChecking.value = false
+  }
 }
 
 async function deleteDomain(row: any) {
@@ -2573,6 +2591,22 @@ async function deleteDomain(row: any) {
   await request(`/api/site/domains/${row.id}`, { method: 'DELETE' })
   ElMessage.success('域名已删除')
   await Promise.all([loadDomains(), loadSites(), loadSettings(), loadPlatform()])
+}
+
+function domainDnsLabel(value: string) {
+  return ({ valid: '有效', failed: '异常', pending: '待检查' } as any)[value] || value || '-'
+}
+
+function domainSslLabel(value: string) {
+  return ({ ready: '就绪', failed: '异常', pending: '待申请' } as any)[value] || value || '-'
+}
+
+function domainDnsTag(value: string) {
+  return value === 'valid' ? 'success' : (value === 'failed' ? 'danger' : 'warning')
+}
+
+function domainSslTag(value: string) {
+  return value === 'ready' ? 'success' : (value === 'failed' ? 'danger' : 'warning')
 }
 
 function resetPlatformCustomerForm() {

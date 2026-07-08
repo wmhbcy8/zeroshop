@@ -2286,6 +2286,84 @@ function list_site_domains(PDO $main, int $siteId): array
     return ['items' => $stmt->fetchAll()];
 }
 
+function primary_site_domain(PDO $main, int $siteId): array
+{
+    ensure_center_tables($main);
+    $stmt = $main->prepare('SELECT * FROM site_domains WHERE site_id = ? AND status = "active" ORDER BY is_primary DESC, id DESC LIMIT 1');
+    $stmt->execute([$siteId]);
+    return $stmt->fetch() ?: [];
+}
+
+function probe_domain_dns(string $domain): array
+{
+    $records = [];
+    if (function_exists('dns_get_record')) {
+        $types = DNS_A | DNS_AAAA | DNS_CNAME;
+        $dnsRecords = @dns_get_record($domain, $types);
+        if (is_array($dnsRecords)) {
+            foreach ($dnsRecords as $record) {
+                $value = (string)($record['ip'] ?? $record['ipv6'] ?? $record['target'] ?? '');
+                if ($value !== '') {
+                    $records[] = $value;
+                }
+            }
+        }
+    }
+    if (!$records) {
+        $ips = @gethostbynamel($domain);
+        if (is_array($ips)) {
+            $records = array_merge($records, array_filter(array_map('strval', $ips)));
+        }
+    }
+    $records = array_values(array_unique($records));
+    return [
+        'ok' => count($records) > 0,
+        'records' => $records,
+        'message' => $records ? 'DNS 已解析：' . implode(', ', array_slice($records, 0, 3)) : 'DNS 未解析或暂不可达',
+    ];
+}
+
+function probe_domain_ssl(string $domain, bool $dnsOk): array
+{
+    if (!$dnsOk) {
+        return ['ok' => false, 'status' => 'pending', 'message' => 'DNS 未就绪，暂不检查 HTTPS'];
+    }
+    $url = 'https://' . $domain . '/';
+    if (!function_exists('curl_init')) {
+        $headers = @get_headers($url);
+        $ok = is_array($headers) && preg_match('/^HTTP\/\S+\s+[23]\d\d/i', (string)($headers[0] ?? ''));
+        return [
+            'ok' => $ok,
+            'status' => $ok ? 'ready' : 'failed',
+            'message' => $ok ? 'HTTPS 可访问' : 'HTTPS 暂不可访问',
+        ];
+    }
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_NOBODY => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 6,
+        CURLOPT_CONNECTTIMEOUT => 4,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_USERAGENT => 'HuajianDomainChecker/0.1',
+    ]);
+    curl_exec($ch);
+    $errno = curl_errno($ch);
+    $error = curl_error($ch);
+    $httpCode = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+    $ok = $errno === 0 && $httpCode >= 200 && $httpCode < 500;
+    $message = $ok ? ('HTTPS 可访问，HTTP ' . $httpCode) : ('HTTPS 检查失败' . ($error ? '：' . $error : ''));
+    return [
+        'ok' => $ok,
+        'status' => $ok ? 'ready' : 'failed',
+        'message' => $message,
+        'http_code' => $httpCode,
+    ];
+}
+
 function save_site_domain(PDO $main, int $siteId, array $data, ?int $id = null): array
 {
     ensure_center_tables($main);
@@ -2326,19 +2404,47 @@ function check_site_domain(PDO $main, int $siteId, int $id): array
         fail('域名不存在', 'NOT_FOUND', 404);
     }
     $domain = (string)$item['domain'];
-    $dnsOk = $domain !== '' && strpos($domain, '.') !== false;
-    $sslOk = $dnsOk && (str_starts_with($domain, 'www.') || !str_contains($domain, 'huajian.local'));
-    $result = $dnsOk ? '域名格式有效，等待接入 DNS/SSL 自动检测' : '域名格式异常';
+    $dns = probe_domain_dns($domain);
+    $ssl = probe_domain_ssl($domain, (bool)$dns['ok']);
+    $result = $dns['message'] . '；' . $ssl['message'];
+    $summary = [
+        'domain' => $domain,
+        'dns' => $dns,
+        'ssl' => $ssl,
+        'checked_at' => now(),
+    ];
     $main->prepare('UPDATE site_domains SET dns_status=:dns_status, ssl_status=:ssl_status, last_checked_at=:last_checked_at, last_result=:last_result, updated_at=:updated_at WHERE id=:id')
         ->execute([
             'id' => $id,
-            'dns_status' => $dnsOk ? 'valid' : 'failed',
-            'ssl_status' => $sslOk ? 'ready' : 'pending',
+            'dns_status' => $dns['ok'] ? 'valid' : 'failed',
+            'ssl_status' => $ssl['status'],
             'last_checked_at' => now(),
-            'last_result' => $result,
+            'last_result' => mb_substr($result, 0, 255, 'UTF-8'),
             'updated_at' => now(),
         ]);
-    return fetch_one($main, 'site_domains', $id) ?: [];
+    $saved = fetch_one($main, 'site_domains', $id) ?: [];
+    $saved['check_summary'] = $summary;
+    return $saved;
+}
+
+function check_all_site_domains(PDO $main, int $siteId): array
+{
+    ensure_center_tables($main);
+    $stmt = $main->prepare('SELECT id FROM site_domains WHERE site_id = ? AND status = "active" ORDER BY is_primary DESC, id DESC');
+    $stmt->execute([$siteId]);
+    $items = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $id) {
+        $items[] = check_site_domain($main, $siteId, (int)$id);
+    }
+    $valid = count(array_filter($items, fn($item) => ($item['dns_status'] ?? '') === 'valid'));
+    $sslReady = count(array_filter($items, fn($item) => ($item['ssl_status'] ?? '') === 'ready'));
+    return [
+        'items' => $items,
+        'total' => count($items),
+        'valid_dns' => $valid,
+        'ssl_ready' => $sslReady,
+        'message' => '已检查 ' . count($items) . ' 个启用域名，DNS 有效 ' . $valid . ' 个，HTTPS 就绪 ' . $sslReady . ' 个',
+    ];
 }
 
 function batch_task_filter_sql(): array
@@ -2875,6 +2981,9 @@ function build_deploy_plan(PDO $main, array $site, array $deploy, bool $configur
     $panelUrl = trim((string)($deploy['bt_panel_url'] ?? ($node['panel_url'] ?? '')));
     $rootPath = trim((string)($node['root_path'] ?? ''));
     $domain = trim((string)($site['domain'] ?? $site['subdomain'] ?? ''));
+    $primaryDomain = primary_site_domain($main, (int)($site['id'] ?? 0));
+    $dnsStatus = (string)($primaryDomain['dns_status'] ?? ($domain ? 'pending' : ''));
+    $sslStatus = (string)($primaryDomain['ssl_status'] ?? ($domain ? 'pending' : ''));
     $steps = [
         ['key' => 'generate', 'title' => '生成静态站', 'status' => 'ready', 'description' => '从当前站点内容、模板、模块配置生成 HTML/CSS/JS、sitemap 和 search.json。'],
         ['key' => 'snapshot', 'title' => '创建发布版本', 'status' => 'ready', 'description' => '记录发布包、文件数量、发布模式和任务摘要，便于回滚与审计。'],
@@ -2901,6 +3010,8 @@ function build_deploy_plan(PDO $main, array $site, array $deploy, bool $configur
         ['label' => '部署节点', 'ok' => empty($site['deploy_node_id']) || !empty($node), 'value' => $node['name'] ?? '未绑定平台节点'],
         ['label' => '根目录', 'ok' => $mode !== 'bt-api' || $rootPath !== '' || $sitePath !== '', 'value' => $rootPath ?: '可由站点目录指定'],
         ['label' => '域名', 'ok' => $domain !== '', 'value' => $domain ?: '未绑定'],
+        ['label' => 'DNS', 'ok' => $dnsStatus === 'valid', 'value' => $dnsStatus ?: '未检查'],
+        ['label' => 'HTTPS', 'ok' => $sslStatus === 'ready', 'value' => $sslStatus ?: '未检查'],
     ];
     return [
         'mode' => $mode,
@@ -2908,6 +3019,12 @@ function build_deploy_plan(PDO $main, array $site, array $deploy, bool $configur
         'site_path' => $sitePath,
         'panel_url' => $panelUrl,
         'domain' => $domain,
+        'domain_status' => [
+            'dns_status' => $dnsStatus,
+            'ssl_status' => $sslStatus,
+            'last_checked_at' => (string)($primaryDomain['last_checked_at'] ?? ''),
+            'last_result' => (string)($primaryDomain['last_result'] ?? ''),
+        ],
         'node' => $node ? [
             'id' => (int)$node['id'],
             'name' => (string)$node['name'],
@@ -4437,6 +4554,7 @@ function seo_audit(PDO $pdo, PDO $main): array
     $siteId = requested_site_id();
     $site = site_settings($pdo, $siteId);
     $current = current_site($main, $pdo);
+    $primaryDomain = primary_site_domain($main, $siteId);
     $issues = [];
 
     if (trim((string)($site['name'] ?? '')) === '') {
@@ -4444,6 +4562,14 @@ function seo_audit(PDO $pdo, PDO $main): array
     }
     if (trim((string)($site['domain'] ?? $current['domain'] ?? '')) === '') {
         $issues[] = ['level' => 'warning', 'scope' => 'site', 'message' => '未设置主域名，sitemap 会缺少正式域名'];
+    }
+    if ($primaryDomain) {
+        if (($primaryDomain['dns_status'] ?? '') !== 'valid') {
+            $issues[] = ['level' => 'warning', 'scope' => 'domain', 'message' => '主域名 DNS 尚未检查通过'];
+        }
+        if (($primaryDomain['ssl_status'] ?? '') !== 'ready') {
+            $issues[] = ['level' => 'info', 'scope' => 'domain', 'message' => '主域名 HTTPS 尚未就绪'];
+        }
     }
     if (trim((string)($site['description'] ?? '')) === '') {
         $issues[] = ['level' => 'warning', 'scope' => 'site', 'message' => '站点描述为空'];
@@ -4488,6 +4614,12 @@ function seo_audit(PDO $pdo, PDO $main): array
         'site_id' => $siteId,
         'site_name' => $site['name'] ?? $current['name'] ?? '',
         'domain' => $site['domain'] ?? $current['domain'] ?? '',
+        'domain_status' => $primaryDomain ? [
+            'dns_status' => (string)($primaryDomain['dns_status'] ?? ''),
+            'ssl_status' => (string)($primaryDomain['ssl_status'] ?? ''),
+            'last_checked_at' => (string)($primaryDomain['last_checked_at'] ?? ''),
+            'last_result' => (string)($primaryDomain['last_result'] ?? ''),
+        ] : null,
         'score' => $score,
         'grade' => $score >= 85 ? 'A' : ($score >= 70 ? 'B' : ($score >= 55 ? 'C' : 'D')),
         'issues' => $issues,
@@ -6478,6 +6610,10 @@ try {
             save_site_settings($pdo, $settings);
         }
         ok($item, '域名已保存');
+    }
+
+    if ($method === 'POST' && $path === '/site/domains/check-all') {
+        ok(check_all_site_domains(main_pdo(), requested_site_id()), '域名批量检查完成');
     }
 
     if ($params = route_param('/site/domains/{id}/check', $path)) {
