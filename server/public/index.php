@@ -415,6 +415,65 @@ function resolve_order_service_requests(PDO $pdo): array
     ];
 }
 
+function record_site_visit(PDO $pdo): array
+{
+    $data = body_json();
+    $path = trim((string)($data['path'] ?? ''));
+    $title = trim((string)($data['title'] ?? ''));
+    $referrer = trim((string)($data['referrer'] ?? ''));
+    $sessionId = trim((string)($data['session_id'] ?? ''));
+    if ($path === '') {
+        $path = '/';
+    }
+    $ip = substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 80);
+    $userAgent = substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255);
+    $visitorSeed = $sessionId !== '' ? $sessionId : $ip . '|' . $userAgent;
+    $visitorKey = hash('sha256', $visitorSeed);
+    $stmt = $pdo->prepare("INSERT INTO site_visits (visitor_key, session_id, path, title, referrer, ip_address, user_agent, created_at)
+        VALUES (:visitor_key, :session_id, :path, :title, :referrer, :ip_address, :user_agent, :created_at)");
+    $stmt->execute([
+        'visitor_key' => $visitorKey,
+        'session_id' => $sessionId,
+        'path' => substr($path, 0, 255),
+        'title' => substr($title, 0, 120),
+        'referrer' => substr($referrer, 0, 255),
+        'ip_address' => $ip,
+        'user_agent' => $userAgent,
+        'created_at' => now(),
+    ]);
+    ok(['id' => (int)$pdo->lastInsertId()], '访问已记录');
+}
+
+function dashboard_metrics(PDO $pdo): array
+{
+    $today = date('Y-m-d');
+    $visitStmt = $pdo->prepare("SELECT COUNT(*) AS views, COUNT(DISTINCT visitor_key) AS visitors FROM site_visits WHERE created_at >= :today");
+    $visitStmt->execute(['today' => $today . ' 00:00:00']);
+    $visitStats = $visitStmt->fetch() ?: [];
+    $views = (int)($visitStats['views'] ?? 0);
+    $visitors = (int)($visitStats['visitors'] ?? 0);
+
+    $orderStmt = $pdo->prepare("SELECT
+        COALESCE(SUM(CASE WHEN payment_status = 'paid' AND (paid_at >= :today OR (paid_at IS NULL AND updated_at >= :today)) THEN total_amount ELSE 0 END), 0) AS today_paid_amount,
+        SUM(payment_status = 'pending') AS pending_payment_orders,
+        SUM(fulfillment_status IN ('new', 'confirmed')) AS pending_orders,
+        SUM(payment_status = 'paid' AND fulfillment_status IN ('new', 'confirmed')) AS pending_fulfillment_orders
+        FROM orders");
+    $orderStmt->execute(['today' => $today . ' 00:00:00']);
+    $orderStats = $orderStmt->fetch() ?: [];
+
+    return [
+        'today_visitors' => $visitors,
+        'today_views' => $views,
+        'visit_depth' => $visitors > 0 ? round($views / $visitors, 2) : 0,
+        'today_paid_amount' => number_format((float)($orderStats['today_paid_amount'] ?? 0), 2, '.', ''),
+        'pending_orders' => (int)($orderStats['pending_orders'] ?? 0),
+        'pending_payment_orders' => (int)($orderStats['pending_payment_orders'] ?? 0),
+        'pending_fulfillment_orders' => (int)($orderStats['pending_fulfillment_orders'] ?? 0),
+        'currency' => 'CNY',
+    ];
+}
+
 function public_order_view(array $order): array
 {
     $items = [];
@@ -1032,6 +1091,20 @@ function ensure_auth_tables(PDO $pdo): void
     ensure_column($pdo, 'orders', 'paid_at', 'DATETIME');
     ensure_column($pdo, 'orders', 'shipped_at', 'DATETIME');
 
+    $pdo->exec("CREATE TABLE IF NOT EXISTS site_visits (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        visitor_key CHAR(64) NOT NULL,
+        session_id VARCHAR(80),
+        path VARCHAR(255),
+        title VARCHAR(120),
+        referrer VARCHAR(255),
+        ip_address VARCHAR(80),
+        user_agent VARCHAR(255),
+        created_at DATETIME NOT NULL,
+        INDEX idx_created_at (created_at),
+        INDEX idx_visitor_key (visitor_key)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
     $exists = (int)$pdo->query('SELECT COUNT(*) FROM admin_users')->fetchColumn();
     if ($exists === 0) {
         $username = env_value('HJ_ADMIN_USERNAME', 'admin');
@@ -1164,6 +1237,10 @@ try {
 
     if ($method === 'GET' && $path === '/auth/me') {
         ok(require_login($pdo));
+    }
+
+    if ($method === 'POST' && $path === '/analytics/visit') {
+        record_site_visit($pdo);
     }
 
     if ($method === 'POST' && $path === '/forms/submit') {
@@ -1340,6 +1417,10 @@ try {
     }
 
     require_login($pdo);
+
+    if ($method === 'GET' && $path === '/dashboard/metrics') {
+        ok(dashboard_metrics($pdo));
+    }
 
     if ($method === 'GET' && $path === '/site/settings') {
         ok(site_settings($pdo));

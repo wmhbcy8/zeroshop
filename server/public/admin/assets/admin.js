@@ -816,15 +816,22 @@ async function saveSiteSettings(event, options = {}) {
 }
 
 async function loadDashboard() {
-  const [site, articles, products, orders, media, forms] = await Promise.all([
+  const [site, articles, products, orders, media, forms, metrics] = await Promise.all([
     request('/api/site/settings'),
     request('/api/articles?page_size=1'),
     request('/api/products?page_size=1'),
     request('/api/orders?page_size=1'),
     request('/api/media?page_size=1'),
-    request('/api/forms/submissions?page_size=1')
+    request('/api/forms/submissions?page_size=1'),
+    request('/api/dashboard/metrics')
   ]);
   state.site = getDefaultSite(site);
+  $('#statTodayVisitors').textContent = metrics.today_visitors || 0;
+  $('#statTodayViews').textContent = `浏览 ${metrics.today_views || 0} 次`;
+  $('#statVisitDepth').textContent = metrics.visit_depth || 0;
+  $('#statTodayPaid').textContent = `${metrics.currency || 'CNY'} ${metrics.today_paid_amount || '0.00'}`;
+  $('#statPendingOrders').textContent = metrics.pending_orders || 0;
+  $('#statPendingOrderHint').textContent = `待付款 ${metrics.pending_payment_orders || 0} / 待发货 ${metrics.pending_fulfillment_orders || 0}`;
   $('#statArticles').textContent = articles.pagination.total;
   $('#statProducts').textContent = products.pagination.total;
   $('#statOrders').textContent = orders.pagination.total;

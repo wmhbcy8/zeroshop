@@ -1,4 +1,34 @@
 const latestOrderStorageKey = 'huajian_latest_order';
+const visitStorageKey = 'huajian_visit_id';
+
+function getVisitId() {
+  try {
+    let value = localStorage.getItem(visitStorageKey);
+    if (!value) {
+      value = 'v_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem(visitStorageKey, value);
+    }
+    return value;
+  } catch (error) {
+    return '';
+  }
+}
+
+function trackSiteVisit() {
+  if (location.protocol === 'file:') return;
+  fetch('/api/analytics/visit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      session_id: getVisitId(),
+      path: location.pathname || '/',
+      title: document.title || '',
+      referrer: document.referrer || ''
+    })
+  }).catch(function () {});
+}
+
+trackSiteVisit();
 
 document.addEventListener('submit', function (event) {
   const form = event.target;

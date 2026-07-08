@@ -117,6 +117,7 @@ http://127.0.0.1:8000/
 - 后台订单详情会识别最新服务请求，支持填写客服回复或一键标记已处理，客户查单页可看到服务进度
 - 后台新增服务中心，可集中筛选待处理/已处理服务请求，并一键跳转到对应订单处理
 - 服务中心支持待处理数量提醒和批量标记已处理，方便客服集中清理请求队列
+- 后台概览展示今日访客、访问深度、今日支付金额和待处理订单，前台静态页会自动上报访问统计
 - 留言列表会按询盘字段配置显示字段标题，便于客服快速识别客户需求
 - 留言支持详情查看、跟进状态、客户等级和跟进备注，适合作为轻量客服线索池
 - 站点设置包含 AI 服务配置占位，文章和商品支持 AI 草稿生成入口
@@ -166,6 +167,7 @@ POST /api/auth/logout
 ```text
 GET/PUT          /api/site/settings
 GET              /api/site/modules
+GET              /api/dashboard/metrics
 GET/POST         /api/articles
 GET/PUT/DELETE   /api/articles/{id}
 GET/POST         /api/products
@@ -198,6 +200,7 @@ POST             /api/orders/service-requests/resolve
 
 ```text
 POST /api/forms/submit
+POST /api/analytics/visit
 POST /api/orders
 POST /api/orders/lookup
 POST /api/orders/customer-note

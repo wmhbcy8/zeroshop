@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>化简站点后台 MVP</title>
-  <link rel="stylesheet" href="/admin/assets/admin.css?v=service-center-2">
+  <link rel="stylesheet" href="/admin/assets/admin.css?v=dashboard-metrics-1">
 </head>
 <body>
   <section class="login-screen" id="loginScreen">
@@ -60,6 +60,10 @@
 
       <section class="view active" id="view-dashboard">
         <div class="stats-grid">
+          <article class="stat-card metric-card"><span>今日访客</span><strong id="statTodayVisitors">-</strong><small id="statTodayViews">浏览 - 次</small></article>
+          <article class="stat-card metric-card"><span>访问深度</span><strong id="statVisitDepth">-</strong><small>人均浏览页数</small></article>
+          <article class="stat-card metric-card"><span>今日支付金额</span><strong id="statTodayPaid">-</strong><small>已支付订单金额</small></article>
+          <article class="stat-card metric-card"><span>待处理订单</span><strong id="statPendingOrders">-</strong><small id="statPendingOrderHint">待付款/待发货</small></article>
           <article class="stat-card"><span>文章</span><strong id="statArticles">-</strong></article>
           <article class="stat-card"><span>商品</span><strong id="statProducts">-</strong></article>
           <article class="stat-card"><span>订单</span><strong id="statOrders">-</strong></article>

@@ -153,6 +153,16 @@ h2 { font-size: 18px; }
 .stat-card { padding: 20px; }
 .stat-card span { color: var(--muted); font-size: 13px; }
 .stat-card strong { display: block; font-size: 30px; margin-top: 8px; }
+.stat-card small {
+  display: block;
+  color: var(--muted);
+  margin-top: 6px;
+  font-size: 12px;
+}
+.metric-card {
+  border-color: #cfe4ff;
+  background: linear-gradient(180deg, #ffffff, #f7fbff);
+}
 .panel { padding: 18px; margin-bottom: 16px; }
 .panel-head {
   display: flex;
