@@ -189,8 +189,18 @@ function load_data_from_mysql(PDO $pdo): array
     $productCategories = $pdo->query("SELECT id, name, slug, description FROM product_categories ORDER BY sort_order ASC, id ASC")->fetchAll();
     $articles = $pdo->query("SELECT id, category_id, title, slug, cover, summary, content, seo_title, seo_keywords, seo_description, published_at FROM articles WHERE status = 'published' ORDER BY published_at DESC, id DESC")->fetchAll();
     $products = $pdo->query("SELECT id, category_id, title, slug, sku, cover, summary, description, price, market_price, stock, seo_title, seo_keywords, seo_description FROM products WHERE status = 'published' ORDER BY id DESC")->fetchAll();
+    $pages = [];
+    try {
+        $tableExists = (bool)$pdo->query("SHOW TABLES LIKE 'pages'")->fetchColumn();
+        if ($tableExists) {
+            $pages = $pdo->query("SELECT id, title, slug, cover, summary, content, seo_title, seo_keywords, seo_description, published_at FROM pages WHERE status = 'published' ORDER BY id DESC")->fetchAll();
+        }
+    } catch (Throwable $error) {
+        $pages = [];
+    }
     $articles = filter_distributed_content($pdo, 'article', $articles, $siteId);
     $products = filter_distributed_content($pdo, 'product', $products, $siteId);
+    $pages = filter_distributed_content($pdo, 'page', $pages, $siteId);
 
     foreach ($products as &$product) {
         $product['price'] = number_format((float)$product['price'], 2, '.', '');
@@ -198,7 +208,7 @@ function load_data_from_mysql(PDO $pdo): array
     }
     unset($product);
 
-    return [$site, $categories, $productCategories, $articles, $products];
+    return [$site, $categories, $productCategories, $articles, $products, $pages];
 }
 
 function filter_distributed_content(PDO $pdo, string $type, array $items, int $siteId): array
@@ -638,7 +648,7 @@ $publicRoot = env_or_null('HJ_PUBLIC_PATH') ?: $root . DIRECTORY_SEPARATOR . 'si
 
 $pdo = pdo_site();
 if ($pdo) {
-    [$site, $categories, $productCategories, $articles, $products] = load_data_from_mysql($pdo);
+    [$site, $categories, $productCategories, $articles, $products, $pages] = load_data_from_mysql($pdo);
     $dataSource = 'mysql';
 } else {
     $site = read_json($dataRoot . DIRECTORY_SEPARATOR . 'site.json');
@@ -646,6 +656,7 @@ if ($pdo) {
     $productCategories = read_json($dataRoot . DIRECTORY_SEPARATOR . 'product-categories.json');
     $articles = read_json($dataRoot . DIRECTORY_SEPARATOR . 'articles.json');
     $products = read_json($dataRoot . DIRECTORY_SEPARATOR . 'products.json');
+    $pages = [];
     $dataSource = 'json';
 }
 $site['id'] = (int)($site['id'] ?? (env_or_null('HJ_SITE_ID') ?: 10001));
@@ -789,6 +800,21 @@ foreach ($products as $product) {
     ])));
 }
 
+foreach ($pages as $page) {
+    write_file($publicRoot . DIRECTORY_SEPARATOR . $page['slug'] . '.html', $engine->renderFile('pages/page.html', array_replace(base_context($site, $categories, $productCategories, $articles, $products), [
+        'page' => $page,
+        'breadcrumb_html' => breadcrumb_html($site, [
+            ['title' => '首页', 'url' => 'index.html'],
+            ['title' => $page['title'] ?? '', 'url' => ''],
+        ]),
+        'seo' => [
+            'title' => $page['seo_title'] ?? $page['title'],
+            'description' => $page['seo_description'] ?? $page['summary'],
+            'keywords' => $page['seo_keywords'] ?? '',
+        ],
+    ])));
+}
+
 $domain = $site['domain'] ?? 'demo.local';
 $sitemap = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'];
 $sitemap[] = '  <url><loc>https://' . $domain . '/index.html</loc></url>';
@@ -811,6 +837,9 @@ foreach ($productCategories as $category) {
 foreach ($products as $product) {
     $sitemap[] = '  <url><loc>https://' . $domain . '/products/' . $product['slug'] . '.html</loc></url>';
 }
+foreach ($pages as $page) {
+    $sitemap[] = '  <url><loc>https://' . $domain . '/' . $page['slug'] . '.html</loc></url>';
+}
 $sitemap[] = '</urlset>';
 write_file($publicRoot . DIRECTORY_SEPARATOR . 'sitemap.xml', implode(PHP_EOL, $sitemap));
 write_file($publicRoot . DIRECTORY_SEPARATOR . 'robots.txt', "User-agent: *\nAllow: /\nSitemap: https://{$domain}/sitemap.xml\n");
@@ -831,6 +860,9 @@ foreach ($productCategories as $category) {
 }
 foreach ($products as $product) {
     $search[] = ['type' => 'product', 'title' => $product['title'], 'summary' => $product['summary'], 'url' => 'products/' . $product['slug'] . '.html'];
+}
+foreach ($pages as $page) {
+    $search[] = ['type' => 'page', 'title' => $page['title'], 'summary' => $page['summary'], 'url' => $page['slug'] . '.html'];
 }
 write_file($publicRoot . DIRECTORY_SEPARATOR . 'search.json', json_encode($search, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
 

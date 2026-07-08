@@ -536,6 +536,28 @@
           />
         </section>
 
+        <section v-if="view === 'pages'">
+          <ContentEditor
+            type="page"
+            :items="pages"
+            :form="pageForm"
+            :page="pagePager.page"
+            :page-size="pagePager.page_size"
+            :total="pagePager.total"
+            :media="imageMedia"
+            :sites="sites"
+            :categories="categories"
+            :product-categories="productCategories"
+            :current-site-id="currentSiteId"
+            @new="newPage"
+            @edit="editPage"
+            @save="savePage"
+            @delete="deletePage"
+            @ai="generatePageDraft"
+            @page-change="changePagePage"
+          />
+        </section>
+
         <section v-if="view === 'products'">
           <ContentEditor
             type="product"
@@ -1071,6 +1093,7 @@ const loginForm = reactive({ username: 'admin', password: 'admin123456' })
 const site = reactive<any>({ ai: {}, payment: {}, deploy: {}, content: {} })
 const metrics = ref<any>({})
 const totals = reactive({ articles: 0, products: 0, orders: 0, media: 0, forms: 0 })
+const pages = ref<any[]>([])
 const articles = ref<any[]>([])
 const products = ref<any[]>([])
 const categories = ref<any[]>([])
@@ -1133,6 +1156,7 @@ const publishResultSubtitle = computed(() => {
 })
 const articleForm = reactive<any>({})
 const productForm = reactive<any>({})
+const pageForm = reactive<any>({})
 const siteEditingId = ref<number | string>('')
 const emptyDeploy = () => ({ bt_panel_url: '', site_path: '', mode: 'manual', after_action: '', note: '' })
 const siteForm = reactive<any>({ name: '', domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active', deploy: emptyDeploy() })
@@ -1140,6 +1164,7 @@ const aiForm = reactive<any>({ type: 'article', prompt: '围绕自主品牌商�
 const pageBuilder = reactive({ prompt: '围绕自主品牌商品、行业解决方案、SEO 内容沉淀和询盘转化，生成一个企业官网 + 博客知识库 + 独立站商城首页方案' })
 const articlePager = reactive({ page: 1, page_size: 10, total: 0 })
 const productPager = reactive({ page: 1, page_size: 10, total: 0 })
+const pagePager = reactive({ page: 1, page_size: 10, total: 0 })
 const orderPager = reactive({ page: 1, page_size: 10, total: 0 })
 const servicePager = reactive({ page: 1, page_size: 10, total: 0 })
 const mediaPager = reactive({ page: 1, page_size: 12, total: 0 })
@@ -1160,6 +1185,7 @@ const navItems = [
   { key: 'sites', label: '站点', hint: '管理客户名下所有前台站点。', icon: 'Grid' },
   { key: 'settings', label: '设置', hint: '维护当前站点基础信息、SEO、导航和全站页面结构。', icon: 'Setting' },
   { key: 'templates', label: '模板', hint: '选择主题模板，启用首页与全站模块。', icon: 'Grid' },
+  { key: 'pages', label: '页面', hint: '管理关于我们、服务介绍、专题落地页等普通静态页面。', icon: 'Files' },
   { key: 'ai', label: 'AI', hint: '批量生成文章、商品文案和封面素材。', icon: 'MagicStick' },
   { key: 'articles', label: '文章', hint: '管理 SEO 文章和知识库内容。', icon: 'Document' },
   { key: 'products', label: '商品', hint: '管理独立站商品与商城展示内容。', icon: 'Goods' },
@@ -1254,6 +1280,7 @@ function setView(key: string) {
   if (key === 'dashboard') loadDashboard()
   if (key === 'sites') loadSites()
   if (key === 'templates') Promise.all([loadTemplates(), loadModuleRegistry()])
+  if (key === 'pages') loadPages()
   if (key === 'articles') loadArticles()
   if (key === 'products') loadProducts()
   if (key === 'categories') loadCategories()
@@ -1273,6 +1300,7 @@ function refreshCurrentView() {
     settings: async () => { await Promise.all([loadSettings(), loadStaticPages()]) },
     templates: async () => { await Promise.all([loadTemplates(), loadModuleRegistry(), loadSettings(), loadStaticPages()]) },
     ai: async () => {},
+    pages: loadPages,
     articles: async () => { await Promise.all([loadArticles(), loadCategories()]) },
     products: async () => { await Promise.all([loadProducts(), loadCategories()]) },
     categories: loadCategories,
@@ -1292,7 +1320,7 @@ function openLegacyAdmin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadSites(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadCategories(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadVersions()])
+  await Promise.all([loadSites(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadVersions()])
 }
 
 async function loadDashboard() {
@@ -1666,6 +1694,16 @@ function changeProductPage(page: number) {
   loadProducts()
 }
 
+async function loadPages() {
+  const data = await request(`/api/pages?page=${pagePager.page}&page_size=${pagePager.page_size}`)
+  pages.value = data.items || []
+  pagePager.total = data.pagination?.total || pages.value.length
+}
+function changePagePage(page: number) {
+  pagePager.page = page
+  loadPages()
+}
+
 async function loadCategories() {
   const [articleData, productData] = await Promise.all([
     request('/api/categories'),
@@ -1765,6 +1803,26 @@ function normalizeDistributionPayload(form: any) {
 
 function syncAiSiteScope() {
   aiForm.site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
+}
+
+function newPage() { Object.assign(pageForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', site_scope: 'current', site_ids: currentSiteIds() }) }
+function editPage(item: any) { Object.assign(pageForm, { ...item, site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds() }) }
+async function savePage() {
+  const method = pageForm.id ? 'PUT' : 'POST'
+  const path = pageForm.id ? `/api/pages/${pageForm.id}` : '/api/pages'
+  await request(path, { method, data: normalizeDistributionPayload(pageForm) })
+  ElMessage.success('页面已保存')
+  pagePager.page = pageForm.id ? pagePager.page : 1
+  await Promise.all([loadPages(), loadStaticPages()])
+}
+async function deletePage(item: any) {
+  await ElMessageBox.confirm(`确定删除页面「${item.title}」？`)
+  await request(`/api/pages/${item.id}`, { method: 'DELETE' })
+  await Promise.all([loadPages(), loadStaticPages()])
+}
+async function generatePageDraft(prompt: string) {
+  const data = await request('/api/ai/generate', { method: 'POST', data: { type: 'article', prompt } })
+  Object.assign(pageForm, { ...(data.draft || data), content: (data.draft || data).content || '' })
 }
 
 function newArticle() { Object.assign(articleForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', site_scope: 'current', site_ids: currentSiteIds() }) }

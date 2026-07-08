@@ -46,7 +46,7 @@
         <el-form-item><el-button @click="$emit('ai', prompt)">AI 生成草稿</el-button></el-form-item>
         <el-form-item label="标题"><el-input v-model="form.title" /></el-form-item>
         <el-form-item label="Slug"><el-input v-model="form.slug" /></el-form-item>
-        <el-form-item label="分类">
+        <el-form-item v-if="type !== 'page'" label="分类">
           <el-select v-model="form.category_id" clearable filterable placeholder="选择分类">
             <el-option v-for="item in categoryOptions" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
@@ -60,7 +60,7 @@
           <img v-if="form.cover" class="cover-preview" :src="form.cover.startsWith('/') ? form.cover : '/' + form.cover" />
         </el-form-item>
         <el-form-item label="摘要"><el-input v-model="form.summary" type="textarea" :rows="3" /></el-form-item>
-        <el-form-item :label="type === 'article' ? '正文' : '描述'"><el-input v-model="form[bodyField]" type="textarea" :rows="7" /></el-form-item>
+        <el-form-item :label="bodyLabel"><el-input v-model="form[bodyField]" type="textarea" :rows="7" /></el-form-item>
         <el-form-item label="发布范围">
           <el-radio-group v-model="form.site_scope" @change="syncScope">
             <el-radio-button label="current">当前站点</el-radio-button>
@@ -103,7 +103,7 @@
 import { computed, ref } from 'vue'
 
 const props = defineProps<{
-  type: 'article' | 'product'
+  type: 'article' | 'product' | 'page'
   items: any[]
   form: any
   page: number
@@ -121,8 +121,9 @@ const emit = defineEmits(['new', 'edit', 'save', 'delete', 'ai', 'page-change'])
 const prompt = ref('')
 const drawerVisible = ref(false)
 const mediaDrawerVisible = ref(false)
-const title = computed(() => props.type === 'article' ? '文章' : '商品')
-const bodyField = computed(() => props.type === 'article' ? 'content' : 'description')
+const title = computed(() => props.type === 'article' ? '文章' : (props.type === 'product' ? '商品' : '页面'))
+const bodyField = computed(() => props.type === 'product' ? 'description' : 'content')
+const bodyLabel = computed(() => props.type === 'product' ? '描述' : '正文')
 const categoryOptions = computed(() => props.type === 'article' ? (props.categories || []) : (props.productCategories || []))
 
 function openNew() {

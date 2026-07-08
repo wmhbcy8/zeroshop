@@ -1474,6 +1474,7 @@ function apply_payment_channel_to_site(PDO $main, PDO $sitePdo, int $channelId):
 
 function ensure_content_distribution_table(PDO $pdo): void
 {
+    ensure_pages_table($pdo);
     $pdo->exec("CREATE TABLE IF NOT EXISTS content_site_relations (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
         content_type VARCHAR(30) NOT NULL,
@@ -1487,6 +1488,50 @@ function ensure_content_distribution_table(PDO $pdo): void
 
     seed_content_distribution($pdo, 'article', 'articles');
     seed_content_distribution($pdo, 'product', 'products');
+    seed_content_distribution($pdo, 'page', 'pages');
+}
+
+function ensure_pages_table(PDO $pdo): void
+{
+    $pdo->exec("CREATE TABLE IF NOT EXISTS pages (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        title VARCHAR(180) NOT NULL,
+        slug VARCHAR(180) NOT NULL UNIQUE,
+        cover VARCHAR(255),
+        summary TEXT,
+        content MEDIUMTEXT,
+        seo_title VARCHAR(180),
+        seo_keywords VARCHAR(255),
+        seo_description TEXT,
+        status VARCHAR(30) NOT NULL DEFAULT 'draft',
+        published_at DATETIME,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_status (status),
+        INDEX idx_published_at (published_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+
+function reserved_page_slugs(): array
+{
+    return ['index', 'contact', 'search', 'order', 'news', 'products', 'category', 'product-category', 'assets', 'api', 'admin', 'admin-vue', 's'];
+}
+
+function assert_page_slug_available(PDO $pdo, string $slug, ?int $ignoreId = null): void
+{
+    $slug = trim($slug);
+    if ($slug === '' || !preg_match('/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/', $slug)) {
+        fail('页面 slug 只能使用字母、数字、中划线和下划线', 'VALIDATION_ERROR', 422);
+    }
+    if (in_array(strtolower($slug), reserved_page_slugs(), true)) {
+        fail('页面 slug 与系统页面冲突', 'VALIDATION_ERROR', 422);
+    }
+    $stmt = $pdo->prepare('SELECT id FROM pages WHERE slug = ? LIMIT 1');
+    $stmt->execute([$slug]);
+    $id = (int)($stmt->fetchColumn() ?: 0);
+    if ($id > 0 && (!$ignoreId || $id !== $ignoreId)) {
+        fail('页面 slug 已存在', 'VALIDATION_ERROR', 422);
+    }
 }
 
 function seed_content_distribution(PDO $pdo, string $type, string $table): void
@@ -1986,6 +2031,7 @@ function apply_site_settings_to_all(PDO $main, PDO $sitePdo, array $settings): a
 
 function site_static_pages(PDO $pdo): array
 {
+    ensure_pages_table($pdo);
     $siteId = requested_site_id();
     $items = [
         ['type' => 'system', 'title' => '首页', 'url' => 'index.html'],
@@ -1999,6 +2045,7 @@ function site_static_pages(PDO $pdo): array
     $relationExists = (bool)$pdo->query("SHOW TABLES LIKE 'content_site_relations'")->fetchColumn();
     $articleSql = "SELECT id, title, slug FROM articles WHERE status = 'published'";
     $productSql = "SELECT id, title, slug FROM products WHERE status = 'published'";
+    $pageSql = "SELECT id, title, slug FROM pages WHERE status = 'published'";
     $params = [];
 
     if ($relationExists) {
@@ -2012,6 +2059,18 @@ function site_static_pages(PDO $pdo): array
             $productSql .= " AND id IN (SELECT content_id FROM content_site_relations WHERE content_type = 'product' AND site_id = :product_site_id)";
             $params['product_site_id'] = $siteId;
         }
+        $pageHasRelations = (int)$pdo->query("SELECT COUNT(*) FROM content_site_relations WHERE content_type = 'page'")->fetchColumn();
+        if ($pageHasRelations > 0) {
+            $pageSql .= " AND id IN (SELECT content_id FROM content_site_relations WHERE content_type = 'page' AND site_id = :page_site_id)";
+            $params['page_site_id'] = $siteId;
+        }
+    }
+
+    $pageSql .= ' ORDER BY id DESC LIMIT 200';
+    $pageStmt = $pdo->prepare($pageSql);
+    $pageStmt->execute(array_filter($params, fn($key) => $key === 'page_site_id', ARRAY_FILTER_USE_KEY));
+    foreach ($pageStmt->fetchAll() as $row) {
+        $items[] = ['type' => 'custom', 'title' => $row['title'], 'url' => $row['slug'] . '.html'];
     }
 
     $categoryRows = $pdo->query('SELECT id, name, slug FROM categories ORDER BY sort_order ASC, id ASC LIMIT 200')->fetchAll();
@@ -2260,6 +2319,31 @@ function insert_product(PDO $pdo, array $data): int
         'market_price' => $data['market_price'] ?? 0,
         'stock' => $data['stock'] ?? 0,
         'attributes' => json_encode($data['attributes'] ?? []),
+        'seo_title' => $data['seo_title'] ?? $data['title'],
+        'seo_keywords' => $data['seo_keywords'] ?? '',
+        'seo_description' => $data['seo_description'] ?? ($data['summary'] ?? ''),
+        'status' => $data['status'] ?? 'draft',
+        'published_at' => $data['published_at'] ?? null,
+        'created_at' => $time,
+        'updated_at' => $time,
+    ]);
+    return (int)$pdo->lastInsertId();
+}
+
+function insert_page(PDO $pdo, array $data): int
+{
+    ensure_pages_table($pdo);
+    require_fields($data, ['title', 'slug']);
+    assert_page_slug_available($pdo, (string)$data['slug']);
+    $stmt = $pdo->prepare("INSERT INTO pages (title, slug, cover, summary, content, seo_title, seo_keywords, seo_description, status, published_at, created_at, updated_at)
+        VALUES (:title, :slug, :cover, :summary, :content, :seo_title, :seo_keywords, :seo_description, :status, :published_at, :created_at, :updated_at)");
+    $time = now();
+    $stmt->execute([
+        'title' => $data['title'],
+        'slug' => $data['slug'],
+        'cover' => $data['cover'] ?? '',
+        'summary' => $data['summary'] ?? '',
+        'content' => $data['content'] ?? '',
         'seo_title' => $data['seo_title'] ?? $data['title'],
         'seo_keywords' => $data['seo_keywords'] ?? '',
         'seo_description' => $data['seo_description'] ?? ($data['summary'] ?? ''),
@@ -3180,6 +3264,61 @@ try {
         }
         if ($method === 'DELETE') {
             $pdo->prepare('DELETE FROM product_categories WHERE id = ?')->execute([$id]);
+            ok([], '删除成功');
+        }
+    }
+
+    if ($method === 'GET' && $path === '/pages') {
+        ensure_pages_table($pdo);
+        $result = paginate($pdo, 'pages', [], 'id DESC');
+        $result['items'] = attach_distribution($pdo, 'page', $result['items']);
+        ok($result);
+    }
+
+    if ($method === 'POST' && $path === '/pages') {
+        $data = body_json();
+        $id = insert_page($pdo, $data);
+        sync_content_distribution($pdo, 'page', $id, normalize_site_ids($data));
+        ok(['id' => $id], '创建成功');
+    }
+
+    if ($params = route_param('/pages/{id}', $path)) {
+        ensure_pages_table($pdo);
+        $id = (int)$params['id'];
+        if ($method === 'GET') {
+            $item = fetch_one($pdo, 'pages', $id);
+            if ($item) {
+                $item = attach_distribution($pdo, 'page', [$item])[0];
+            }
+            $item ? ok($item) : fail('页面不存在', 'NOT_FOUND', 404);
+        }
+        if ($method === 'PUT') {
+            $data = body_json();
+            require_fields($data, ['title', 'slug']);
+            assert_page_slug_available($pdo, (string)$data['slug'], $id);
+            $stmt = $pdo->prepare("UPDATE pages SET title=:title, slug=:slug, cover=:cover, summary=:summary, content=:content, seo_title=:seo_title, seo_keywords=:seo_keywords, seo_description=:seo_description, status=:status, published_at=:published_at, updated_at=:updated_at WHERE id=:id");
+            $stmt->execute([
+                'id' => $id,
+                'title' => $data['title'],
+                'slug' => $data['slug'],
+                'cover' => $data['cover'] ?? '',
+                'summary' => $data['summary'] ?? '',
+                'content' => $data['content'] ?? '',
+                'seo_title' => $data['seo_title'] ?? $data['title'],
+                'seo_keywords' => $data['seo_keywords'] ?? '',
+                'seo_description' => $data['seo_description'] ?? ($data['summary'] ?? ''),
+                'status' => $data['status'] ?? 'draft',
+                'published_at' => $data['published_at'] ?? null,
+                'updated_at' => now(),
+            ]);
+            sync_content_distribution($pdo, 'page', $id, normalize_site_ids($data));
+            $item = attach_distribution($pdo, 'page', [fetch_one($pdo, 'pages', $id)])[0];
+            ok($item, '保存成功');
+        }
+        if ($method === 'DELETE') {
+            ensure_content_distribution_table($pdo);
+            $pdo->prepare("DELETE FROM content_site_relations WHERE content_type = 'page' AND content_id = ?")->execute([$id]);
+            $pdo->prepare('DELETE FROM pages WHERE id = ?')->execute([$id]);
             ok([], '删除成功');
         }
     }
