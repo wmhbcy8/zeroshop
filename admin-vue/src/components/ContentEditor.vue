@@ -181,7 +181,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 
 const props = defineProps<{
   type: 'article' | 'product' | 'page'
@@ -256,7 +257,21 @@ function syncBulkScope() {
   bulkForm.value.site_ids = siteIdsForScope(bulkForm.value.site_scope, bulkForm.value.site_ids)
 }
 
+watch(
+  () => props.currentSiteId,
+  () => {
+    if (bulkForm.value.site_scope === 'current') {
+      bulkForm.value.site_ids = currentSiteIds()
+    }
+  },
+  { immediate: true }
+)
+
 function applyBulkDistribution() {
+  if (bulkForm.value.site_scope === 'selected' && !(bulkForm.value.site_ids || []).length) {
+    ElMessage.warning('请先选择至少一个目标站点')
+    return
+  }
   syncBulkScope()
   emit('bulk-distribute', {
     items: selectedRows.value,
@@ -291,7 +306,7 @@ function syncScope() {
     return
   }
   if (props.form.site_scope === 'selected') {
-    props.form.site_ids = siteIdsForScope('selected', props.form.site_ids)
+    props.form.site_ids = (props.form.site_ids || []).map((id: any) => Number(id)).filter((id: number) => id > 0)
     return
   }
   props.form.site_scope = 'current'

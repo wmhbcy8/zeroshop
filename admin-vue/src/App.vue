@@ -3478,6 +3478,17 @@ function siteIdsForScope(scope: string, selected: any[] = []) {
   return currentSiteIds()
 }
 
+function ensureSelectedSiteScope(scope: string, selected: any[] = [], label = '发布范围') {
+  if (scope === 'selected') {
+    const ids = (selected || []).map((id: any) => Number(id)).filter((id) => id > 0)
+    if (!ids.length) {
+      ElMessage.warning(`请先为${label}选择至少一个站点`)
+      return false
+    }
+  }
+  return true
+}
+
 function contentSiteLabel(siteIds: any[] = []) {
   const ids = (siteIds || []).map((id: any) => Number(id)).filter((id) => id > 0)
   const allIds = allSiteIds()
@@ -3513,6 +3524,7 @@ function mergeDraftIntoContentForm(form: any, draft: any) {
 
 async function generateContentDraft(type: 'article' | 'product', prompt: string, form: any) {
   const site_scope = form.site_scope || 'current'
+  if (!ensureSelectedSiteScope(site_scope, form.site_ids, 'AI 草稿')) return
   const site_ids = siteIdsForScope(site_scope, form.site_ids)
   const data = await request('/api/ai/generate', { method: 'POST', data: { type, prompt, site_scope, site_ids } })
   mergeDraftIntoContentForm(form, data.draft || data)
@@ -3573,7 +3585,15 @@ async function publishContentStatus(type: 'article' | 'product' | 'page', item: 
 }
 
 function syncAiSiteScope() {
-  aiForm.site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
+  if (aiForm.site_scope === 'all') {
+    aiForm.site_ids = allSiteIds()
+    return
+  }
+  if (aiForm.site_scope === 'selected') {
+    aiForm.site_ids = (aiForm.site_ids || []).map((id: any) => Number(id)).filter((id: number) => id > 0)
+    return
+  }
+  aiForm.site_ids = currentSiteIds()
 }
 
 function applyAiQuickCommand(item: any) {
@@ -3612,7 +3632,10 @@ async function deletePage(item: any) {
   await syncGeneratedSitesForContent(site_ids, '页面删除后自动生成')
 }
 async function generatePageDraft(prompt: string) {
-  const data = await request('/api/ai/generate', { method: 'POST', data: { type: 'article', prompt } })
+  const site_scope = pageForm.site_scope || 'current'
+  if (!ensureSelectedSiteScope(site_scope, pageForm.site_ids, '页面 AI 草稿')) return
+  const site_ids = siteIdsForScope(site_scope, pageForm.site_ids)
+  const data = await request('/api/ai/generate', { method: 'POST', data: { type: 'article', prompt, site_scope, site_ids } })
   mergeDraftIntoContentForm(pageForm, { ...(data.draft || data), content: (data.draft || data).content || '' })
 }
 
@@ -3701,6 +3724,7 @@ function normalizeAiDraft(type: string, draft: any, index = 1) {
 
 async function generateAiPreview() {
   syncAiSiteScope()
+  if (!ensureSelectedSiteScope(aiForm.site_scope, aiForm.site_ids, 'AI 内容生产')) return
   aiLoading.value = true
   try {
     const items = []
@@ -3735,6 +3759,7 @@ async function loadAiTasks() {
 
 async function createAiTask() {
   syncAiSiteScope()
+  if (!ensureSelectedSiteScope(aiForm.site_scope, aiForm.site_ids, 'AI 任务')) return
   aiTaskLoading.value = true
   try {
     const task = await request('/api/ai/tasks', {
@@ -3768,6 +3793,7 @@ async function confirmAiTask(row: any, action: 'save_draft' | 'publish' | 'disca
 }
 
 async function confirmAiTaskWithCurrentScope(row: any, action: 'save_draft' | 'publish' = 'publish') {
+  if (!ensureSelectedSiteScope(aiForm.site_scope, aiForm.site_ids, 'AI 任务确认')) return
   const site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
   const actionText = action === 'save_draft' ? '保存为草稿' : '发布'
   await ElMessageBox.confirm(`确定把这个 AI 任务结果${actionText}到：${contentSiteLabel(site_ids)}？`)
@@ -3801,6 +3827,7 @@ function aiTaskTypeLabel(value: string) {
 }
 
 async function saveAiDraft(item: any, index: number, status: 'draft' | 'published' = 'draft') {
+  if (!ensureSelectedSiteScope(aiForm.site_scope, aiForm.site_ids, 'AI 草稿入库')) return
   const site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
   const payload = { ...item, status, site_scope: aiForm.site_scope, site_ids }
   if (item.type === 'article') {
@@ -3818,6 +3845,7 @@ async function saveAiDraft(item: any, index: number, status: 'draft' | 'publishe
 
 async function batchCreateAiContent() {
   syncAiSiteScope()
+  if (!ensureSelectedSiteScope(aiForm.site_scope, aiForm.site_ids, 'AI 批量入库')) return
   aiBatchLoading.value = true
   try {
     const path = aiForm.type === 'article' ? '/api/ai/batch-articles' : '/api/ai/batch-products'
