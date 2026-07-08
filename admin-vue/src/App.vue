@@ -1252,7 +1252,10 @@
                 <template #header>
                   <div class="card-head">
                     <strong>SEO 体检</strong>
-                    <el-button @click="loadSeoAudit">重新检查</el-button>
+                    <div class="head-actions">
+                      <el-button :loading="seoFixing" @click="fixSeoMeta">一键修复元信息</el-button>
+                      <el-button @click="loadSeoAudit">重新检查</el-button>
+                    </div>
                   </div>
                 </template>
                 <div class="seo-score-box">
@@ -1607,6 +1610,7 @@ const pagePlan = ref<any>(null)
 const aiLoading = ref(false)
 const aiBatchLoading = ref(false)
 const aiTaskLoading = ref(false)
+const seoFixing = ref(false)
 const aiCoverLoading = ref('')
 const pagePlanLoading = ref(false)
 const pagePlanSaving = ref(false)
@@ -1818,6 +1822,18 @@ async function loadDomains() {
 
 async function loadSeoAudit() {
   seoAudit.value = await request('/api/seo/audit')
+}
+
+async function fixSeoMeta() {
+  await ElMessageBox.confirm('确定自动补齐当前站点已发布内容的 SEO 标题、关键词和描述吗？已有较完整的人工内容不会被覆盖。')
+  seoFixing.value = true
+  try {
+    const data = await request('/api/seo/fix', { method: 'POST', data: { types: ['page', 'article', 'product'] } })
+    seoAudit.value = data.audit || seoAudit.value
+    ElMessage.success(`SEO 修复完成，更新 ${data.updated || 0} 条内容`)
+  } finally {
+    seoFixing.value = false
+  }
 }
 
 function seoIssueTag(level: string) {

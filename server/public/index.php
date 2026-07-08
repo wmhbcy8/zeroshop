@@ -2566,6 +2566,114 @@ function seo_audit(PDO $pdo, PDO $main): array
     ];
 }
 
+function seo_keywords_from_text(string $text, array $site): string
+{
+    $seed = array_filter(array_map('trim', explode(',', (string)($site['keywords'] ?? ''))));
+    $industry = site_industry($site);
+    $base = array_values(array_unique(array_filter(array_merge($seed, [$industry, '独立站', '企业官网', '行业方案', '产品服务']))));
+    return implode(',', array_slice($base, 0, 8));
+}
+
+function seo_description_from_row(array $row, string $bodyField, array $site): string
+{
+    $summary = trim((string)($row['summary'] ?? ''));
+    $body = seo_plain_text((string)($row[$bodyField] ?? ''));
+    $source = $summary !== '' ? $summary : $body;
+    if ($source === '') {
+        $source = '围绕' . ($row['title'] ?? '') . '介绍核心方案、应用价值和服务能力，帮助客户快速了解产品与企业优势。';
+    }
+    $description = text_limit($source, 150);
+    if (seo_text_length($description) < 30) {
+        $description .= '，适合用于官网展示、搜索引擎收录和客户询盘转化。';
+    }
+    return text_limit($description, 180);
+}
+
+function seo_title_from_row(array $row, string $type, array $site): string
+{
+    $title = trim((string)($row['title'] ?? ''));
+    $siteName = trim((string)($site['name'] ?? ''));
+    $suffix = $type === 'product' ? '产品方案' : ($type === 'page' ? '企业介绍' : '行业知识');
+    $seoTitle = $title !== '' ? $title : $suffix;
+    if ($siteName !== '' && !str_contains($seoTitle, $siteName) && seo_text_length($seoTitle) < 45) {
+        $seoTitle .= ' - ' . $siteName;
+    }
+    return text_limit($seoTitle, 80);
+}
+
+function seo_fix_table(PDO $pdo, string $type, string $table, string $bodyField, array $site, array $ids = []): array
+{
+    $columns = 'id,title,slug,summary,' . $bodyField . ',seo_title,seo_keywords,seo_description';
+    $sql = "SELECT {$columns} FROM {$table} WHERE status = 'published'";
+    $params = [];
+    if ($ids) {
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $sql .= " AND id IN ({$placeholders})";
+        $params = $ids;
+    }
+    $sql .= ' ORDER BY id DESC LIMIT 200';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll();
+    $updated = 0;
+    $items = [];
+    $update = $pdo->prepare("UPDATE {$table} SET seo_title=:seo_title, seo_keywords=:seo_keywords, seo_description=:seo_description, updated_at=:updated_at WHERE id=:id");
+    foreach ($rows as $row) {
+        $seoTitle = trim((string)($row['seo_title'] ?? ''));
+        $seoKeywords = trim((string)($row['seo_keywords'] ?? ''));
+        $seoDescription = trim((string)($row['seo_description'] ?? ''));
+        $nextTitle = seo_text_length($seoTitle) >= 8 ? $seoTitle : seo_title_from_row($row, $type, $site);
+        $nextKeywords = $seoKeywords !== '' ? $seoKeywords : seo_keywords_from_text(($row['title'] ?? '') . ' ' . ($row['summary'] ?? ''), $site);
+        $nextDescription = seo_text_length($seoDescription) >= 30 ? $seoDescription : seo_description_from_row($row, $bodyField, $site);
+        if ($nextTitle !== $seoTitle || $nextKeywords !== $seoKeywords || $nextDescription !== $seoDescription) {
+            $update->execute([
+                'id' => (int)$row['id'],
+                'seo_title' => $nextTitle,
+                'seo_keywords' => $nextKeywords,
+                'seo_description' => $nextDescription,
+                'updated_at' => now(),
+            ]);
+            $updated++;
+            $items[] = ['type' => $type, 'id' => (int)$row['id'], 'title' => $row['title'], 'seo_title' => $nextTitle];
+        }
+    }
+    return ['checked' => count($rows), 'updated' => $updated, 'items' => $items];
+}
+
+function seo_fix(PDO $pdo, PDO $main, array $data): array
+{
+    ensure_content_distribution_table($pdo);
+    $site = site_settings($pdo, requested_site_id());
+    $types = $data['types'] ?? ['page', 'article', 'product'];
+    if (!is_array($types)) {
+        $types = ['page', 'article', 'product'];
+    }
+    $types = array_values(array_intersect($types, ['page', 'article', 'product']));
+    $ids = $data['ids'] ?? [];
+    $ids = is_array($ids) ? array_values(array_filter(array_map('intval', $ids), fn($id) => $id > 0)) : [];
+    $result = ['checked' => 0, 'updated' => 0, 'items' => []];
+    if (in_array('page', $types, true)) {
+        $part = seo_fix_table($pdo, 'page', 'pages', 'content', $site, $ids);
+        $result['checked'] += $part['checked'];
+        $result['updated'] += $part['updated'];
+        $result['items'] = array_merge($result['items'], $part['items']);
+    }
+    if (in_array('article', $types, true)) {
+        $part = seo_fix_table($pdo, 'article', 'articles', 'content', $site, $ids);
+        $result['checked'] += $part['checked'];
+        $result['updated'] += $part['updated'];
+        $result['items'] = array_merge($result['items'], $part['items']);
+    }
+    if (in_array('product', $types, true)) {
+        $part = seo_fix_table($pdo, 'product', 'products', 'description', $site, $ids);
+        $result['checked'] += $part['checked'];
+        $result['updated'] += $part['updated'];
+        $result['items'] = array_merge($result['items'], $part['items']);
+    }
+    $result['audit'] = seo_audit($pdo, $main);
+    return $result;
+}
+
 function text_limit(string $value, int $length): string
 {
     if (function_exists('mb_substr')) {
@@ -3968,6 +4076,10 @@ try {
 
     if ($method === 'GET' && $path === '/seo/audit') {
         ok(seo_audit($pdo, main_pdo()));
+    }
+
+    if ($method === 'POST' && $path === '/seo/fix') {
+        ok(seo_fix($pdo, main_pdo(), body_json()), 'SEO 修复已完成');
     }
 
     if ($method === 'GET' && $path === '/payment/channels') {
