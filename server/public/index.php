@@ -895,6 +895,24 @@ function ensure_center_tables(PDO $main): void
         UNIQUE KEY uk_channel_site (channel_id, site_id),
         INDEX idx_site_id (site_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $main->exec("CREATE TABLE IF NOT EXISTS site_domains (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        site_id BIGINT UNSIGNED NOT NULL,
+        domain VARCHAR(180) NOT NULL,
+        domain_type VARCHAR(30) NOT NULL DEFAULT 'primary',
+        is_primary TINYINT(1) NOT NULL DEFAULT 0,
+        dns_status VARCHAR(30) NOT NULL DEFAULT 'pending',
+        ssl_status VARCHAR(30) NOT NULL DEFAULT 'pending',
+        status VARCHAR(30) NOT NULL DEFAULT 'active',
+        last_checked_at DATETIME,
+        last_result VARCHAR(255),
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        UNIQUE KEY uk_site_domain (site_id, domain),
+        INDEX idx_domain (domain),
+        INDEX idx_site_id (site_id),
+        INDEX idx_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $main->exec("CREATE TABLE IF NOT EXISTS batch_tasks (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
         task_no VARCHAR(80) NOT NULL UNIQUE,
@@ -1081,6 +1099,7 @@ function normalize_center_site_payload(array $data, array $current = []): array
 
     return [
         'name' => mb_substr($name, 0, 120, 'UTF-8'),
+        'deploy_node_id' => max(0, (int)($data['deploy_node_id'] ?? ($current['deploy_node_id'] ?? 0))),
         'domain' => mb_substr(trim((string)($data['domain'] ?? ($current['domain'] ?? ''))), 0, 180, 'UTF-8'),
         'subdomain' => mb_substr(trim((string)($data['subdomain'] ?? ($current['subdomain'] ?? ''))), 0, 180, 'UTF-8'),
         'language' => mb_substr(trim((string)($data['language'] ?? ($current['language'] ?? 'zh-CN'))) ?: 'zh-CN', 0, 20, 'UTF-8'),
@@ -1098,9 +1117,10 @@ function update_center_site(PDO $main, int $id, array $data, ?PDO $sitePdo = nul
         fail('站点不存在', 'NOT_FOUND', 404);
     }
     $payload = normalize_center_site_payload($data, $current);
-    $stmt = $main->prepare('UPDATE sites SET name = :name, domain = :domain, subdomain = :subdomain, language = :language, template_key = :template_key, deploy_config_json = :deploy_config_json, status = :status, updated_at = :updated_at WHERE id = :id');
+    $stmt = $main->prepare('UPDATE sites SET name = :name, deploy_node_id = :deploy_node_id, domain = :domain, subdomain = :subdomain, language = :language, template_key = :template_key, deploy_config_json = :deploy_config_json, status = :status, updated_at = :updated_at WHERE id = :id');
     $stmt->execute([
         'name' => $payload['name'],
+        'deploy_node_id' => $payload['deploy_node_id'] ?: null,
         'domain' => $payload['domain'],
         'subdomain' => $payload['subdomain'],
         'language' => $payload['language'],
@@ -1333,6 +1353,111 @@ function test_deploy_node(PDO $main, int $id): array
     $main->prepare('UPDATE deploy_nodes SET last_checked_at=:last_checked_at, last_result=:last_result, updated_at=:updated_at WHERE id=:id')
         ->execute(['id' => $id, 'last_checked_at' => now(), 'last_result' => $result, 'updated_at' => now()]);
     return fetch_one($main, 'deploy_nodes', $id) ?: [];
+}
+
+function normalize_domain_name(string $domain): string
+{
+    $domain = strtolower(trim($domain));
+    $domain = preg_replace('#^https?://#', '', $domain);
+    $domain = preg_replace('#/.*$#', '', $domain);
+    return mb_substr($domain, 0, 180, 'UTF-8');
+}
+
+function domain_payload(array $data, array $current = []): array
+{
+    $domain = normalize_domain_name((string)($data['domain'] ?? ($current['domain'] ?? '')));
+    if ($domain === '' || !preg_match('/^[a-z0-9.-]+\.[a-z]{2,}$/i', $domain)) {
+        fail('域名格式不正确', 'VALIDATION_ERROR', 422);
+    }
+    $type = trim((string)($data['domain_type'] ?? ($current['domain_type'] ?? 'primary')));
+    if (!in_array($type, ['primary', 'alias', 'subdomain'], true)) {
+        $type = 'alias';
+    }
+    $status = trim((string)($data['status'] ?? ($current['status'] ?? 'active')));
+    if (!in_array($status, ['active', 'disabled'], true)) {
+        $status = 'active';
+    }
+    return [
+        'domain' => $domain,
+        'domain_type' => $type,
+        'is_primary' => !empty($data['is_primary']) || (($current['is_primary'] ?? 0) && !array_key_exists('is_primary', $data)) ? 1 : 0,
+        'dns_status' => trim((string)($data['dns_status'] ?? ($current['dns_status'] ?? 'pending'))) ?: 'pending',
+        'ssl_status' => trim((string)($data['ssl_status'] ?? ($current['ssl_status'] ?? 'pending'))) ?: 'pending',
+        'status' => $status,
+    ];
+}
+
+function sync_primary_domain(PDO $main, int $siteId, int $domainId, string $domain): void
+{
+    $main->prepare('UPDATE site_domains SET is_primary = 0, domain_type = IF(domain_type = "primary", "alias", domain_type), updated_at = :updated_at WHERE site_id = :site_id AND id <> :id')
+        ->execute(['site_id' => $siteId, 'id' => $domainId, 'updated_at' => now()]);
+    $main->prepare('UPDATE site_domains SET is_primary = 1, domain_type = "primary", updated_at = :updated_at WHERE id = :id')
+        ->execute(['id' => $domainId, 'updated_at' => now()]);
+    $main->prepare('UPDATE sites SET domain = :domain, updated_at = :updated_at WHERE id = :site_id')
+        ->execute(['site_id' => $siteId, 'domain' => $domain, 'updated_at' => now()]);
+}
+
+function list_site_domains(PDO $main, int $siteId): array
+{
+    ensure_center_tables($main);
+    $stmt = $main->prepare('SELECT * FROM site_domains WHERE site_id = ? ORDER BY is_primary DESC, id DESC');
+    $stmt->execute([$siteId]);
+    return ['items' => $stmt->fetchAll()];
+}
+
+function save_site_domain(PDO $main, int $siteId, array $data, ?int $id = null): array
+{
+    ensure_center_tables($main);
+    $site = fetch_one($main, 'sites', $siteId);
+    if (!$site) {
+        fail('站点不存在', 'NOT_FOUND', 404);
+    }
+    $current = $id ? fetch_one($main, 'site_domains', $id) : [];
+    if ($id && (!$current || (int)$current['site_id'] !== $siteId)) {
+        fail('域名不存在', 'NOT_FOUND', 404);
+    }
+    $payload = domain_payload($data, $current ?: []);
+    $now = now();
+    try {
+        if ($id) {
+            $stmt = $main->prepare('UPDATE site_domains SET domain=:domain, domain_type=:domain_type, is_primary=:is_primary, dns_status=:dns_status, ssl_status=:ssl_status, status=:status, updated_at=:updated_at WHERE id=:id');
+            $stmt->execute($payload + ['id' => $id, 'updated_at' => $now]);
+        } else {
+            $stmt = $main->prepare('INSERT INTO site_domains (site_id, domain, domain_type, is_primary, dns_status, ssl_status, status, created_at, updated_at)
+                VALUES (:site_id, :domain, :domain_type, :is_primary, :dns_status, :ssl_status, :status, :created_at, :updated_at)');
+            $stmt->execute($payload + ['site_id' => $siteId, 'created_at' => $now, 'updated_at' => $now]);
+            $id = (int)$main->lastInsertId();
+        }
+    } catch (PDOException $error) {
+        fail('该站点已绑定此域名', 'DOMAIN_EXISTS', 409);
+    }
+    if (!empty($payload['is_primary'])) {
+        sync_primary_domain($main, $siteId, (int)$id, $payload['domain']);
+    }
+    return fetch_one($main, 'site_domains', (int)$id) ?: [];
+}
+
+function check_site_domain(PDO $main, int $siteId, int $id): array
+{
+    ensure_center_tables($main);
+    $item = fetch_one($main, 'site_domains', $id);
+    if (!$item || (int)$item['site_id'] !== $siteId) {
+        fail('域名不存在', 'NOT_FOUND', 404);
+    }
+    $domain = (string)$item['domain'];
+    $dnsOk = $domain !== '' && strpos($domain, '.') !== false;
+    $sslOk = $dnsOk && (str_starts_with($domain, 'www.') || !str_contains($domain, 'huajian.local'));
+    $result = $dnsOk ? '域名格式有效，等待接入 DNS/SSL 自动检测' : '域名格式异常';
+    $main->prepare('UPDATE site_domains SET dns_status=:dns_status, ssl_status=:ssl_status, last_checked_at=:last_checked_at, last_result=:last_result, updated_at=:updated_at WHERE id=:id')
+        ->execute([
+            'id' => $id,
+            'dns_status' => $dnsOk ? 'valid' : 'failed',
+            'ssl_status' => $sslOk ? 'ready' : 'pending',
+            'last_checked_at' => now(),
+            'last_result' => $result,
+            'updated_at' => now(),
+        ]);
+    return fetch_one($main, 'site_domains', $id) ?: [];
 }
 
 function batch_task_filter_sql(): array
@@ -3623,10 +3748,11 @@ try {
         ensure_center_tables($main);
         $payload = normalize_center_site_payload($data);
         $now = now();
-        $stmt = $main->prepare("INSERT INTO sites (customer_id, name, site_key, domain, subdomain, language, template_key, database_name, public_path, deploy_config_json, status, created_at, updated_at)
-            VALUES (1, :name, '', :domain, :subdomain, :language, :template_key, :database_name, '', :deploy_config_json, :status, :created_at, :updated_at)");
+        $stmt = $main->prepare("INSERT INTO sites (customer_id, name, site_key, deploy_node_id, domain, subdomain, language, template_key, database_name, public_path, deploy_config_json, status, created_at, updated_at)
+            VALUES (1, :name, '', :deploy_node_id, :domain, :subdomain, :language, :template_key, :database_name, '', :deploy_config_json, :status, :created_at, :updated_at)");
         $stmt->execute([
             'name' => $payload['name'],
+            'deploy_node_id' => $payload['deploy_node_id'] ?: null,
             'domain' => $payload['domain'],
             'subdomain' => $payload['subdomain'],
             'language' => $payload['language'],
@@ -3688,6 +3814,65 @@ try {
 
     if ($method === 'GET' && $path === '/payment/channels') {
         ok(list_payment_channels(main_pdo()));
+    }
+
+    if ($method === 'GET' && $path === '/site/domains') {
+        ok(list_site_domains(main_pdo(), requested_site_id()));
+    }
+
+    if ($method === 'POST' && $path === '/site/domains') {
+        $item = save_site_domain(main_pdo(), requested_site_id(), body_json());
+        if (!empty($item['is_primary'])) {
+            $settings = site_settings($pdo);
+            $settings['domain'] = (string)$item['domain'];
+            save_site_settings($pdo, $settings);
+        }
+        ok($item, '域名已保存');
+    }
+
+    if ($params = route_param('/site/domains/{id}/check', $path)) {
+        if ($method === 'POST') {
+            ok(check_site_domain(main_pdo(), requested_site_id(), (int)$params['id']), '域名检查完成');
+        }
+    }
+
+    if ($params = route_param('/site/domains/{id}', $path)) {
+        $id = (int)$params['id'];
+        if ($method === 'PUT') {
+            $item = save_site_domain(main_pdo(), requested_site_id(), body_json(), $id);
+            if (!empty($item['is_primary'])) {
+                $settings = site_settings($pdo);
+                $settings['domain'] = (string)$item['domain'];
+                save_site_settings($pdo, $settings);
+            }
+            ok($item, '域名已保存');
+        }
+        if ($method === 'DELETE') {
+            $main = main_pdo();
+            ensure_center_tables($main);
+            $item = fetch_one($main, 'site_domains', $id);
+            if (!$item || (int)$item['site_id'] !== requested_site_id()) {
+                fail('域名不存在', 'NOT_FOUND', 404);
+            }
+            $main->prepare('DELETE FROM site_domains WHERE id = ?')->execute([$id]);
+            if (!empty($item['is_primary'])) {
+                $fallback = $main->prepare('SELECT * FROM site_domains WHERE site_id = ? ORDER BY id DESC LIMIT 1');
+                $fallback->execute([requested_site_id()]);
+                $next = $fallback->fetch();
+                if ($next) {
+                    sync_primary_domain($main, requested_site_id(), (int)$next['id'], (string)$next['domain']);
+                    $settings = site_settings($pdo);
+                    $settings['domain'] = (string)$next['domain'];
+                    save_site_settings($pdo, $settings);
+                } else {
+                    $main->prepare('UPDATE sites SET domain = "", updated_at = :updated_at WHERE id = :site_id')->execute(['site_id' => requested_site_id(), 'updated_at' => now()]);
+                    $settings = site_settings($pdo);
+                    $settings['domain'] = '';
+                    save_site_settings($pdo, $settings);
+                }
+            }
+            ok([], '域名已删除');
+        }
     }
 
     if ($method === 'GET' && $path === '/batch/tasks') {

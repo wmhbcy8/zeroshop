@@ -332,6 +332,12 @@
                 </el-select>
               </el-form-item>
               <el-divider content-position="left">部署配置</el-divider>
+              <el-form-item label="部署节点">
+                <el-select v-model="siteForm.deploy_node_id" clearable filterable placeholder="选择平台部署节点">
+                  <el-option label="暂不绑定" :value="0" />
+                  <el-option v-for="node in deployNodes" :key="node.id" :label="node.name" :value="node.id" />
+                </el-select>
+              </el-form-item>
               <el-form-item label="面板地址"><el-input v-model="siteForm.deploy.bt_panel_url" placeholder="https://server:8888" /></el-form-item>
               <el-form-item label="站点目录"><el-input v-model="siteForm.deploy.site_path" placeholder="/www/wwwroot/example.com" /></el-form-item>
               <el-form-item label="部署模式">
@@ -344,6 +350,65 @@
               <el-form-item label="发布后动作"><el-input v-model="siteForm.deploy.after_action" placeholder="reload_nginx" /></el-form-item>
               <el-form-item label="部署备注"><el-input v-model="siteForm.deploy.note" type="textarea" :rows="2" placeholder="记录服务器、目录、证书和备份策略" /></el-form-item>
               <el-button type="primary" :loading="siteCreating" @click="saveSite">{{ siteEditingId ? '保存站点' : '创建站点' }}</el-button>
+            </el-form>
+          </el-drawer>
+        </section>
+
+        <section v-if="view === 'domains'">
+          <el-card class="panel" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>域名管理</strong>
+                <div class="head-actions">
+                  <el-button @click="loadDomains">刷新</el-button>
+                  <el-button type="primary" @click="newDomain">绑定域名</el-button>
+                </div>
+              </div>
+            </template>
+            <el-alert class="mb16" type="info" show-icon :closable="false" :title="`当前站点：${currentSite?.name || '默认站点'}。主域名会同步到站点设置，并用于 sitemap、robots 和前台访问地址。`" />
+            <el-table :data="domains" height="620" row-key="id">
+              <el-table-column label="域名" min-width="240">
+                <template #default="{ row }">
+                  <strong>{{ row.domain }}</strong>
+                  <el-tag v-if="row.is_primary" class="ml6" type="success">主域名</el-tag>
+                  <br />
+                  <small>{{ row.domain_type }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column label="DNS" width="120"><template #default="{ row }"><el-tag>{{ row.dns_status }}</el-tag></template></el-table-column>
+              <el-table-column label="SSL" width="120"><template #default="{ row }"><el-tag>{{ row.ssl_status }}</el-tag></template></el-table-column>
+              <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status }}</el-tag></template></el-table-column>
+              <el-table-column prop="last_result" label="最近检查" min-width="220" />
+              <el-table-column label="操作" width="260">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="checkDomain(row)">检查</el-button>
+                  <el-button link type="primary" @click="editDomain(row)">编辑</el-button>
+                  <el-button v-if="!row.is_primary" link type="success" @click="setPrimaryDomain(row)">设为主域名</el-button>
+                  <el-button link type="danger" @click="deleteDomain(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+          <el-drawer v-model="domainDrawerVisible" size="520px" :title="domainForm.id ? '编辑域名' : '绑定域名'">
+            <el-form :model="domainForm" label-width="96px">
+              <el-form-item label="域名"><el-input v-model="domainForm.domain" placeholder="www.example.com" /></el-form-item>
+              <el-form-item label="类型">
+                <el-select v-model="domainForm.domain_type">
+                  <el-option label="主域名" value="primary" />
+                  <el-option label="别名域名" value="alias" />
+                  <el-option label="子域名" value="subdomain" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="设为主域名"><el-switch v-model="domainForm.is_primary" /></el-form-item>
+              <el-row :gutter="12">
+                <el-col :span="12"><el-form-item label="DNS状态"><el-select v-model="domainForm.dns_status"><el-option label="待检查" value="pending" /><el-option label="有效" value="valid" /><el-option label="异常" value="failed" /></el-select></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="SSL状态"><el-select v-model="domainForm.ssl_status"><el-option label="待申请" value="pending" /><el-option label="就绪" value="ready" /><el-option label="异常" value="failed" /></el-select></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="状态"><el-select v-model="domainForm.status"><el-option label="启用" value="active" /><el-option label="停用" value="disabled" /></el-select></el-form-item>
+              <div class="drawer-actions">
+                <el-button @click="domainDrawerVisible = false">取消</el-button>
+                <el-button type="primary" @click="saveDomain">保存域名</el-button>
+              </div>
             </el-form>
           </el-drawer>
         </section>
@@ -1390,6 +1455,7 @@ const media = ref<any[]>([])
 const forms = ref<any[]>([])
 const collectorSources = ref<any[]>([])
 const collectorRecords = ref<any[]>([])
+const domains = ref<any[]>([])
 const paymentChannels = ref<any[]>([])
 const versions = ref<any[]>([])
 const batchTasks = ref<any[]>([])
@@ -1411,6 +1477,7 @@ const orderDrawerVisible = ref(false)
 const paymentDrawerVisible = ref(false)
 const formDrawerVisible = ref(false)
 const collectorDrawerVisible = ref(false)
+const domainDrawerVisible = ref(false)
 const publishDrawerVisible = ref(false)
 const siteDrawerVisible = ref(false)
 const batchTaskDrawerVisible = ref(false)
@@ -1434,6 +1501,7 @@ const taskFilters = reactive({ action: '', status: '', date: '' })
 const orderDetail = reactive<any>({})
 const formDetail = reactive<any>({})
 const collectorForm = reactive<any>({})
+const domainForm = reactive<any>({})
 const paymentForm = reactive<any>({})
 const paymentConfigText = ref('')
 const publishDetail = reactive<any>({})
@@ -1458,7 +1526,7 @@ const productForm = reactive<any>({})
 const pageForm = reactive<any>({})
 const siteEditingId = ref<number | string>('')
 const emptyDeploy = () => ({ bt_panel_url: '', site_path: '', mode: 'manual', after_action: '', note: '' })
-const siteForm = reactive<any>({ name: '', domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active', deploy: emptyDeploy() })
+const siteForm = reactive<any>({ name: '', deploy_node_id: 0, domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active', deploy: emptyDeploy() })
 const aiForm = reactive<any>({ type: 'article', prompt: '围绕自主品牌商品、行业解决方案和独立站 SEO 关键词生成内容', count: 5, status: 'draft', site_scope: 'current', site_ids: [] })
 const pageBuilder = reactive({ prompt: '围绕自主品牌商品、行业解决方案、SEO 内容沉淀和询盘转化，生成一个企业官网 + 博客知识库 + 独立站商城首页方案' })
 const articlePager = reactive({ page: 1, page_size: 10, total: 0 })
@@ -1489,6 +1557,7 @@ const navItems = [
   { key: 'platform', label: '平台', hint: '运营方后台：管理客户、套餐、站点和部署节点。', icon: 'Monitor' },
   { key: 'dashboard', label: '概览', hint: '查看运营指标、内容数量和站点状态。', icon: 'Odometer' },
   { key: 'sites', label: '站点', hint: '管理客户名下所有前台站点。', icon: 'Grid' },
+  { key: 'domains', label: '域名', hint: '绑定主域名、别名域名并检查 DNS/SSL 状态。', icon: 'Link' },
   { key: 'settings', label: '设置', hint: '维护当前站点基础信息、SEO、导航和全站页面结构。', icon: 'Setting' },
   { key: 'templates', label: '模板', hint: '选择主题模板，启用首页与全站模块。', icon: 'Grid' },
   { key: 'pages', label: '页面', hint: '管理关于我们、服务介绍、专题落地页等普通静态页面。', icon: 'Files' },
@@ -1587,6 +1656,7 @@ function setView(key: string) {
   if (key === 'platform') loadPlatform()
   if (key === 'dashboard') loadDashboard()
   if (key === 'sites') loadSites()
+  if (key === 'domains') loadDomains()
   if (key === 'templates') Promise.all([loadTemplates(), loadModuleRegistry()])
   if (key === 'pages') loadPages()
   if (key === 'ai') loadAiTasks()
@@ -1608,6 +1678,7 @@ function refreshCurrentView() {
     dashboard: loadDashboard,
     platform: loadPlatform,
     sites: loadSites,
+    domains: loadDomains,
     settings: async () => { await Promise.all([loadSettings(), loadStaticPages()]) },
     templates: async () => { await Promise.all([loadTemplates(), loadModuleRegistry(), loadSettings(), loadStaticPages()]) },
     ai: loadAiTasks,
@@ -1632,7 +1703,7 @@ function openLegacyAdmin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadPlatform(), loadSites(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadCollector(), loadAiTasks(), loadVersions()])
+  await Promise.all([loadPlatform(), loadSites(), loadDomains(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadCollector(), loadAiTasks(), loadVersions()])
 }
 
 async function loadPlatform() {
@@ -1674,6 +1745,69 @@ async function loadSites() {
   sites.value = data.items || []
   centerOverview.value = data.overview || {}
   if (!currentSiteId.value) currentSiteId.value = data.current_site_id || sites.value[0]?.id || 10001
+}
+
+async function loadDomains() {
+  const data = await request('/api/site/domains')
+  domains.value = data.items || []
+}
+
+function resetDomainForm() {
+  Object.assign(domainForm, {
+    id: '',
+    domain: '',
+    domain_type: 'primary',
+    is_primary: domains.value.length === 0,
+    dns_status: 'pending',
+    ssl_status: 'pending',
+    status: 'active'
+  })
+}
+
+function newDomain() {
+  resetDomainForm()
+  domainDrawerVisible.value = true
+}
+
+function editDomain(row: any) {
+  Object.assign(domainForm, {
+    id: row.id,
+    domain: row.domain || '',
+    domain_type: row.domain_type || 'alias',
+    is_primary: Boolean(Number(row.is_primary || 0)),
+    dns_status: row.dns_status || 'pending',
+    ssl_status: row.ssl_status || 'pending',
+    status: row.status || 'active'
+  })
+  domainDrawerVisible.value = true
+}
+
+async function saveDomain() {
+  const method = domainForm.id ? 'PUT' : 'POST'
+  const path = domainForm.id ? `/api/site/domains/${domainForm.id}` : '/api/site/domains'
+  await request(path, { method, data: { ...domainForm } })
+  domainDrawerVisible.value = false
+  ElMessage.success('域名已保存')
+  await Promise.all([loadDomains(), loadSites(), loadSettings(), loadPlatform()])
+}
+
+async function setPrimaryDomain(row: any) {
+  await request(`/api/site/domains/${row.id}`, { method: 'PUT', data: { ...row, is_primary: true, domain_type: 'primary' } })
+  ElMessage.success('主域名已更新')
+  await Promise.all([loadDomains(), loadSites(), loadSettings(), loadPlatform()])
+}
+
+async function checkDomain(row: any) {
+  const data = await request(`/api/site/domains/${row.id}/check`, { method: 'POST' })
+  ElMessage.success(data.last_result || '域名检查完成')
+  await loadDomains()
+}
+
+async function deleteDomain(row: any) {
+  await ElMessageBox.confirm(`确定删除域名「${row.domain}」？`)
+  await request(`/api/site/domains/${row.id}`, { method: 'DELETE' })
+  ElMessage.success('域名已删除')
+  await Promise.all([loadDomains(), loadSites(), loadSettings(), loadPlatform()])
 }
 
 function resetPlatformCustomerForm() {
@@ -1787,7 +1921,7 @@ async function deleteDeployNode(row: any) {
 function switchSite() {
   ElMessage.success('已切换当前站点')
   publishResult.value = null
-  Promise.all([loadStaticPages(), refreshCurrentView()])
+  Promise.all([loadDomains(), loadStaticPages(), refreshCurrentView()])
 }
 
 function openSite(item: any) {
@@ -1798,7 +1932,7 @@ function openSite(item: any) {
 }
 
 function resetSiteForm() {
-  Object.assign(siteForm, { name: '', domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active', deploy: emptyDeploy() })
+  Object.assign(siteForm, { name: '', deploy_node_id: 0, domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active', deploy: emptyDeploy() })
 }
 
 function newSite() {
@@ -1811,6 +1945,7 @@ function editSite(item: any) {
   siteEditingId.value = item.id
   Object.assign(siteForm, {
     name: item.name || '',
+    deploy_node_id: Number(item.deploy_node_id || 0),
     domain: item.domain || '',
     subdomain: item.subdomain || '',
     language: item.language || 'zh-CN',
@@ -1839,7 +1974,7 @@ async function saveSite() {
     siteEditingId.value = ''
     siteDrawerVisible.value = false
     ElMessage.success(editing ? '站点已保存' : '站点已创建')
-    await loadDashboard()
+    await Promise.all([loadDashboard(), loadDomains(), loadPlatform()])
   } finally {
     siteCreating.value = false
   }
