@@ -3,6 +3,7 @@ import vue from '@vitejs/plugin-vue'
 import path from 'path'
 
 export default defineConfig({
+  root: __dirname,
   base: '/admin-vue/',
   server: {
     port: 5173,
@@ -21,7 +22,12 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    emptyOutDir: true
+    emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        index: path.resolve(__dirname, 'index.html')
+      }
+    }
   },
   plugins: [vue()]
 })

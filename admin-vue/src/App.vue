@@ -145,6 +145,35 @@
                   </div>
                 </template>
                 <el-alert title="模块配置会写入站点设置，生成静态站时按启用状态和排序输出首页模块。" type="info" show-icon class="mb16" />
+                <div class="builder-box">
+                  <div class="builder-form">
+                    <el-input v-model="pageBuilder.prompt" type="textarea" :rows="3" placeholder="告诉 AI：这个站点面向什么行业、卖什么产品、希望首页突出什么" />
+                    <div class="builder-actions">
+                      <el-button type="primary" :loading="pagePlanLoading" @click="generatePagePlan">AI 生成页面草案</el-button>
+                      <el-button :disabled="!pagePlan" @click="applyPagePlan">应用草案</el-button>
+                      <el-button :disabled="!pagePlan" :loading="pagePlanSaving" @click="applyPagePlanAndSave">应用并保存</el-button>
+                    </div>
+                  </div>
+                  <div v-if="pagePlan" class="page-plan-preview">
+                    <strong>{{ pagePlan.summary || '首页搭建草案' }}</strong>
+                    <div class="plan-grid">
+                      <article>
+                        <span>首屏</span>
+                        <b>{{ pagePlan.hero?.title }}</b>
+                        <small>{{ pagePlan.hero?.subtitle }}</small>
+                      </article>
+                      <article>
+                        <span>模块顺序</span>
+                        <b>{{ (pagePlan.home_modules || []).map((item: any) => item.title || item.key).join(' / ') }}</b>
+                      </article>
+                      <article>
+                        <span>内容草案</span>
+                        <b>{{ pagePlan.home_content?.advantages?.length || 0 }} 个优势 / {{ pagePlan.home_content?.cases?.length || 0 }} 个案例</b>
+                        <small>{{ pagePlan.home_content?.faqs?.length || 0 }} 个 FAQ</small>
+                      </article>
+                    </div>
+                  </div>
+                </div>
                 <el-tabs v-model="templateTab">
                   <el-tab-pane label="首页模块" name="home">
                     <el-table :data="site.home_modules" row-key="key" height="470">
@@ -471,6 +500,7 @@ const publishDetail = reactive<any>({})
 const articleForm = reactive<any>({})
 const productForm = reactive<any>({})
 const aiForm = reactive({ type: 'article', prompt: '围绕自主品牌商品、行业解决方案和独立站 SEO 关键词生成内容', count: 5, status: 'draft' })
+const pageBuilder = reactive({ prompt: '围绕自主品牌商品、行业解决方案、SEO 内容沉淀和询盘转化，生成一个企业官网 + 博客知识库 + 独立站商城首页方案' })
 const articlePager = reactive({ page: 1, page_size: 10, total: 0 })
 const productPager = reactive({ page: 1, page_size: 10, total: 0 })
 const orderPager = reactive({ page: 1, page_size: 10, total: 0 })
@@ -478,9 +508,12 @@ const servicePager = reactive({ page: 1, page_size: 10, total: 0 })
 const mediaPager = reactive({ page: 1, page_size: 12, total: 0 })
 const formPager = reactive({ page: 1, page_size: 10, total: 0 })
 const aiDrafts = ref<any[]>([])
+const pagePlan = ref<any>(null)
 const aiLoading = ref(false)
 const aiBatchLoading = ref(false)
 const aiCoverLoading = ref('')
+const pagePlanLoading = ref(false)
+const pagePlanSaving = ref(false)
 
 const navItems = [
   { key: 'dashboard', label: '概览', hint: '查看运营指标、内容数量和站点状态。', icon: 'Odometer' },
@@ -602,6 +635,9 @@ function normalizeSite(data: any = {}) {
     payment: data.payment || {},
     deploy: data.deploy || {},
     content: data.content || {},
+    hero: data.hero || {},
+    home_sections: data.home_sections || {},
+    home_content: data.home_content || {},
     global_modules: {
       search_nav: data.global_modules?.search_nav ?? true,
       breadcrumbs: data.global_modules?.breadcrumbs ?? true,
@@ -691,6 +727,47 @@ async function saveTemplateSettings() {
   const data = await request('/api/site/settings', { method: 'PUT', data: site })
   Object.assign(site, normalizeSite(data))
   ElMessage.success('模板与模块配置已保存')
+}
+
+async function generatePagePlan() {
+  pagePlanLoading.value = true
+  try {
+    pagePlan.value = await request('/api/ai/page-plan', { method: 'POST', data: { prompt: pageBuilder.prompt } })
+    ElMessage.success('页面草案已生成')
+  } finally {
+    pagePlanLoading.value = false
+  }
+}
+
+function applyPagePlan() {
+  if (!pagePlan.value) return ElMessage.warning('请先生成页面草案')
+  const plan = pagePlan.value
+  site.hero = { ...(site.hero || {}), ...(plan.hero || {}) }
+  site.home_sections = { ...(site.home_sections || {}), ...(plan.home_sections || {}) }
+  site.home_content = {
+    ...(site.home_content || {}),
+    ...(plan.home_content || {})
+  }
+  if (Array.isArray(plan.home_modules) && plan.home_modules.length) {
+    site.home_modules = plan.home_modules.map((item: any, index: number) => ({
+      key: item.key,
+      title: item.title || moduleTitle(item.key),
+      enabled: item.enabled ?? true,
+      sort_order: Number(item.sort_order || (index + 1) * 10)
+    }))
+  }
+  templateTab.value = 'home'
+  ElMessage.success('页面草案已应用')
+}
+
+async function applyPagePlanAndSave() {
+  pagePlanSaving.value = true
+  try {
+    applyPagePlan()
+    await saveTemplateSettings()
+  } finally {
+    pagePlanSaving.value = false
+  }
 }
 
 async function loadArticles() {
