@@ -963,6 +963,30 @@ function ensure_center_tables(PDO $main): void
         INDEX idx_status (status),
         INDEX idx_created_at (created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $main->exec("CREATE TABLE IF NOT EXISTS deploy_tasks (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        task_no VARCHAR(80) NOT NULL UNIQUE,
+        site_id BIGINT UNSIGNED NOT NULL,
+        site_key VARCHAR(80),
+        site_name VARCHAR(120),
+        action VARCHAR(50) NOT NULL,
+        status VARCHAR(30) NOT NULL DEFAULT 'pending',
+        deploy_mode VARCHAR(40),
+        deploy_node_id BIGINT UNSIGNED,
+        version_no VARCHAR(120),
+        package_path VARCHAR(255),
+        target_path VARCHAR(255),
+        message VARCHAR(500),
+        summary TEXT,
+        started_at DATETIME,
+        finished_at DATETIME,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_site_id (site_id),
+        INDEX idx_action (action),
+        INDEX idx_status (status),
+        INDEX idx_created_at (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $main->exec("CREATE TABLE IF NOT EXISTS template_clone_tasks (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
         task_no VARCHAR(80) NOT NULL UNIQUE,
@@ -2141,6 +2165,131 @@ function save_batch_task(PDO $main, array $data): array
         'updated_at' => $now,
     ]);
     return fetch_one($main, 'batch_tasks', (int)$main->lastInsertId()) ?: [];
+}
+
+function save_deploy_task(PDO $main, array $site, string $action, string $status, array $summary): array
+{
+    ensure_center_tables($main);
+    $now = now();
+    $taskNo = 'DT' . date('YmdHis') . strtoupper(substr(bin2hex(random_bytes(3)), 0, 6));
+    $stmt = $main->prepare("INSERT INTO deploy_tasks (task_no, site_id, site_key, site_name, action, status, deploy_mode, deploy_node_id, version_no, package_path, target_path, message, summary, started_at, finished_at, created_at, updated_at)
+        VALUES (:task_no, :site_id, :site_key, :site_name, :action, :status, :deploy_mode, :deploy_node_id, :version_no, :package_path, :target_path, :message, :summary, :started_at, :finished_at, :created_at, :updated_at)");
+    $stmt->execute([
+        'task_no' => $taskNo,
+        'site_id' => (int)($site['id'] ?? $summary['site_id'] ?? 10001),
+        'site_key' => (string)($site['site_key'] ?? $summary['site_key'] ?? ''),
+        'site_name' => mb_substr((string)($site['name'] ?? $summary['site_name'] ?? ''), 0, 120, 'UTF-8'),
+        'action' => $action,
+        'status' => $status,
+        'deploy_mode' => (string)($summary['mode'] ?? $summary['deploy_mode'] ?? ''),
+        'deploy_node_id' => !empty($site['deploy_node_id']) ? (int)$site['deploy_node_id'] : null,
+        'version_no' => (string)($summary['version_no'] ?? ''),
+        'package_path' => (string)($summary['package_path'] ?? ''),
+        'target_path' => (string)($summary['site_path'] ?? $summary['target_path'] ?? ''),
+        'message' => mb_substr((string)($summary['message'] ?? ''), 0, 500, 'UTF-8'),
+        'summary' => json_encode($summary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'started_at' => (string)($summary['started_at'] ?? $now),
+        'finished_at' => (string)($summary['finished_at'] ?? $now),
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    return fetch_one($main, 'deploy_tasks', (int)$main->lastInsertId()) ?: [];
+}
+
+function normalize_deploy_task(array $row): array
+{
+    $summary = json_decode((string)($row['summary'] ?? ''), true);
+    $row['summary_json'] = is_array($summary) ? $summary : [];
+    return $row;
+}
+
+function list_deploy_tasks(PDO $main): array
+{
+    ensure_center_tables($main);
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $offset = ($page - 1) * $pageSize;
+    $clauses = [];
+    $params = [];
+    $siteId = trim((string)($_GET['site_id'] ?? ''));
+    if ($siteId !== '' && $siteId !== 'all') {
+        $clauses[] = 'site_id = :site_id';
+        $params['site_id'] = (int)$siteId;
+    }
+    foreach (['action', 'status'] as $field) {
+        $value = trim((string)($_GET[$field] ?? ''));
+        if ($value !== '') {
+            $clauses[] = "{$field} = :{$field}";
+            $params[$field] = $value;
+        }
+    }
+    $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
+    $countStmt = $main->prepare("SELECT COUNT(*) FROM deploy_tasks{$whereSql}");
+    $countStmt->execute($params);
+    $total = (int)$countStmt->fetchColumn();
+    $stmt = $main->prepare("SELECT * FROM deploy_tasks{$whereSql} ORDER BY id DESC LIMIT {$pageSize} OFFSET {$offset}");
+    $stmt->execute($params);
+    return [
+        'items' => array_map('normalize_deploy_task', $stmt->fetchAll()),
+        'pagination' => [
+            'page' => $page,
+            'page_size' => $pageSize,
+            'total' => $total,
+            'total_pages' => (int)ceil($total / $pageSize),
+        ],
+    ];
+}
+
+function deploy_config_status(array $site, array $settings): array
+{
+    $deploy = site_deploy_config($site, (int)($site['id'] ?? 0) === 10001 ? $settings : []);
+    $mode = (string)($deploy['mode'] ?? 'manual');
+    $sitePath = trim((string)($deploy['site_path'] ?? ''));
+    $panelUrl = trim((string)($deploy['bt_panel_url'] ?? ''));
+    $configured = $sitePath !== '';
+    if ($mode === 'bt-api') {
+        $configured = $configured && $panelUrl !== '';
+    }
+    return [$deploy, $configured];
+}
+
+function execute_site_deploy(PDO $main, PDO $pdo, array $site): array
+{
+    $settings = site_settings($pdo);
+    [$deploy, $configured] = deploy_config_status($site, $settings);
+    $package = create_static_package($site);
+    $status = $configured ? 'success' : 'pending';
+    $message = $configured
+        ? '部署任务已记录，发布包已生成，可按当前模式同步到目标目录。'
+        : '发布包已生成，但部署目标未配置完整，请补齐站点目录和必要的面板地址。';
+    $summary = [
+        'site_id' => (int)$site['id'],
+        'site_key' => $site['site_key'],
+        'site_name' => $site['name'],
+        'version_no' => $package['version_no'],
+        'file_count' => $package['file_count'],
+        'file_size' => $package['file_size'],
+        'package_path' => $package['file_path'],
+        'configured' => $configured,
+        'mode' => $deploy['mode'] ?? 'manual',
+        'panel_url' => $deploy['bt_panel_url'] ?? '',
+        'site_path' => $deploy['site_path'] ?? '',
+        'after_action' => $deploy['after_action'] ?? '',
+        'message' => $message,
+    ];
+    ensure_publish_versions_site_column($pdo);
+    $stmt = $pdo->prepare("INSERT INTO publish_versions (site_id, version_no, publish_type, file_path, status, summary, created_at)
+        VALUES (:site_id, :version_no, 'deploy', :file_path, :status, :summary, :created_at)");
+    $stmt->execute([
+        'site_id' => (int)$site['id'],
+        'version_no' => $package['version_no'],
+        'file_path' => $package['file_path'],
+        'status' => $status,
+        'summary' => json_encode($summary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'created_at' => now(),
+    ]);
+    $task = save_deploy_task($main, $site, 'deploy', $status, $summary);
+    return $summary + ['task' => $task, 'task_no' => $task['task_no'] ?? ''];
 }
 
 function decode_payment_config(?string $value): array
@@ -4530,6 +4679,10 @@ try {
         ok(['items' => $stmt->fetchAll()]);
     }
 
+    if ($method === 'GET' && $path === '/platform/deploy-tasks') {
+        ok(list_deploy_tasks(main_pdo()));
+    }
+
     if ($method === 'GET' && $path === '/platform/deploy-nodes') {
         ok(list_deploy_nodes(main_pdo()));
     }
@@ -5502,8 +5655,7 @@ try {
         $main = main_pdo();
         $currentSite = current_site($main, $pdo);
         $site = site_settings($pdo);
-        $deploy = site_deploy_config($currentSite, (int)$currentSite['id'] === 10001 ? $site : []);
-        $configured = !empty($deploy['bt_panel_url']) && !empty($deploy['site_path']);
+        [$deploy, $configured] = deploy_config_status($currentSite, $site);
         $status = $configured ? 'ready' : 'pending';
         $summary = [
             'site_id' => (int)$currentSite['id'],
@@ -5515,6 +5667,7 @@ try {
             'mode' => $deploy['mode'] ?? 'manual',
             'message' => $configured ? '部署参数已填写，后续可接入宝塔 API 执行上传发布。' : '请先填写宝塔面板地址和站点目录。',
         ];
+        save_deploy_task($main, $currentSite, 'deploy-check', $status, $summary);
         ensure_publish_versions_site_column($pdo);
         $stmt = $pdo->prepare("INSERT INTO publish_versions (site_id, version_no, publish_type, file_path, status, summary, created_at)
             VALUES (:site_id, :version_no, 'deploy-check', :file_path, :status, :summary, :created_at)");
@@ -5552,7 +5705,18 @@ try {
             'summary' => json_encode($summary, JSON_UNESCAPED_UNICODE),
             'created_at' => now(),
         ]);
+        save_deploy_task(main_pdo(), $currentSite, 'package', 'success', $summary + ['version_no' => $package['version_no']]);
         ok($summary + ['version_no' => $package['version_no']], '发布包已生成');
+    }
+
+    if ($method === 'POST' && $path === '/site/deploy') {
+        $main = main_pdo();
+        $currentSite = current_site($main, $pdo);
+        ok(execute_site_deploy($main, $pdo, $currentSite), '部署任务已创建');
+    }
+
+    if ($method === 'GET' && $path === '/deploy/tasks') {
+        ok(list_deploy_tasks(main_pdo()));
     }
 
     if ($method === 'GET' && $path === '/site/package-download') {

@@ -835,10 +835,11 @@
                     <template #default="{ row }"><small>{{ contentSiteLabel(row.site_ids || []) }}</small></template>
                   </el-table-column>
                   <el-table-column prop="created_at" label="时间" width="170" />
-                  <el-table-column label="操作" width="250">
+                  <el-table-column label="操作" width="320">
                     <template #default="{ row }">
                       <el-button link type="primary" :disabled="row.status !== 'success'" @click="confirmAiTask(row, 'save_draft')">存草稿</el-button>
                       <el-button link type="success" :disabled="row.status !== 'success'" @click="confirmAiTask(row, 'publish')">发布</el-button>
+                      <el-button link type="warning" :disabled="row.status !== 'success'" @click="confirmAiTaskWithCurrentScope(row)">按当前范围发布</el-button>
                       <el-button link type="danger" :disabled="row.status !== 'success'" @click="confirmAiTask(row, 'discard')">丢弃</el-button>
                       <el-button link type="danger" @click="deleteAiTask(row)">删除</el-button>
                     </template>
@@ -1457,6 +1458,7 @@
                 <div class="head-actions">
                   <el-button :loading="deployTesting" @click="checkDeployConfig">检查部署配置</el-button>
                   <el-button :loading="packaging" @click="createPackage">生成发布包</el-button>
+                  <el-button :loading="deploying" @click="deploySite">发布上线</el-button>
                   <el-button type="primary" :loading="generating" @click="generateSite">生成静态站</el-button>
                 </div>
               </div>
@@ -1476,6 +1478,30 @@
               </el-table-column>
               <el-table-column prop="created_at" label="时间" width="180" />
               <el-table-column label="操作" width="100"><template #default="{ row }"><el-button link type="primary" @click="openPublishVersion(row)">详情</el-button></template></el-table-column>
+            </el-table>
+          </el-card>
+          <el-card class="panel mt16" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>部署任务</strong>
+                <el-button @click="loadDeployTasks">刷新任务</el-button>
+              </div>
+            </template>
+            <el-table :data="deployTasks" height="320" row-key="id">
+              <el-table-column label="任务" min-width="190">
+                <template #default="{ row }">
+                  <strong>{{ row.task_no }}</strong><br />
+                  <small>{{ row.version_no || '-' }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column prop="action" label="动作" width="120" />
+              <el-table-column label="状态" width="110">
+                <template #default="{ row }"><el-tag :type="deployTaskTag(row.status)">{{ row.status }}</el-tag></template>
+              </el-table-column>
+              <el-table-column prop="deploy_mode" label="模式" width="110" />
+              <el-table-column prop="target_path" label="目标目录" min-width="220" />
+              <el-table-column prop="message" label="说明" min-width="260" />
+              <el-table-column prop="created_at" label="时间" width="170" />
             </el-table>
           </el-card>
           <el-drawer v-model="publishDrawerVisible" size="520px" title="发布版本详情">
@@ -1684,6 +1710,7 @@ const paymentChannels = ref<any[]>([])
 const seoAudit = ref<any>({})
 const versions = ref<any[]>([])
 const batchTasks = ref<any[]>([])
+const deployTasks = ref<any[]>([])
 const operationLogs = ref<any[]>([])
 const batchTaskOverview = ref<any>({})
 const sites = ref<any[]>([])
@@ -1716,6 +1743,7 @@ const aiProviderDrawerVisible = ref(false)
 const publishResult = ref<any>(null)
 const deployTesting = ref(false)
 const packaging = ref(false)
+const deploying = ref(false)
 const siteBatchRunning = ref(false)
 const selectedSiteIds = ref<Array<number | string>>([])
 const siteBatchResults = ref<any[]>([])
@@ -1910,7 +1938,7 @@ function setView(key: string) {
   if (key === 'forms') loadForms()
   if (key === 'collector') loadCollector()
   if (key === 'seo') loadSeoAudit()
-  if (key === 'publish') loadVersions()
+  if (key === 'publish') Promise.all([loadVersions(), loadDeployTasks()])
 }
 
 function refreshCurrentView() {
@@ -1935,7 +1963,7 @@ function refreshCurrentView() {
     forms: loadForms,
     collector: loadCollector,
     seo: loadSeoAudit,
-    publish: loadVersions
+    publish: async () => { await Promise.all([loadVersions(), loadDeployTasks()]) }
   }
   loaders[view.value]?.().then(() => ElMessage.success('当前页面已刷新'))
 }
@@ -1945,7 +1973,7 @@ function openLegacyAdmin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadPlatform(), loadSites(), loadDomains(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadOperationLogs(), loadMedia(), loadForms(), loadCollector(), loadSeoAudit(), loadAiTasks(), loadVersions()])
+  await Promise.all([loadPlatform(), loadSites(), loadDomains(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadDeployTasks(), loadOperationLogs(), loadMedia(), loadForms(), loadCollector(), loadSeoAudit(), loadAiTasks(), loadVersions()])
 }
 
 async function loadPlatform() {
@@ -2787,7 +2815,7 @@ async function bulkDistributeContent(type: 'article' | 'product' | 'page', paylo
     data: normalizeDistributionPayload({ ...item, site_scope, site_ids })
   })))
   ElMessage.success(`已更新 ${items.length} 条内容的发布范围`)
-  await Promise.all([reload(), loadDashboard()])
+  await Promise.all([reload(), loadDashboard(), loadSites()])
 }
 
 function syncAiSiteScope() {
@@ -2802,7 +2830,7 @@ async function savePage() {
   await request(path, { method, data: normalizeDistributionPayload(pageForm) })
   ElMessage.success('页面已保存')
   pagePager.page = pageForm.id ? pagePager.page : 1
-  await Promise.all([loadPages(), loadStaticPages()])
+  await Promise.all([loadPages(), loadStaticPages(), loadDashboard(), loadSites()])
 }
 async function bulkDistributePages(payload: any) {
   await bulkDistributeContent('page', payload, loadPages)
@@ -2826,7 +2854,7 @@ async function saveArticle() {
   await request(path, { method, data: normalizeDistributionPayload(articleForm) })
   ElMessage.success('文章已保存')
   articlePager.page = articleForm.id ? articlePager.page : 1
-  await loadArticles()
+  await Promise.all([loadArticles(), loadDashboard(), loadSites()])
 }
 async function bulkDistributeArticles(payload: any) {
   await bulkDistributeContent('article', payload, loadArticles)
@@ -2849,7 +2877,7 @@ async function saveProduct() {
   await request(path, { method, data: normalizeDistributionPayload(productForm) })
   ElMessage.success('商品已保存')
   productPager.page = productForm.id ? productPager.page : 1
-  await loadProducts()
+  await Promise.all([loadProducts(), loadDashboard(), loadSites()])
 }
 async function bulkDistributeProducts(payload: any) {
   await bulkDistributeContent('product', payload, loadProducts)
@@ -2939,7 +2967,22 @@ async function confirmAiTask(row: any, action: 'save_draft' | 'publish' | 'disca
   const site_scope = inferSiteScope(row.site_ids || [])
   await request(`/api/ai/tasks/${row.id}/confirm`, { method: 'POST', data: { action, site_scope, site_ids: row.site_ids || [] } })
   ElMessage.success('AI 任务已处理')
-  await Promise.all([loadAiTasks(), loadArticles(), loadProducts(), loadDashboard()])
+  await Promise.all([loadAiTasks(), loadArticles(), loadProducts(), loadDashboard(), loadSites()])
+}
+
+async function confirmAiTaskWithCurrentScope(row: any) {
+  const site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
+  await ElMessageBox.confirm(`确定把这个 AI 任务结果发布到：${contentSiteLabel(site_ids)}？`)
+  await request(`/api/ai/tasks/${row.id}/confirm`, {
+    method: 'POST',
+    data: {
+      action: 'publish',
+      site_scope: aiForm.site_scope,
+      site_ids
+    }
+  })
+  ElMessage.success('AI 任务已按当前范围发布')
+  await Promise.all([loadAiTasks(), loadArticles(), loadProducts(), loadDashboard(), loadSites()])
 }
 
 async function deleteAiTask(row: any) {
@@ -2969,7 +3012,7 @@ async function saveAiDraft(item: any, index: number, status: 'draft' | 'publishe
     await loadProducts()
   }
   aiDrafts.value.splice(index, 1)
-  await loadDashboard()
+  await Promise.all([loadDashboard(), loadSites()])
   ElMessage.success(status === 'published' ? '已发布到选定站点' : '已保存为草稿')
 }
 
@@ -2979,7 +3022,7 @@ async function batchCreateAiContent() {
     const path = aiForm.type === 'article' ? '/api/ai/batch-articles' : '/api/ai/batch-products'
     const data = await request(path, { method: 'POST', data: { prompt: aiForm.prompt, count: aiForm.count, status: aiForm.status, site_scope: aiForm.site_scope, site_ids: siteIdsForScope(aiForm.site_scope, aiForm.site_ids) } })
     ElMessage.success(`已批量生成 ${data.count || 0} 条内容`)
-    await Promise.all([loadArticles(), loadProducts(), loadDashboard()])
+    await Promise.all([loadArticles(), loadProducts(), loadDashboard(), loadSites()])
   } finally {
     aiBatchLoading.value = false
   }
@@ -3320,6 +3363,14 @@ async function loadVersions() {
   versions.value = data.items || data || []
 }
 
+async function loadDeployTasks() {
+  const params = new URLSearchParams()
+  params.set('site_id', String(currentSiteId.value || 10001))
+  params.set('page_size', '20')
+  const data = await request(`/api/deploy/tasks?${params.toString()}`)
+  deployTasks.value = data.items || []
+}
+
 async function loadBatchTasks() {
   const query = batchTaskQuery()
   const data = await request(`/api/batch/tasks${query.toString() ? `?${query.toString()}` : ''}`)
@@ -3398,6 +3449,10 @@ function changeLogPageSize(size: number) {
 
 function logMethodTag(method: string) {
   return method === 'DELETE' ? 'danger' : (method === 'PUT' ? 'warning' : 'success')
+}
+
+function deployTaskTag(status: string) {
+  return status === 'success' ? 'success' : (status === 'failed' ? 'danger' : (status === 'pending' ? 'warning' : 'info'))
 }
 
 function compactSummary(value: string) {
@@ -3506,7 +3561,7 @@ async function executeSiteBatch(action: 'generate' | 'deploy-check' | 'package',
     }
     currentSiteId.value = originalSiteId
     await saveBatchTaskRecord(action, siteBatchResults.value, messagePrefix)
-    await Promise.all([loadSites(), loadDashboard(), loadVersions(), loadBatchTasks()])
+    await Promise.all([loadSites(), loadDashboard(), loadVersions(), loadBatchTasks(), loadDeployTasks()])
     ElMessage.success(siteBatchSummary.value || '批量任务完成')
   } finally {
     currentSiteId.value = originalSiteId
@@ -3539,7 +3594,7 @@ async function checkDeployConfig() {
     const data = await request('/api/site/deploy-test', { method: 'POST' })
     publishResult.value = data || { message: '部署配置检查完成' }
     ElMessage.success(data?.message || '部署配置检查完成')
-    await loadVersions()
+    await Promise.all([loadVersions(), loadDeployTasks()])
   } finally {
     deployTesting.value = false
   }
@@ -3551,9 +3606,21 @@ async function createPackage() {
     const data = await request('/api/site/package', { method: 'POST' })
     publishResult.value = data || { message: '发布包已生成' }
     ElMessage.success(data?.message || '发布包已生成')
-    await loadVersions()
+    await Promise.all([loadVersions(), loadDeployTasks()])
   } finally {
     packaging.value = false
+  }
+}
+
+async function deploySite() {
+  deploying.value = true
+  try {
+    const data = await request('/api/site/deploy', { method: 'POST' })
+    publishResult.value = data || { message: '部署任务已创建' }
+    ElMessage.success(data?.message || '部署任务已创建')
+    await Promise.all([loadVersions(), loadDeployTasks(), loadSites(), loadDashboard()])
+  } finally {
+    deploying.value = false
   }
 }
 
