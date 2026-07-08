@@ -9,6 +9,8 @@
 /storage/packages/
 /storage/publish_versions/
 /storage/site_backups/
+/storage/deploy_targets/
+/storage/deploy_backups/
 /storage/build/
 /storage/secret.key
 /*.png

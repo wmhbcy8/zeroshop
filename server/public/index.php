@@ -403,6 +403,23 @@ function site_backup_root(array $site): string
     return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'site_backups' . DIRECTORY_SEPARATOR . (string)($site['site_key'] ?? 'site_10001');
 }
 
+function deploy_target_root(): string
+{
+    $root = trim(env_value('HJ_LOCAL_DEPLOY_ROOT', ''));
+    if ($root === '') {
+        $root = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'deploy_targets';
+    }
+    $root = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $root);
+    ensure_dir($root);
+    assert_workspace_path($root);
+    return $root;
+}
+
+function deploy_backup_root(array $site): string
+{
+    return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'deploy_backups' . DIRECTORY_SEPARATOR . (string)($site['site_key'] ?? 'site_10001');
+}
+
 function assert_workspace_path(string $path): void
 {
     $root = realpath(dirname(__DIR__, 2));
@@ -480,6 +497,98 @@ function remove_directory_tree(string $dir): void
     remove_dir_contents($dir);
     assert_workspace_path($dir);
     rmdir($dir);
+}
+
+function directory_has_files(string $dir): bool
+{
+    $root = realpath($dir);
+    if (!$root || !is_dir($root)) {
+        return false;
+    }
+    $items = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+    foreach ($items as $item) {
+        if ($item->isFile()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function normalize_local_deploy_relative_path(string $sitePath, array $site): string
+{
+    $path = trim($sitePath);
+    if ($path === '') {
+        $path = (string)($site['site_key'] ?? 'site_10001');
+    }
+    $path = str_replace('\\', '/', $path);
+    $path = trim($path, '/');
+    if ($path === '' || str_contains($path, '..') || preg_match('/^[a-z]:/i', $path)) {
+        fail('本机同步目录必须是部署根目录下的相对路径', 'INVALID_DEPLOY_PATH', 422);
+    }
+    $segments = array_values(array_filter(explode('/', $path), fn($segment) => $segment !== ''));
+    $safeSegments = [];
+    foreach ($segments as $segment) {
+        $safe = preg_replace('/[^a-zA-Z0-9._-]+/', '-', $segment);
+        $safe = trim((string)$safe, '.-');
+        if ($safe === '') {
+            fail('本机同步目录包含无效路径片段', 'INVALID_DEPLOY_PATH', 422);
+        }
+        $safeSegments[] = $safe;
+    }
+    return implode(DIRECTORY_SEPARATOR, $safeSegments);
+}
+
+function local_deploy_target_path(string $sitePath, array $site): string
+{
+    $root = deploy_target_root();
+    $relative = normalize_local_deploy_relative_path($sitePath, $site);
+    $target = $root . DIRECTORY_SEPARATOR . $relative;
+    ensure_dir($target);
+    assert_workspace_path($target);
+    $resolvedRoot = realpath($root);
+    $resolvedTarget = realpath($target);
+    if (!$resolvedRoot || !$resolvedTarget || !str_starts_with($resolvedTarget, $resolvedRoot)) {
+        fail('本机同步目标目录不安全', 'INVALID_DEPLOY_PATH', 422);
+    }
+    return $target;
+}
+
+function create_deploy_target_backup(array $site, string $targetPath): ?array
+{
+    if (!directory_has_files($targetPath)) {
+        return null;
+    }
+    $backupNo = (string)($site['site_key'] ?? 'site') . '_deploy_backup_' . date('Ymd_His') . '_' . strtoupper(substr(bin2hex(random_bytes(2)), 0, 4));
+    $backupRoot = deploy_backup_root($site) . DIRECTORY_SEPARATOR . $backupNo;
+    remove_dir_contents($backupRoot);
+    $fileCount = copy_directory($targetPath, $backupRoot);
+    return [
+        'backup_no' => $backupNo,
+        'backup_path' => str_replace(DIRECTORY_SEPARATOR, '/', substr($backupRoot, strlen(dirname(__DIR__, 2)) + 1)),
+        'backup_file_count' => $fileCount,
+        'backup_file_size' => directory_size($backupRoot),
+    ];
+}
+
+function sync_static_site_to_local_target(array $site, array $deploy): array
+{
+    $publicRoot = public_root($site);
+    if (!is_dir($publicRoot)) {
+        fail('请先生成静态站', 'STATIC_SITE_MISSING', 422);
+    }
+    $targetPath = local_deploy_target_path((string)($deploy['site_path'] ?? ''), $site);
+    $backup = create_deploy_target_backup($site, $targetPath);
+    remove_dir_contents($targetPath);
+    $fileCount = copy_directory($publicRoot, $targetPath);
+    return [
+        'deployed' => true,
+        'deployed_file_count' => $fileCount,
+        'target_path' => str_replace(DIRECTORY_SEPARATOR, '/', $targetPath),
+        'target_root' => str_replace(DIRECTORY_SEPARATOR, '/', deploy_target_root()),
+    ] + ($backup ?: []);
 }
 
 function create_static_package(?array $site = null): array
@@ -1297,8 +1406,8 @@ function site_deploy_config(array $site, array $settings = []): array
             $deploy = $decoded;
         }
     }
-    if (!$deploy && !empty($settings['deploy']) && is_array($settings['deploy'])) {
-        $deploy = $settings['deploy'];
+    if (!empty($settings['deploy']) && is_array($settings['deploy'])) {
+        $deploy = array_replace($deploy, $settings['deploy']);
     }
 
     return [
@@ -1321,7 +1430,7 @@ function normalize_site_deploy_config(array $data, array $current = []): array
     if ($mode === 'bt_api') {
         $mode = 'bt-api';
     }
-    if (!in_array($mode, ['manual', 'package', 'bt-api', 'ftp'], true)) {
+    if (!in_array($mode, ['manual', 'package', 'local-copy', 'bt-api', 'ftp'], true)) {
         $mode = 'manual';
     }
 
@@ -2515,7 +2624,7 @@ function deploy_config_status(array $site, array $settings): array
     $mode = (string)($deploy['mode'] ?? 'manual');
     $sitePath = trim((string)($deploy['site_path'] ?? ''));
     $panelUrl = trim((string)($deploy['bt_panel_url'] ?? ''));
-    $configured = $sitePath !== '';
+    $configured = $mode === 'local-copy' ? $sitePath !== '' : $sitePath !== '';
     if ($mode === 'bt-api') {
         $configured = $configured && $panelUrl !== '';
     }
@@ -2527,10 +2636,18 @@ function execute_site_deploy(PDO $main, PDO $pdo, array $site): array
     $settings = site_settings($pdo);
     [$deploy, $configured] = deploy_config_status($site, $settings);
     $package = create_static_package($site);
-    $status = $configured ? 'success' : 'pending';
-    $message = $configured
-        ? '部署任务已记录，发布包已生成，可按当前模式同步到目标目录。'
-        : '发布包已生成，但部署目标未配置完整，请补齐站点目录和必要的面板地址。';
+    $mode = (string)($deploy['mode'] ?? 'manual');
+    $deployResult = [];
+    $status = 'pending';
+    $message = '发布包已生成，但部署目标未配置完整，请补齐站点目录和必要的面板地址。';
+    if ($configured && $mode === 'local-copy') {
+        $deployResult = sync_static_site_to_local_target($site, $deploy);
+        $status = 'success';
+        $message = '静态站已同步到本机部署目录。';
+    } elseif ($configured) {
+        $status = 'pending';
+        $message = '发布包已生成，当前部署模式需要宝塔 API、FTP/SFTP 或人工上传执行器继续处理。';
+    }
     $summary = [
         'site_id' => (int)$site['id'],
         'site_key' => $site['site_key'],
@@ -2540,12 +2657,12 @@ function execute_site_deploy(PDO $main, PDO $pdo, array $site): array
         'file_size' => $package['file_size'],
         'package_path' => $package['file_path'],
         'configured' => $configured,
-        'mode' => $deploy['mode'] ?? 'manual',
+        'mode' => $mode,
         'panel_url' => $deploy['bt_panel_url'] ?? '',
         'site_path' => $deploy['site_path'] ?? '',
         'after_action' => $deploy['after_action'] ?? '',
         'message' => $message,
-    ];
+    ] + $deployResult;
     ensure_publish_versions_site_column($pdo);
     $stmt = $pdo->prepare("INSERT INTO publish_versions (site_id, version_no, publish_type, file_path, status, summary, created_at)
         VALUES (:site_id, :version_no, 'deploy', :file_path, :status, :summary, :created_at)");
@@ -6477,6 +6594,17 @@ try {
         $site = site_settings($pdo);
         [$deploy, $configured] = deploy_config_status($currentSite, $site);
         $status = $configured ? 'ready' : 'pending';
+        $mode = (string)($deploy['mode'] ?? 'manual');
+        $message = '请先填写站点目录。';
+        if ($configured && $mode === 'local-copy') {
+            $message = '本机目录同步已配置，发布上线时会复制静态站并自动备份旧目录。';
+        } elseif ($configured && $mode === 'bt-api') {
+            $message = '宝塔 API 参数已填写，当前版本会生成发布包并记录待执行任务。';
+        } elseif ($configured) {
+            $message = '部署参数已填写，当前模式会生成发布包并记录待上传任务。';
+        } elseif ($mode === 'bt-api') {
+            $message = '请填写宝塔面板地址和站点目录。';
+        }
         $summary = [
             'site_id' => (int)$currentSite['id'],
             'site_key' => $currentSite['site_key'],
@@ -6484,8 +6612,8 @@ try {
             'configured' => $configured,
             'panel_url' => $deploy['bt_panel_url'] ?? '',
             'site_path' => $deploy['site_path'] ?? '',
-            'mode' => $deploy['mode'] ?? 'manual',
-            'message' => $configured ? '部署参数已填写，后续可接入宝塔 API 执行上传发布。' : '请先填写宝塔面板地址和站点目录。',
+            'mode' => $mode,
+            'message' => $message,
         ];
         save_deploy_task($main, $currentSite, 'deploy-check', $status, $summary);
         ensure_publish_versions_site_column($pdo);

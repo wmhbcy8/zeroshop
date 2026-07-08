@@ -428,6 +428,7 @@
                 <el-select v-model="siteForm.deploy.mode">
                   <el-option label="手动发布" value="manual" />
                   <el-option label="发布包上传" value="package" />
+                  <el-option label="本机目录同步" value="local-copy" />
                   <el-option label="宝塔 API" value="bt-api" />
                 </el-select>
               </el-form-item>
@@ -1490,6 +1491,7 @@
                     <el-select v-model="site.deploy.mode">
                       <el-option label="手动发布" value="manual" />
                       <el-option label="发布包上传" value="package" />
+                      <el-option label="本机目录同步" value="local-copy" />
                       <el-option label="宝塔 API" value="bt-api" />
                       <el-option label="FTP/SFTP" value="ftp" />
                     </el-select>
@@ -1512,7 +1514,7 @@
                 </div>
               </div>
             </template>
-            <el-alert :title="`当前发布站点：${currentSite?.name || '默认站点'}，生成、部署检查和发布包都会写入该站点目录。`" type="info" show-icon class="mb16" />
+            <el-alert :title="`当前发布站点：${currentSite?.name || '默认站点'}。本机目录同步会复制到 storage/deploy_targets 下的站点目录；宝塔 API、FTP/SFTP 和人工模式会先生成发布包并记录任务。`" type="info" show-icon class="mb16" />
             <el-result v-if="publishResult" class="publish-result" :icon="publishResult.configured === false ? 'warning' : 'success'" :title="publishResultTitle" :sub-title="publishResultSubtitle">
               <template #extra>
                 <el-button type="primary" @click="previewSite">预览站点</el-button>
@@ -2484,7 +2486,10 @@ function editSite(item: any) {
 }
 
 function deployReady(item: any) {
-  return !!(item?.deploy?.bt_panel_url && item?.deploy?.site_path)
+  const mode = item?.deploy?.mode || 'manual'
+  if (mode === 'local-copy') return !!item?.deploy?.site_path
+  if (mode === 'bt-api') return !!(item?.deploy?.bt_panel_url && item?.deploy?.site_path)
+  return !!item?.deploy?.site_path
 }
 
 async function saveSite() {
