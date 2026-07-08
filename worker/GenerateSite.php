@@ -201,6 +201,7 @@ function load_data_from_mysql(PDO $pdo): array
     $articles = filter_distributed_content($pdo, 'article', $articles, $siteId);
     $products = filter_distributed_content($pdo, 'product', $products, $siteId);
     $pages = filter_distributed_content($pdo, 'page', $pages, $siteId);
+    $articles = attach_article_tags($pdo, $articles);
 
     foreach ($products as &$product) {
         $product['price'] = number_format((float)$product['price'], 2, '.', '');
@@ -209,6 +210,48 @@ function load_data_from_mysql(PDO $pdo): array
     unset($product);
 
     return [$site, $categories, $productCategories, $articles, $products, $pages];
+}
+
+function attach_article_tags(PDO $pdo, array $articles): array
+{
+    try {
+        if (!$articles) {
+            return $articles;
+        }
+        $tagTableExists = (bool)$pdo->query("SHOW TABLES LIKE 'tags'")->fetchColumn();
+        $relTableExists = (bool)$pdo->query("SHOW TABLES LIKE 'article_tags'")->fetchColumn();
+        if (!$tagTableExists || !$relTableExists) {
+            return array_map(fn($article) => $article + ['tags' => []], $articles);
+        }
+        $ids = array_values(array_unique(array_filter(array_map('intval', array_column($articles, 'id')), fn($id) => $id > 0)));
+        if (!$ids) {
+            return array_map(fn($article) => $article + ['tags' => []], $articles);
+        }
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $pdo->prepare("SELECT at.article_id, t.id, t.name, t.slug, t.description
+            FROM article_tags at
+            INNER JOIN tags t ON t.id = at.tag_id
+            WHERE at.article_id IN ({$placeholders})
+            ORDER BY t.name ASC");
+        $stmt->execute($ids);
+        $map = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $articleId = (int)$row['article_id'];
+            $map[$articleId] ??= [];
+            $map[$articleId][] = [
+                'id' => (int)$row['id'],
+                'name' => (string)$row['name'],
+                'slug' => (string)$row['slug'],
+                'description' => (string)($row['description'] ?? ''),
+            ];
+        }
+        return array_map(function (array $article) use ($map) {
+            $article['tags'] = $map[(int)$article['id']] ?? [];
+            return $article;
+        }, $articles);
+    } catch (Throwable $error) {
+        return array_map(fn($article) => $article + ['tags' => []], $articles);
+    }
 }
 
 function filter_distributed_content(PDO $pdo, string $type, array $items, int $siteId): array
@@ -505,6 +548,51 @@ function category_items(array $items, int $categoryId): array
     return array_values(array_filter($items, fn($item) => (int)($item['category_id'] ?? 0) === $categoryId));
 }
 
+function article_tags(array $articles): array
+{
+    $tags = [];
+    foreach ($articles as $article) {
+        foreach (($article['tags'] ?? []) as $tag) {
+            $slug = (string)($tag['slug'] ?? '');
+            if ($slug === '') {
+                continue;
+            }
+            $tags[$slug] = [
+                'name' => (string)($tag['name'] ?? $slug),
+                'slug' => $slug,
+                'description' => (string)($tag['description'] ?? ''),
+            ];
+        }
+    }
+    uasort($tags, fn($a, $b) => strcmp($a['name'], $b['name']));
+    return array_values($tags);
+}
+
+function tag_items(array $articles, string $slug): array
+{
+    return array_values(array_filter($articles, function (array $article) use ($slug) {
+        foreach (($article['tags'] ?? []) as $tag) {
+            if ((string)($tag['slug'] ?? '') === $slug) {
+                return true;
+            }
+        }
+        return false;
+    }));
+}
+
+function article_tags_html(array $article, string $rootBase): string
+{
+    $tags = $article['tags'] ?? [];
+    if (!$tags) {
+        return '';
+    }
+    $html = '<div class="tag-list">';
+    foreach ($tags as $tag) {
+        $html .= '<a href="' . e($rootBase . 'tag/' . ($tag['slug'] ?? '') . '/index.html') . '">' . e($tag['name'] ?? '') . '</a>';
+    }
+    return $html . '</div>';
+}
+
 function home_modules_html(array $site, array $articles, array $products, string $rootBase): string
 {
     $site = site_for($site, $rootBase);
@@ -735,6 +823,22 @@ foreach ($categories as $category) {
     ]));
 }
 
+$tags = article_tags($articles);
+foreach ($tags as $tag) {
+    $tagArticles = tag_items($articles, (string)$tag['slug']);
+    if (!$tagArticles) {
+        continue;
+    }
+    write_file($publicRoot . DIRECTORY_SEPARATOR . 'tag' . DIRECTORY_SEPARATOR . $tag['slug'] . DIRECTORY_SEPARATOR . 'index.html', $engine->renderFile('pages/article-list.html', base_context($site, $categories, $productCategories, $tagArticles, $products, '../../', '../../') + [
+        'articles' => with_urls($tagArticles, '../../news/'),
+        'seo' => [
+            'title' => $tag['name'] . ' - 文章标签 - ' . ($site['name'] ?? ''),
+            'description' => $tag['description'] ?: ('浏览标签“' . $tag['name'] . '”下的文章内容。'),
+            'keywords' => $tag['name'] . ',' . ($site['keywords'] ?? ''),
+        ],
+    ]));
+}
+
 foreach ($articles as $article) {
     $relatedArticles = array_values(array_filter($articles, fn($item) => (int)$item['id'] !== (int)$article['id']));
     $relatedArticles = array_map(fn($item) => [
@@ -744,6 +848,7 @@ foreach ($articles as $article) {
     ], $relatedArticles);
     write_file($publicRoot . DIRECTORY_SEPARATOR . 'news' . DIRECTORY_SEPARATOR . $article['slug'] . '.html', $engine->renderFile('pages/article.html', array_replace(base_context($site, $categories, $productCategories, $articles, $products, '../', '../'), [
         'article' => $article,
+        'article_tags_html' => article_tags_html($article, '../'),
         'breadcrumb_html' => breadcrumb_html($site, [
             ['title' => '首页', 'url' => '../index.html'],
             ['title' => '行业资讯', 'url' => 'index.html'],
@@ -834,6 +939,11 @@ foreach ($categories as $category) {
 foreach ($articles as $article) {
     $sitemap[] = '  <url><loc>https://' . $domain . '/news/' . $article['slug'] . '.html</loc></url>';
 }
+foreach ($tags as $tag) {
+    if (tag_items($articles, (string)$tag['slug'])) {
+        $sitemap[] = '  <url><loc>https://' . $domain . '/tag/' . $tag['slug'] . '/index.html</loc></url>';
+    }
+}
 foreach ($productCategories as $category) {
     if (category_items($products, (int)$category['id'])) {
         $sitemap[] = '  <url><loc>https://' . $domain . '/product-category/' . $category['slug'] . '/index.html</loc></url>';
@@ -857,6 +967,11 @@ foreach ($categories as $category) {
 }
 foreach ($articles as $article) {
     $search[] = ['type' => 'article', 'title' => $article['title'], 'summary' => $article['summary'], 'url' => 'news/' . $article['slug'] . '.html'];
+}
+foreach ($tags as $tag) {
+    if (tag_items($articles, (string)$tag['slug'])) {
+        $search[] = ['type' => 'tag', 'title' => $tag['name'], 'summary' => $tag['description'] ?: ('文章标签：' . $tag['name']), 'url' => 'tag/' . $tag['slug'] . '/index.html'];
+    }
 }
 foreach ($productCategories as $category) {
     if (category_items($products, (int)$category['id'])) {

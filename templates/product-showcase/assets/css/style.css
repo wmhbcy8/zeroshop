@@ -183,6 +183,8 @@ p { color: var(--muted); margin: 0 0 12px; }
 .article-row { padding: 18px 20px; display: block; border-radius: var(--radius); }
 .article-row span, .meta, .sku { color: var(--muted); font-size: 13px; }
 .article-row strong { display: block; margin: 4px 0; }
+.tag-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 18px; }
+.tag-list a { padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--primary); font-size: 13px; background: #f8fbff; }
 .breadcrumb {
   display: flex;
   flex-wrap: wrap;

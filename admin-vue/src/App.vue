@@ -999,6 +999,7 @@
             :sites="sites"
             :categories="categories"
             :product-categories="productCategories"
+            :tags="tags"
             :current-site-id="currentSiteId"
             @new="newArticle"
             @edit="editArticle"
@@ -1922,6 +1923,7 @@ const articles = ref<any[]>([])
 const products = ref<any[]>([])
 const categories = ref<any[]>([])
 const productCategories = ref<any[]>([])
+const tags = ref<any[]>([])
 const orders = ref<any[]>([])
 const services = ref<any[]>([])
 const media = ref<any[]>([])
@@ -2231,7 +2233,7 @@ function setView(key: string) {
   if (key === 'pages') loadPages()
   if (key === 'ai') Promise.all([loadAiTasks(), loadSites()])
   if (key === 'ai-settings') Promise.all([loadSettings(), isPlatformAdmin.value ? loadPlatform() : Promise.resolve()])
-  if (key === 'articles') loadArticles()
+  if (key === 'articles') Promise.all([loadArticles(), loadCategories(), loadTags()])
   if (key === 'products') loadProducts()
   if (key === 'categories') loadCategories()
   if (key === 'orders') loadOrders()
@@ -2258,7 +2260,7 @@ function refreshCurrentView() {
     ai: async () => { await Promise.all([loadAiTasks(), loadSites()]) },
     'ai-settings': async () => { await Promise.all([loadSettings(), isPlatformAdmin.value ? loadPlatform() : Promise.resolve()]) },
     pages: loadPages,
-    articles: async () => { await Promise.all([loadArticles(), loadCategories()]) },
+    articles: async () => { await Promise.all([loadArticles(), loadCategories(), loadTags()]) },
     products: async () => { await Promise.all([loadProducts(), loadCategories()]) },
     categories: loadCategories,
     orders: loadOrders,
@@ -2297,6 +2299,7 @@ async function loadAll() {
     loadTemplateCloneTasks(),
     loadModuleRegistry(),
     loadCategories(),
+    loadTags(),
     loadPages(),
     loadArticles(),
     loadProducts(),
@@ -3060,6 +3063,12 @@ async function loadArticles() {
   articles.value = data.items || []
   articlePager.total = data.pagination?.total || articles.value.length
 }
+
+async function loadTags() {
+  const data = await request('/api/tags')
+  tags.value = data.items || []
+}
+
 function changeArticlePage(page: number) {
   articlePager.page = page
   loadArticles()
@@ -3261,15 +3270,15 @@ async function generatePageDraft(prompt: string) {
   mergeDraftIntoContentForm(pageForm, { ...(data.draft || data), content: (data.draft || data).content || '' })
 }
 
-function newArticle() { Object.assign(articleForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', site_scope: 'current', site_ids: currentSiteIds() }) }
-function editArticle(item: any) { Object.assign(articleForm, { ...item, site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds() }) }
+function newArticle() { Object.assign(articleForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', tag_names: [], site_scope: 'current', site_ids: currentSiteIds() }) }
+function editArticle(item: any) { Object.assign(articleForm, { ...item, tag_names: item.tag_names || (item.tags || []).map((tag: any) => tag.name), site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds() }) }
 async function saveArticle() {
   const method = articleForm.id ? 'PUT' : 'POST'
   const path = articleForm.id ? `/api/articles/${articleForm.id}` : '/api/articles'
   await request(path, { method, data: normalizeDistributionPayload(articleForm) })
   ElMessage.success('文章已保存')
   articlePager.page = articleForm.id ? articlePager.page : 1
-  await Promise.all([loadArticles(), loadDashboard(), loadSites()])
+  await Promise.all([loadArticles(), loadTags(), loadDashboard(), loadSites()])
 }
 async function bulkDistributeArticles(payload: any) {
   await bulkDistributeContent('article', payload, loadArticles)
@@ -3277,7 +3286,7 @@ async function bulkDistributeArticles(payload: any) {
 async function deleteArticle(item: any) {
   await ElMessageBox.confirm(`确定删除文章「${item.title}」？`)
   await request(`/api/articles/${item.id}`, { method: 'DELETE' })
-  await loadArticles()
+  await Promise.all([loadArticles(), loadTags()])
 }
 async function generateArticleDraft(prompt: string) {
   await generateContentDraft('article', prompt, articleForm)

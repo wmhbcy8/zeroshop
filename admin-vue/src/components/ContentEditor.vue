@@ -79,6 +79,11 @@
             <el-option v-for="item in categoryOptions" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
+        <el-form-item v-if="type === 'article'" label="标签">
+          <el-select v-model="form.tag_names" multiple filterable allow-create default-first-option collapse-tags collapse-tags-tooltip placeholder="选择或输入文章标签">
+            <el-option v-for="item in tags" :key="item.id || item.slug" :label="item.name" :value="item.name" />
+          </el-select>
+        </el-form-item>
         <el-form-item v-if="type === 'product'" label="SKU"><el-input v-model="form.sku" /></el-form-item>
         <el-form-item label="封面">
           <div class="cover-field">
@@ -130,6 +135,7 @@ const props = defineProps<{
   sites: any[]
   categories?: any[]
   productCategories?: any[]
+  tags?: any[]
   currentSiteId: number | string
 }>()
 

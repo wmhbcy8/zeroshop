@@ -3365,6 +3365,132 @@ function attach_distribution(PDO $pdo, string $type, array $items): array
     }, $items);
 }
 
+function ensure_article_tag_tables(PDO $pdo): void
+{
+    $pdo->exec("CREATE TABLE IF NOT EXISTS tags (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(80) NOT NULL,
+        slug VARCHAR(100) NOT NULL UNIQUE,
+        description TEXT,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        UNIQUE KEY uk_tag_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS article_tags (
+        article_id BIGINT UNSIGNED NOT NULL,
+        tag_id BIGINT UNSIGNED NOT NULL,
+        created_at DATETIME NOT NULL,
+        PRIMARY KEY (article_id, tag_id),
+        INDEX idx_tag_id (tag_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+
+function normalize_tag_slug(string $value): string
+{
+    $slug = strtolower(trim($value));
+    $slug = preg_replace('/\s+/u', '-', $slug);
+    $slug = preg_replace('/[^\p{L}\p{N}_-]+/u', '-', (string)$slug);
+    $slug = trim((string)$slug, '-_');
+    if ($slug === '') {
+        $slug = 'tag-' . substr(md5($value), 0, 8);
+    }
+    return mb_substr($slug, 0, 100, 'UTF-8');
+}
+
+function normalize_tag_names(array|string|null $tags): array
+{
+    if (is_string($tags)) {
+        $tags = preg_split('/[,，\n\r]+/u', $tags) ?: [];
+    }
+    if (!is_array($tags)) {
+        return [];
+    }
+    $names = [];
+    foreach ($tags as $tag) {
+        $name = trim((string)$tag);
+        if ($name === '') {
+            continue;
+        }
+        $name = mb_substr($name, 0, 80, 'UTF-8');
+        $names[$name] = $name;
+    }
+    return array_values($names);
+}
+
+function sync_article_tags(PDO $pdo, int $articleId, array|string|null $tags): void
+{
+    ensure_article_tag_tables($pdo);
+    $names = normalize_tag_names($tags);
+    $pdo->prepare('DELETE FROM article_tags WHERE article_id = ?')->execute([$articleId]);
+    if (!$names) {
+        return;
+    }
+    $time = now();
+    $select = $pdo->prepare('SELECT id FROM tags WHERE slug = ? OR name = ? LIMIT 1');
+    $insertTag = $pdo->prepare("INSERT INTO tags (name, slug, description, created_at, updated_at)
+        VALUES (:name, :slug, '', :created_at, :updated_at)");
+    $insertRel = $pdo->prepare("INSERT IGNORE INTO article_tags (article_id, tag_id, created_at)
+        VALUES (:article_id, :tag_id, :created_at)");
+    foreach ($names as $name) {
+        $slug = normalize_tag_slug($name);
+        $select->execute([$slug, $name]);
+        $tagId = (int)($select->fetchColumn() ?: 0);
+        if (!$tagId) {
+            $insertTag->execute([
+                'name' => $name,
+                'slug' => $slug,
+                'created_at' => $time,
+                'updated_at' => $time,
+            ]);
+            $tagId = (int)$pdo->lastInsertId();
+        }
+        $insertRel->execute([
+            'article_id' => $articleId,
+            'tag_id' => $tagId,
+            'created_at' => $time,
+        ]);
+    }
+}
+
+function article_tag_map(PDO $pdo, array $ids): array
+{
+    ensure_article_tag_tables($pdo);
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids), fn($id) => $id > 0)));
+    if (!$ids) {
+        return [];
+    }
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $stmt = $pdo->prepare("SELECT at.article_id, t.id, t.name, t.slug
+        FROM article_tags at
+        INNER JOIN tags t ON t.id = at.tag_id
+        WHERE at.article_id IN ({$placeholders})
+        ORDER BY t.name ASC");
+    $stmt->execute($ids);
+    $map = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $articleId = (int)$row['article_id'];
+        $map[$articleId] ??= [];
+        $map[$articleId][] = [
+            'id' => (int)$row['id'],
+            'name' => (string)$row['name'],
+            'slug' => (string)$row['slug'],
+        ];
+    }
+    return $map;
+}
+
+function attach_article_tags(PDO $pdo, array $items): array
+{
+    $map = article_tag_map($pdo, array_column($items, 'id'));
+    return array_map(function (array $item) use ($map) {
+        $tags = $map[(int)$item['id']] ?? [];
+        $item['tags'] = $tags;
+        $item['tag_names'] = array_map(fn($tag) => $tag['name'], $tags);
+        return $item;
+    }, $items);
+}
+
 function distribution_site_counts(PDO $pdo, string $type): array
 {
     try {
@@ -4602,7 +4728,9 @@ function insert_page(PDO $pdo, array $data): int
         'created_at' => $time,
         'updated_at' => $time,
     ]);
-    return (int)$pdo->lastInsertId();
+    $id = (int)$pdo->lastInsertId();
+    sync_article_tags($pdo, $id, $data['tags'] ?? $data['tag_names'] ?? '');
+    return $id;
 }
 
 function ensure_collector_tables(PDO $pdo): void
@@ -6507,6 +6635,16 @@ try {
         }
     }
 
+    if ($method === 'GET' && $path === '/tags') {
+        ensure_article_tag_tables($pdo);
+        $items = $pdo->query("SELECT t.*, COUNT(at.article_id) AS article_count
+            FROM tags t
+            LEFT JOIN article_tags at ON at.tag_id = t.id
+            GROUP BY t.id
+            ORDER BY article_count DESC, t.name ASC")->fetchAll();
+        ok(['items' => $items]);
+    }
+
     if ($method === 'GET' && $path === '/pages') {
         ensure_pages_table($pdo);
         $result = paginate($pdo, 'pages', [], 'id DESC');
@@ -6565,6 +6703,7 @@ try {
     if ($method === 'GET' && $path === '/articles') {
         $result = paginate($pdo, 'articles', [], 'published_at DESC, id DESC');
         $result['items'] = attach_distribution($pdo, 'article', $result['items']);
+        $result['items'] = attach_article_tags($pdo, $result['items']);
         ok($result);
     }
 
@@ -6581,6 +6720,7 @@ try {
             $item = fetch_one($pdo, 'articles', $id);
             if ($item) {
                 $item = attach_distribution($pdo, 'article', [$item])[0];
+                $item = attach_article_tags($pdo, [$item])[0];
             }
             $item ? ok($item) : fail('文章不存在', 'NOT_FOUND', 404);
         }
@@ -6604,12 +6744,16 @@ try {
                 'updated_at' => now(),
             ]);
             sync_content_distribution($pdo, 'article', $id, normalize_site_ids($data));
+            sync_article_tags($pdo, $id, $data['tags'] ?? $data['tag_names'] ?? '');
             $item = attach_distribution($pdo, 'article', [fetch_one($pdo, 'articles', $id)])[0];
+            $item = attach_article_tags($pdo, [$item])[0];
             ok($item, '保存成功');
         }
         if ($method === 'DELETE') {
             ensure_content_distribution_table($pdo);
             $pdo->prepare("DELETE FROM content_site_relations WHERE content_type = 'article' AND content_id = ?")->execute([$id]);
+            ensure_article_tag_tables($pdo);
+            $pdo->prepare('DELETE FROM article_tags WHERE article_id = ?')->execute([$id]);
             $pdo->prepare('DELETE FROM articles WHERE id = ?')->execute([$id]);
             ok([], '删除成功');
         }

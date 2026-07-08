@@ -158,6 +158,22 @@ exec_all($site, [
         INDEX idx_status (status),
         INDEX idx_published_at (published_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS tags (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(80) NOT NULL,
+        slug VARCHAR(100) NOT NULL UNIQUE,
+        description TEXT,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        UNIQUE KEY uk_tag_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    "CREATE TABLE IF NOT EXISTS article_tags (
+        article_id BIGINT UNSIGNED NOT NULL,
+        tag_id BIGINT UNSIGNED NOT NULL,
+        created_at DATETIME NOT NULL,
+        PRIMARY KEY (article_id, tag_id),
+        INDEX idx_tag_id (tag_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
     "CREATE TABLE IF NOT EXISTS product_categories (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
         parent_id BIGINT UNSIGNED DEFAULT 0,
