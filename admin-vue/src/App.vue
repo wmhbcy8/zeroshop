@@ -754,9 +754,15 @@
 
         <section v-if="view === 'ai'">
           <el-row :gutter="16">
-            <el-col :span="9">
+            <el-col :span="7">
               <el-card class="panel" shadow="never">
                 <template #header><strong>AI 内容生产</strong></template>
+                <div class="ai-command-list">
+                  <button v-for="item in aiQuickCommands" :key="item.title" type="button" @click="applyAiQuickCommand(item)">
+                    <strong>{{ item.title }}</strong>
+                    <small>{{ item.desc }}</small>
+                  </button>
+                </div>
                 <el-form :model="aiForm" label-width="96px">
                   <el-form-item label="发布范围">
                     <el-radio-group v-model="aiForm.site_scope" @change="syncAiSiteScope">
@@ -800,7 +806,7 @@
                 </el-form>
               </el-card>
             </el-col>
-            <el-col :span="15">
+            <el-col :span="10">
               <el-card class="panel" shadow="never">
                 <template #header>
                   <div class="card-head">
@@ -862,6 +868,45 @@
                   </el-table-column>
                 </el-table>
                 <el-pagination class="table-pager" layout="prev, pager, next, total" :current-page="aiTaskPager.page" :page-size="aiTaskPager.page_size" :total="aiTaskPager.total" @current-change="changeAiTaskPage" />
+              </el-card>
+            </el-col>
+            <el-col :span="7">
+              <el-card class="panel ai-plan-card" shadow="never">
+                <template #header><strong>执行计划</strong></template>
+                <div class="ai-plan-summary">
+                  <article>
+                    <span>内容库</span>
+                    <strong>{{ aiForm.type === 'article' ? '文章库' : '商品库' }}</strong>
+                    <small>{{ aiForm.status === 'published' ? '生成后可直接进入前台可见范围' : '默认先存草稿，确认后再发布' }}</small>
+                  </article>
+                  <article>
+                    <span>目标站点</span>
+                    <strong>{{ contentSiteLabel(aiTargetSiteIds) }}</strong>
+                    <small>{{ aiTargetSiteIds.length }} 个站点会绑定这批内容</small>
+                  </article>
+                  <article>
+                    <span>计划数量</span>
+                    <strong>{{ aiForm.count }} 条</strong>
+                    <small>预览最多先生成 3 条，批量入库按完整数量执行</small>
+                  </article>
+                  <article>
+                    <span>额度预估</span>
+                    <strong>{{ aiEstimatedQuota }} 次</strong>
+                    <small>含文本生成；封面图会另行消耗图片额度</small>
+                  </article>
+                </div>
+                <ol class="ai-plan-steps">
+                  <li v-for="item in aiWorkflowSteps" :key="item.title">
+                    <strong>{{ item.title }}</strong>
+                    <small>{{ item.desc }}</small>
+                  </li>
+                </ol>
+                <el-alert
+                  type="warning"
+                  show-icon
+                  :closable="false"
+                  title="中台只保存一份内容，发布范围决定它同步到哪些静态站。修改范围后，需要重新生成静态站，前台才会更新。"
+                />
               </el-card>
             </el-col>
           </el-row>
@@ -1896,6 +1941,32 @@ const siteEditingId = ref<number | string>('')
 const emptyDeploy = () => ({ bt_panel_url: '', site_path: '', mode: 'manual', after_action: '', note: '' })
 const siteForm = reactive<any>({ name: '', deploy_node_id: 0, domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active', deploy: emptyDeploy() })
 const aiForm = reactive<any>({ type: 'article', prompt: '围绕自主品牌商品、行业解决方案和独立站 SEO 关键词生成内容', count: 5, status: 'draft', site_scope: 'current', site_ids: [] })
+const aiQuickCommands = [
+  {
+    title: '生成 SEO 文章',
+    desc: '围绕当前站点商品和行业关键词生成知识库内容',
+    type: 'article',
+    count: 10,
+    status: 'draft',
+    prompt: '请根据当前站点的自主品牌商品、行业解决方案、客户痛点和 SEO 关键词，生成 10 篇适合独立站收录的文章草稿。每篇文章需要包含标题、摘要、正文大纲、SEO 关键词和适合生成封面的提示方向。'
+  },
+  {
+    title: '生成商品文案',
+    desc: '批量生成商品标题、卖点、描述和 SEO 信息',
+    type: 'product',
+    count: 6,
+    status: 'draft',
+    prompt: '请围绕当前站点的核心产品线，生成 6 个独立站商品草稿。每个商品包含标题、SKU 建议、核心卖点、适用场景、详细描述、SEO 关键词和封面图提示。'
+  },
+  {
+    title: '行业资讯草稿',
+    desc: '配合采集中心改写成更适合搜索收录的内容',
+    type: 'article',
+    count: 8,
+    status: 'draft',
+    prompt: '请围绕行业新闻、技术趋势、采购指南和常见问题，生成 8 篇原创化资讯草稿。内容要避免低质量伪原创，重点服务搜索收录和客户阅读。'
+  }
+]
 const pageBuilder = reactive({ prompt: '围绕自主品牌商品、行业解决方案、SEO 内容沉淀和询盘转化，生成一个企业官网 + 博客知识库 + 独立站商城首页方案' })
 const templateCloneForm = reactive({ target_url: '' })
 const templateCloneLoading = ref(false)
@@ -1953,6 +2024,26 @@ const isPlatformAdmin = computed(() => ['admin', 'platform_admin', 'super_admin'
 const visibleNavItems = computed(() => navItems.filter((item) => item.key !== 'platform' || isPlatformAdmin.value))
 const currentNav = computed(() => visibleNavItems.value.find((item) => item.key === view.value) || visibleNavItems.value[0])
 const currentSite = computed(() => sites.value.find((item: any) => String(item.id) === String(currentSiteId.value)))
+const aiTargetSiteIds = computed(() => siteIdsForScope(aiForm.site_scope, aiForm.site_ids))
+const aiEstimatedQuota = computed(() => Math.max(1, Number(aiForm.count || 1)))
+const aiWorkflowSteps = computed(() => [
+  {
+    title: '1. 选择中台内容类型',
+    desc: aiForm.type === 'article' ? '生成结果进入文章库，可用于博客、知识库、新闻资讯。' : '生成结果进入商品库，可用于商品列表、详情页和询盘转化。'
+  },
+  {
+    title: '2. 绑定目标站点',
+    desc: `当前范围：${contentSiteLabel(aiTargetSiteIds.value)}。内容只保存一份，站点绑定关系单独记录。`
+  },
+  {
+    title: '3. 预览或入库',
+    desc: '生成预览适合人工挑选；生成任务适合稍后确认；批量入库会直接创建内容。'
+  },
+  {
+    title: '4. 重新生成静态站',
+    desc: '内容确认后，在部署页对目标站点生成静态页面，前台文章、商品和导航才会更新。'
+  }
+])
 const settingsScopeText = computed(() => {
   if (String(currentSiteId.value) === '10001') return '正在编辑公共默认配置'
   return site.has_site_override ? '当前站点已有独立配置' : '当前站点正在继承公共默认配置'
@@ -3044,6 +3135,14 @@ async function bulkDistributeContent(type: 'article' | 'product' | 'page', paylo
 
 function syncAiSiteScope() {
   aiForm.site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
+}
+
+function applyAiQuickCommand(item: any) {
+  aiForm.type = item.type
+  aiForm.count = item.count
+  aiForm.status = item.status
+  aiForm.prompt = item.prompt
+  syncAiSiteScope()
 }
 
 function newPage() { Object.assign(pageForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', site_scope: 'current', site_ids: currentSiteIds() }) }
