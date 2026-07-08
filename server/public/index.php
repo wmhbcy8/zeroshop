@@ -758,6 +758,30 @@ function ensure_center_tables(PDO $main): void
         INDEX idx_domain (domain),
         INDEX idx_status (status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $main->exec("CREATE TABLE IF NOT EXISTS payment_channels (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(120) NOT NULL,
+        provider VARCHAR(40) NOT NULL DEFAULT 'manual',
+        currency VARCHAR(10) NOT NULL DEFAULT 'CNY',
+        account VARCHAR(180),
+        instructions TEXT,
+        config_json TEXT,
+        status VARCHAR(30) NOT NULL DEFAULT 'active',
+        is_default TINYINT(1) NOT NULL DEFAULT 0,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_provider (provider),
+        INDEX idx_status (status),
+        INDEX idx_default (is_default)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $main->exec("CREATE TABLE IF NOT EXISTS payment_channel_sites (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        channel_id BIGINT UNSIGNED NOT NULL,
+        site_id BIGINT UNSIGNED NOT NULL,
+        created_at DATETIME NOT NULL,
+        UNIQUE KEY uk_channel_site (channel_id, site_id),
+        INDEX idx_site_id (site_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $now = now();
     $main->exec("INSERT INTO customers (id, name, phone, email, company, status, created_at, updated_at)
         VALUES (1, '默认客户', '', '', '', 'active', '{$now}', '{$now}')
@@ -838,6 +862,159 @@ function center_overview(array $sites): array
         }
     }
     return $totals;
+}
+
+function decode_payment_config(?string $value): array
+{
+    if (!$value) {
+        return [];
+    }
+    $data = json_decode($value, true);
+    return is_array($data) ? $data : [];
+}
+
+function payment_channel_site_ids(PDO $main, int $channelId): array
+{
+    $stmt = $main->prepare('SELECT site_id FROM payment_channel_sites WHERE channel_id = ? ORDER BY site_id ASC');
+    $stmt->execute([$channelId]);
+    return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+}
+
+function hydrate_payment_channel(PDO $main, array $row): array
+{
+    $row['id'] = (int)$row['id'];
+    $row['is_default'] = (int)($row['is_default'] ?? 0) === 1;
+    $row['config'] = decode_payment_config($row['config_json'] ?? '');
+    unset($row['config_json']);
+    $siteIds = payment_channel_site_ids($main, (int)$row['id']);
+    $row['site_ids'] = $siteIds;
+    $row['scope'] = $siteIds ? 'selected' : 'all';
+    return $row;
+}
+
+function list_payment_channels(PDO $main): array
+{
+    ensure_center_tables($main);
+    $rows = $main->query('SELECT * FROM payment_channels ORDER BY is_default DESC, id DESC')->fetchAll();
+    return [
+        'items' => array_map(fn($row) => hydrate_payment_channel($main, $row), $rows),
+    ];
+}
+
+function normalize_payment_channel_payload(array $data): array
+{
+    $name = trim((string)($data['name'] ?? ''));
+    if ($name === '') {
+        fail('请填写支付通道名称', 'VALIDATION_ERROR', 422);
+    }
+    $provider = trim((string)($data['provider'] ?? 'manual')) ?: 'manual';
+    if (!in_array($provider, ['manual', 'wechat', 'alipay', 'stripe', 'paypal', 'bank'], true)) {
+        $provider = 'manual';
+    }
+    $siteIds = $data['site_ids'] ?? [];
+    if (!is_array($siteIds)) {
+        $siteIds = [];
+    }
+    $siteIds = array_values(array_unique(array_filter(array_map('intval', $siteIds), fn($id) => $id > 0)));
+    return [
+        'name' => $name,
+        'provider' => $provider,
+        'currency' => strtoupper(trim((string)($data['currency'] ?? 'CNY')) ?: 'CNY'),
+        'account' => trim((string)($data['account'] ?? '')),
+        'instructions' => trim((string)($data['instructions'] ?? '')),
+        'config' => is_array($data['config'] ?? null) ? $data['config'] : [],
+        'status' => in_array(($data['status'] ?? 'active'), ['active', 'disabled'], true) ? $data['status'] : 'active',
+        'is_default' => !empty($data['is_default']) ? 1 : 0,
+        'scope' => ($data['scope'] ?? 'all') === 'selected' ? 'selected' : 'all',
+        'site_ids' => $siteIds,
+    ];
+}
+
+function sync_payment_channel_sites(PDO $main, int $channelId, string $scope, array $siteIds): void
+{
+    $main->prepare('DELETE FROM payment_channel_sites WHERE channel_id = ?')->execute([$channelId]);
+    if ($scope !== 'selected') {
+        return;
+    }
+    $stmt = $main->prepare('INSERT IGNORE INTO payment_channel_sites (channel_id, site_id, created_at) VALUES (:channel_id, :site_id, :created_at)');
+    foreach ($siteIds as $siteId) {
+        $stmt->execute([
+            'channel_id' => $channelId,
+            'site_id' => (int)$siteId,
+            'created_at' => now(),
+        ]);
+    }
+}
+
+function save_payment_channel(PDO $main, array $data, ?int $id = null): array
+{
+    ensure_center_tables($main);
+    $payload = normalize_payment_channel_payload($data);
+    $time = now();
+    if ($payload['is_default']) {
+        $main->exec('UPDATE payment_channels SET is_default = 0');
+    }
+    if ($id) {
+        $stmt = $main->prepare("UPDATE payment_channels SET name=:name, provider=:provider, currency=:currency, account=:account, instructions=:instructions, config_json=:config_json, status=:status, is_default=:is_default, updated_at=:updated_at WHERE id=:id");
+        $stmt->execute([
+            'id' => $id,
+            'name' => $payload['name'],
+            'provider' => $payload['provider'],
+            'currency' => $payload['currency'],
+            'account' => $payload['account'],
+            'instructions' => $payload['instructions'],
+            'config_json' => json_encode($payload['config'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'status' => $payload['status'],
+            'is_default' => $payload['is_default'],
+            'updated_at' => $time,
+        ]);
+    } else {
+        $stmt = $main->prepare("INSERT INTO payment_channels (name, provider, currency, account, instructions, config_json, status, is_default, created_at, updated_at)
+            VALUES (:name, :provider, :currency, :account, :instructions, :config_json, :status, :is_default, :created_at, :updated_at)");
+        $stmt->execute([
+            'name' => $payload['name'],
+            'provider' => $payload['provider'],
+            'currency' => $payload['currency'],
+            'account' => $payload['account'],
+            'instructions' => $payload['instructions'],
+            'config_json' => json_encode($payload['config'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'status' => $payload['status'],
+            'is_default' => $payload['is_default'],
+            'created_at' => $time,
+            'updated_at' => $time,
+        ]);
+        $id = (int)$main->lastInsertId();
+    }
+    sync_payment_channel_sites($main, (int)$id, $payload['scope'], $payload['site_ids']);
+    $item = fetch_one($main, 'payment_channels', (int)$id);
+    return $item ? hydrate_payment_channel($main, $item) : [];
+}
+
+function apply_payment_channel_to_site(PDO $main, PDO $sitePdo, int $channelId): array
+{
+    ensure_center_tables($main);
+    $item = fetch_one($main, 'payment_channels', $channelId);
+    if (!$item || ($item['status'] ?? '') !== 'active') {
+        fail('支付通道不存在或已停用', 'NOT_FOUND', 404);
+    }
+    $channel = hydrate_payment_channel($main, $item);
+    $site = site_settings($sitePdo);
+    $site['payment'] = array_replace($site['payment'] ?? [], [
+        'mode' => $channel['provider'],
+        'currency' => $channel['currency'],
+        'account' => $channel['account'] ?? '',
+        'instructions' => $channel['instructions'] ?? '',
+        'guide' => $channel['instructions'] ?? '',
+        'channel_id' => $channel['id'],
+        'channel_name' => $channel['name'],
+        'provider' => $channel['provider'],
+    ]);
+    $stmt = $sitePdo->prepare("REPLACE INTO site_settings (setting_key, setting_value, updated_at) VALUES ('site', :value, :updated_at)");
+    $stmt->execute([
+        'value' => json_encode($site, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'updated_at' => now(),
+    ]);
+    return ['channel' => $channel, 'site' => $site];
 }
 
 function ensure_content_distribution_table(PDO $pdo): void
@@ -2084,6 +2261,37 @@ try {
 
     if ($method === 'GET' && $path === '/site/templates') {
         ok(template_registry());
+    }
+
+    if ($method === 'GET' && $path === '/payment/channels') {
+        ok(list_payment_channels(main_pdo()));
+    }
+
+    if ($method === 'POST' && $path === '/payment/channels') {
+        ok(save_payment_channel(main_pdo(), body_json()), '支付通道已保存');
+    }
+
+    if ($params = route_param('/payment/channels/{id}', $path)) {
+        $id = (int)$params['id'];
+        if ($method === 'PUT') {
+            ok(save_payment_channel(main_pdo(), body_json(), $id), '支付通道已保存');
+        }
+        if ($method === 'DELETE') {
+            $main = main_pdo();
+            ensure_center_tables($main);
+            $main->prepare('DELETE FROM payment_channel_sites WHERE channel_id = ?')->execute([$id]);
+            $main->prepare('DELETE FROM payment_channels WHERE id = ?')->execute([$id]);
+            ok([], '支付通道已删除');
+        }
+    }
+
+    if ($method === 'POST' && $path === '/payment/channels/apply') {
+        $data = body_json();
+        $channelId = (int)($data['channel_id'] ?? 0);
+        if ($channelId <= 0) {
+            fail('请选择支付通道', 'VALIDATION_ERROR', 422);
+        }
+        ok(apply_payment_channel_to_site(main_pdo(), $pdo, $channelId), '支付通道已应用到当前站点');
     }
 
     if ($method === 'PUT' && $path === '/site/settings') {

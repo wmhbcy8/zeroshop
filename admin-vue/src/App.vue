@@ -548,6 +548,67 @@
           </el-card>
         </section>
 
+        <section v-if="view === 'payments'">
+          <el-card class="panel" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>支付通道</strong>
+                <el-button type="primary" @click="newPaymentChannel">新建通道</el-button>
+              </div>
+            </template>
+            <el-alert title="支付通道在客户中台统一维护，可分配给全部站点或指定站点；应用到当前站点后，前台订单页会展示对应付款说明。" type="info" show-icon class="mb16" />
+            <el-table :data="paymentChannels" height="620">
+              <el-table-column prop="name" label="通道名称" min-width="180">
+                <template #default="{ row }"><strong>{{ row.name }}</strong><br /><small>{{ providerLabel(row.provider) }} / {{ row.currency }}</small></template>
+              </el-table-column>
+              <el-table-column label="适用站点" min-width="220">
+                <template #default="{ row }"><small>{{ channelSiteLabel(row) }}</small></template>
+              </el-table-column>
+              <el-table-column prop="account" label="收款账号" min-width="180" />
+              <el-table-column label="状态" width="130">
+                <template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status === 'active' ? '启用' : '停用' }}</el-tag><el-tag v-if="row.is_default" class="ml6">默认</el-tag></template>
+              </el-table-column>
+              <el-table-column label="操作" width="230">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="editPaymentChannel(row)">编辑</el-button>
+                  <el-button link type="primary" @click="applyPaymentChannel(row)">应用到当前站</el-button>
+                  <el-button link type="danger" @click="deletePaymentChannel(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+          <el-drawer v-model="paymentDrawerVisible" size="620px" title="支付通道配置">
+            <el-form :model="paymentForm" label-width="100px">
+              <el-form-item label="通道名称"><el-input v-model="paymentForm.name" placeholder="例如：默认银行转账 / 支付宝收款" /></el-form-item>
+              <el-row :gutter="12">
+                <el-col :span="12"><el-form-item label="通道类型"><el-select v-model="paymentForm.provider"><el-option label="人工确认" value="manual" /><el-option label="银行转账" value="bank" /><el-option label="微信支付" value="wechat" /><el-option label="支付宝" value="alipay" /><el-option label="Stripe" value="stripe" /><el-option label="PayPal" value="paypal" /></el-select></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="币种"><el-input v-model="paymentForm.currency" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="收款账号"><el-input v-model="paymentForm.account" placeholder="银行账号、支付宝账号、Stripe account id 等" /></el-form-item>
+              <el-form-item label="付款说明"><el-input v-model="paymentForm.instructions" type="textarea" :rows="4" placeholder="展示给前台客户的付款步骤、备注格式、客服确认方式" /></el-form-item>
+              <el-row :gutter="12">
+                <el-col :span="12"><el-form-item label="状态"><el-select v-model="paymentForm.status"><el-option label="启用" value="active" /><el-option label="停用" value="disabled" /></el-select></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="默认通道"><el-switch v-model="paymentForm.is_default" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="适用范围">
+                <el-radio-group v-model="paymentForm.scope">
+                  <el-radio-button label="all">全部站点</el-radio-button>
+                  <el-radio-button label="selected">指定站点</el-radio-button>
+                </el-radio-group>
+              </el-form-item>
+              <el-form-item v-if="paymentForm.scope === 'selected'" label="选择站点">
+                <el-select v-model="paymentForm.site_ids" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择可使用该通道的站点">
+                  <el-option v-for="item in sites" :key="item.id" :label="item.name" :value="item.id" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="接口参数">
+                <el-input v-model="paymentConfigText" type="textarea" :rows="5" placeholder='{"merchant_id":"","api_key":"","webhook_url":""}' />
+              </el-form-item>
+              <el-button type="primary" @click="savePaymentChannel">保存通道</el-button>
+            </el-form>
+          </el-drawer>
+        </section>
+
         <section v-if="view === 'publish'">
           <el-card class="panel" shadow="never">
             <template #header>
@@ -626,6 +687,7 @@ const orders = ref<any[]>([])
 const services = ref<any[]>([])
 const media = ref<any[]>([])
 const forms = ref<any[]>([])
+const paymentChannels = ref<any[]>([])
 const versions = ref<any[]>([])
 const sites = ref<any[]>([])
 const centerOverview = ref<any>({})
@@ -636,6 +698,7 @@ const moduleRegistry = ref<any>({ scopes: [], modules: [] })
 const servicePending = ref(0)
 const selectedServiceIds = ref<string[]>([])
 const orderDrawerVisible = ref(false)
+const paymentDrawerVisible = ref(false)
 const publishDrawerVisible = ref(false)
 const siteDrawerVisible = ref(false)
 const publishResult = ref<any>(null)
@@ -647,6 +710,8 @@ const serviceFilters = reactive({ keyword: '', status: '', type: '' })
 const formFilters = reactive({ keyword: '', status: '' })
 const mediaFilters = reactive({ keyword: '', file_type: '' })
 const orderDetail = reactive<any>({})
+const paymentForm = reactive<any>({})
+const paymentConfigText = ref('')
 const publishDetail = reactive<any>({})
 const publishSummary = computed(() => parseSummary(publishDetail.summary))
 const publishResultTitle = computed(() => {
@@ -690,6 +755,7 @@ const navItems = [
   { key: 'products', label: '商品', hint: '管理独立站商品与商城展示内容。', icon: 'Goods' },
   { key: 'orders', label: '订单', hint: '处理支付、发货和订单跟进。', icon: 'ShoppingCart' },
   { key: 'service', label: '服务', hint: '集中处理客户服务请求。', icon: 'Service' },
+  { key: 'payments', label: '支付', hint: '统一配置收款通道并分配到各站点。', icon: 'Money' },
   { key: 'media', label: '媒体库', hint: '上传并复用图片和文件素材。', icon: 'Picture' },
   { key: 'forms', label: '留言', hint: '处理询盘线索和联系表单。', icon: 'ChatLineRound' },
   { key: 'publish', label: '发布', hint: '生成静态站并查看发布记录。', icon: 'Upload' }
@@ -747,6 +813,7 @@ function setView(key: string) {
   if (key === 'products') loadProducts()
   if (key === 'orders') loadOrders()
   if (key === 'service') loadServices()
+  if (key === 'payments') loadPaymentChannels()
   if (key === 'media') loadMedia()
   if (key === 'forms') loadForms()
   if (key === 'publish') loadVersions()
@@ -763,6 +830,7 @@ function refreshCurrentView() {
     products: loadProducts,
     orders: loadOrders,
     service: loadServices,
+    payments: loadPaymentChannels,
     media: loadMedia,
     forms: loadForms,
     publish: loadVersions
@@ -775,7 +843,7 @@ function openLegacyAdmin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadSites(), loadDashboard(), loadSettings(), loadTemplates(), loadModuleRegistry(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadMedia(), loadForms(), loadVersions()])
+  await Promise.all([loadSites(), loadDashboard(), loadSettings(), loadTemplates(), loadModuleRegistry(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadMedia(), loadForms(), loadVersions()])
 }
 
 async function loadDashboard() {
@@ -1213,6 +1281,76 @@ async function resolveSelectedServices() {
   const data = await request('/api/orders/service-requests/resolve', { method: 'POST', data: { ids: selectedServiceIds.value } })
   ElMessage.success(`已处理 ${data.handled || 0} 条服务请求`)
   await loadServices()
+}
+
+async function loadPaymentChannels() {
+  const data = await request('/api/payment/channels')
+  paymentChannels.value = data.items || []
+}
+function newPaymentChannel() {
+  Object.assign(paymentForm, {
+    id: '',
+    name: '',
+    provider: 'manual',
+    currency: 'CNY',
+    account: '',
+    instructions: '',
+    status: 'active',
+    is_default: false,
+    scope: 'all',
+    site_ids: [],
+    config: {}
+  })
+  paymentConfigText.value = ''
+  paymentDrawerVisible.value = true
+}
+function editPaymentChannel(item: any) {
+  Object.assign(paymentForm, {
+    ...item,
+    is_default: !!item.is_default,
+    scope: item.scope || (item.site_ids?.length ? 'selected' : 'all'),
+    site_ids: item.site_ids || [],
+    config: item.config || {}
+  })
+  paymentConfigText.value = JSON.stringify(paymentForm.config || {}, null, 2)
+  paymentDrawerVisible.value = true
+}
+async function savePaymentChannel() {
+  let config = {}
+  if (paymentConfigText.value.trim()) {
+    try {
+      config = JSON.parse(paymentConfigText.value)
+    } catch {
+      return ElMessage.error('接口参数必须是 JSON 格式')
+    }
+  }
+  const payload = { ...paymentForm, config }
+  if (payload.scope !== 'selected') payload.site_ids = []
+  const method = paymentForm.id ? 'PUT' : 'POST'
+  const path = paymentForm.id ? `/api/payment/channels/${paymentForm.id}` : '/api/payment/channels'
+  await request(path, { method, data: payload })
+  paymentDrawerVisible.value = false
+  ElMessage.success('支付通道已保存')
+  await loadPaymentChannels()
+}
+async function deletePaymentChannel(item: any) {
+  await ElMessageBox.confirm(`确定删除支付通道「${item.name}」？`)
+  await request(`/api/payment/channels/${item.id}`, { method: 'DELETE' })
+  ElMessage.success('支付通道已删除')
+  await loadPaymentChannels()
+}
+async function applyPaymentChannel(item: any) {
+  await request('/api/payment/channels/apply', { method: 'POST', data: { channel_id: item.id } })
+  await loadSettings()
+  ElMessage.success(`已应用到当前站点：${currentSite.value?.name || '默认站点'}`)
+}
+function providerLabel(value: string) {
+  return { manual: '人工确认', bank: '银行转账', wechat: '微信支付', alipay: '支付宝', stripe: 'Stripe', paypal: 'PayPal' }[value] || value || '-'
+}
+function channelSiteLabel(item: any) {
+  if (!item.site_ids?.length) return '全部站点'
+  const names = sites.value.filter((site: any) => item.site_ids.includes(Number(site.id))).map((site: any) => site.name)
+  return names.length ? names.join('、') : item.site_ids.join('、')
 }
 
 async function loadMedia() {
