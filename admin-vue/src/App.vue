@@ -111,6 +111,65 @@
           </el-card>
         </section>
 
+        <section v-if="view === 'ai'">
+          <el-row :gutter="16">
+            <el-col :span="9">
+              <el-card class="panel" shadow="never">
+                <template #header><strong>AI 内容生产</strong></template>
+                <el-form :model="aiForm" label-width="96px">
+                  <el-form-item label="内容类型">
+                    <el-segmented v-model="aiForm.type" :options="[{ label: '文章', value: 'article' }, { label: '商品', value: 'product' }]" />
+                  </el-form-item>
+                  <el-form-item label="生成要求">
+                    <el-input v-model="aiForm.prompt" type="textarea" :rows="7" placeholder="例如：围绕低空巡检无人机、自主品牌、行业解决方案，生成适合独立站收录的内容" />
+                  </el-form-item>
+                  <el-form-item label="生成数量">
+                    <el-input-number v-model="aiForm.count" :min="1" :max="20" />
+                  </el-form-item>
+                  <el-form-item label="保存状态">
+                    <el-radio-group v-model="aiForm.status">
+                      <el-radio-button label="draft">草稿</el-radio-button>
+                      <el-radio-button label="published">发布</el-radio-button>
+                    </el-radio-group>
+                  </el-form-item>
+                  <el-form-item>
+                    <el-button type="primary" :loading="aiLoading" @click="generateAiPreview">生成预览</el-button>
+                    <el-button :loading="aiBatchLoading" @click="batchCreateAiContent">批量入库</el-button>
+                  </el-form-item>
+                </el-form>
+              </el-card>
+            </el-col>
+            <el-col :span="15">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>生成结果</strong>
+                    <el-button :disabled="!aiDrafts.length" @click="clearAiDrafts">清空</el-button>
+                  </div>
+                </template>
+                <el-empty v-if="!aiDrafts.length" description="输入要求后生成内容预览" />
+                <div v-else class="ai-draft-list">
+                  <article v-for="(item, index) in aiDrafts" :key="item.local_id" class="ai-draft-card">
+                    <div class="ai-draft-head">
+                      <div>
+                        <el-tag>{{ item.type === 'article' ? '文章' : '商品' }}</el-tag>
+                        <strong>{{ item.title }}</strong>
+                      </div>
+                      <div class="ai-draft-actions">
+                        <el-button size="small" :loading="aiCoverLoading === item.local_id" @click="generateAiCover(item)">生成封面</el-button>
+                        <el-button size="small" type="primary" @click="saveAiDraft(item, index)">保存草稿</el-button>
+                      </div>
+                    </div>
+                    <img v-if="item.cover" class="ai-cover" :src="item.cover.startsWith('/') ? item.cover : '/' + item.cover" />
+                    <p>{{ item.summary }}</p>
+                    <small>{{ item.slug }}<span v-if="item.sku"> / {{ item.sku }}</span></small>
+                  </article>
+                </div>
+              </el-card>
+            </el-col>
+          </el-row>
+        </section>
+
         <section v-if="view === 'articles'">
           <ContentEditor
             type="article"
@@ -332,16 +391,22 @@ const orderDetail = reactive<any>({})
 const publishDetail = reactive<any>({})
 const articleForm = reactive<any>({})
 const productForm = reactive<any>({})
+const aiForm = reactive({ type: 'article', prompt: '围绕自主品牌商品、行业解决方案和独立站 SEO 关键词生成内容', count: 5, status: 'draft' })
 const articlePager = reactive({ page: 1, page_size: 10, total: 0 })
 const productPager = reactive({ page: 1, page_size: 10, total: 0 })
 const orderPager = reactive({ page: 1, page_size: 10, total: 0 })
 const servicePager = reactive({ page: 1, page_size: 10, total: 0 })
 const mediaPager = reactive({ page: 1, page_size: 12, total: 0 })
 const formPager = reactive({ page: 1, page_size: 10, total: 0 })
+const aiDrafts = ref<any[]>([])
+const aiLoading = ref(false)
+const aiBatchLoading = ref(false)
+const aiCoverLoading = ref('')
 
 const navItems = [
   { key: 'dashboard', label: '概览', hint: '查看运营指标、内容数量和站点状态。', icon: 'Odometer' },
   { key: 'settings', label: '站点', hint: '维护企业信息、SEO、AI、支付和发布配置。', icon: 'Setting' },
+  { key: 'ai', label: 'AI', hint: '批量生成文章、商品文案和封面素材。', icon: 'MagicStick' },
   { key: 'articles', label: '文章', hint: '管理 SEO 文章和知识库内容。', icon: 'Document' },
   { key: 'products', label: '商品', hint: '管理独立站商品与商城展示内容。', icon: 'Goods' },
   { key: 'orders', label: '订单', hint: '处理支付、发货和订单跟进。', icon: 'ShoppingCart' },
@@ -403,6 +468,7 @@ function refreshCurrentView() {
   const loaders: Record<string, () => Promise<void>> = {
     dashboard: loadDashboard,
     settings: loadSettings,
+    ai: async () => {},
     articles: loadArticles,
     products: loadProducts,
     orders: loadOrders,
@@ -497,7 +563,7 @@ async function deleteArticle(item: any) {
 }
 async function generateArticleDraft(prompt: string) {
   const data = await request('/api/ai/generate', { method: 'POST', data: { type: 'article', prompt } })
-  Object.assign(articleForm, data)
+  Object.assign(articleForm, data.draft || data)
 }
 
 function newProduct() { Object.assign(productForm, { id: '', title: '', slug: '', sku: '', cover: '', summary: '', description: '', price: 0, stock: 0, status: 'draft' }) }
@@ -517,7 +583,87 @@ async function deleteProduct(item: any) {
 }
 async function generateProductDraft(prompt: string) {
   const data = await request('/api/ai/generate', { method: 'POST', data: { type: 'product', prompt } })
-  Object.assign(productForm, data)
+  Object.assign(productForm, data.draft || data)
+}
+
+function aiPromptFor(index = 1) {
+  return `${aiForm.prompt}（第 ${index} 条，避免重复）`
+}
+
+function normalizeAiDraft(type: string, draft: any, index = 1) {
+  const title = draft.title || `${aiForm.prompt.slice(0, 24)} ${index}`
+  return {
+    ...draft,
+    local_id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+    type,
+    title,
+    slug: draft.slug || `${type}-${Date.now()}-${index}`,
+    sku: type === 'product' ? (draft.sku || `HJ-${Date.now().toString(36).toUpperCase().slice(-6)}-${index}`) : draft.sku,
+    cover: draft.cover || '',
+    summary: draft.summary || '',
+    content: draft.content || '',
+    description: draft.description || '',
+    price: draft.price ?? 0,
+    stock: draft.stock ?? 999,
+    seo_keywords: draft.seo_keywords || '',
+    status: aiForm.status
+  }
+}
+
+async function generateAiPreview() {
+  aiLoading.value = true
+  try {
+    const items = []
+    for (let index = 1; index <= Math.min(3, aiForm.count); index++) {
+      const data = await request('/api/ai/generate', { method: 'POST', data: { type: aiForm.type, prompt: aiPromptFor(index) } })
+      items.push(normalizeAiDraft(aiForm.type, data.draft || data, index))
+    }
+    aiDrafts.value = items
+    ElMessage.success(`已生成 ${items.length} 条预览`)
+  } finally {
+    aiLoading.value = false
+  }
+}
+
+async function saveAiDraft(item: any, index: number) {
+  if (item.type === 'article') {
+    await request('/api/articles', { method: 'POST', data: { ...item, status: 'draft' } })
+    await loadArticles()
+  } else {
+    await request('/api/products', { method: 'POST', data: { ...item, status: 'draft' } })
+    await loadProducts()
+  }
+  aiDrafts.value.splice(index, 1)
+  await loadDashboard()
+  ElMessage.success('已保存为草稿')
+}
+
+async function batchCreateAiContent() {
+  aiBatchLoading.value = true
+  try {
+    const path = aiForm.type === 'article' ? '/api/ai/batch-articles' : '/api/ai/batch-products'
+    const data = await request(path, { method: 'POST', data: { prompt: aiForm.prompt, count: aiForm.count, status: aiForm.status } })
+    ElMessage.success(`已批量生成 ${data.count || 0} 条内容`)
+    await Promise.all([loadArticles(), loadProducts(), loadDashboard()])
+  } finally {
+    aiBatchLoading.value = false
+  }
+}
+
+async function generateAiCover(item: any) {
+  aiCoverLoading.value = item.local_id
+  try {
+    const data = await request('/api/ai/generate-image', { method: 'POST', data: { type: item.type, title: item.title, prompt: item.summary || aiForm.prompt } })
+    item.cover = data.path || item.cover
+    await loadMedia()
+    ElMessage.success('封面已生成')
+  } finally {
+    aiCoverLoading.value = ''
+  }
+}
+
+function clearAiDrafts() {
+  aiDrafts.value = []
 }
 
 async function loadOrders() {

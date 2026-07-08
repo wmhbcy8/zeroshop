@@ -228,9 +228,57 @@ body {
   border-radius: 12px;
   background: #f8fbff;
 }
+.ai-draft-list {
+  display: grid;
+  gap: 14px;
+}
+.ai-draft-card {
+  padding: 16px;
+  border: 1px solid var(--hj-line);
+  border-radius: 10px;
+  background: #fff;
+}
+.ai-draft-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.ai-draft-head > div:first-child {
+  display: grid;
+  gap: 8px;
+}
+.ai-draft-head strong {
+  font-size: 16px;
+}
+.ai-draft-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.ai-draft-card p {
+  margin: 12px 0 8px;
+  color: var(--hj-muted);
+  line-height: 1.7;
+}
+.ai-draft-card small {
+  color: var(--hj-muted);
+  word-break: break-word;
+}
+.ai-cover {
+  width: 220px;
+  max-width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  margin-top: 12px;
+  border: 1px solid var(--hj-line);
+  border-radius: 8px;
+  background: #f1f5f9;
+}
 
 @media (max-width: 980px) {
   .side { width: 72px !important; }
   .brand div, .menu span { display: none; }
   .topbar { flex-direction: column; align-items: flex-start; }
+  .ai-draft-head { flex-direction: column; }
 }
