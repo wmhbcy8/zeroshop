@@ -84,7 +84,7 @@ function readLatestOrder() {
   }
 }
 
-function renderOrderReceipt(form, order, phone) {
+function renderOrderReceiptLegacy(form, order, phone) {
   const receipt = form.querySelector('[data-order-receipt]');
   if (!receipt) return;
   const orderNo = order.order_no || order.id || '';
@@ -177,7 +177,7 @@ function orderStatusLabel(type, status) {
   return (labels[type] && labels[type][status]) || status || '-';
 }
 
-function renderOrderLookup(order) {
+function renderOrderLookupLegacy(order) {
   const items = Array.isArray(order.items) ? order.items : [];
   const tracking = [order.tracking_company, order.tracking_no].filter(Boolean).join(' / ') || '暂无物流信息';
   const latest = readLatestOrder();
@@ -199,6 +199,86 @@ function renderOrderLookup(order) {
     '<p>支付时间：' + escapeHtml(order.paid_at || '-') + '</p>',
     '<p>发货时间：' + escapeHtml(order.shipped_at || '-') + '</p>',
     '</div>',
+    '<form class="customer-note-form order-lookup-block" data-api="/api/orders/customer-note">',
+    '<h2>补充说明</h2>',
+    '<input type="hidden" name="order_no" value="' + escapeHtml(order.order_no || '') + '">',
+    '<input type="hidden" name="phone" value="' + escapeHtml(phone) + '">',
+    '<select name="type">',
+    '<option value="付款说明">付款说明</option>',
+    '<option value="开票需求">开票需求</option>',
+    '<option value="售后说明">售后说明</option>',
+    '<option value="补充说明">补充说明</option>',
+    '</select>',
+    '<textarea name="note" maxlength="500" placeholder="填写付款截图编号、开票抬头、售后问题或其他补充说明" required></textarea>',
+    '<button type="submit">提交说明</button>',
+    '<p class="form-status" data-customer-note-status></p>',
+    '</form>'
+  ].join('');
+}
+
+function readPaymentGuide(scope) {
+  const root = scope || document;
+  const source = root.closest?.('[data-payment-instructions]') || root.querySelector?.('[data-payment-instructions]') || document.querySelector('[data-payment-instructions]');
+  return {
+    account: source?.getAttribute('data-payment-account') || '',
+    instructions: source?.getAttribute('data-payment-instructions') || ''
+  };
+}
+
+function renderPaymentGuide(guide, order) {
+  const instructions = guide.instructions || '';
+  const account = guide.account || '';
+  if (!instructions && !account) return '';
+  return [
+    '<div class="payment-guide">',
+    '<h2>付款指引</h2>',
+    instructions ? '<p>' + escapeHtml(instructions) + '</p>' : '',
+    account ? '<p>收款账户：' + escapeHtml(account) + '</p>' : '',
+    order?.order_no ? '<p>付款备注建议填写订单号：' + escapeHtml(order.order_no) + '</p>' : '',
+    '</div>'
+  ].join('');
+}
+
+function renderOrderReceipt(form, order, phone) {
+  const receipt = form.querySelector('[data-order-receipt]');
+  if (!receipt) return;
+  const orderNo = order.order_no || order.id || '';
+  const href = getOrderLookupHref(orderNo, phone);
+  const guideHtml = renderPaymentGuide(readPaymentGuide(form), { ...order, order_no: orderNo });
+  receipt.hidden = false;
+  receipt.innerHTML = [
+    '<strong>订单提交成功</strong>',
+    '<p>订单号：' + escapeHtml(orderNo || '-') + '</p>',
+    '<p>金额：' + escapeHtml(order.currency || 'CNY') + ' ' + escapeHtml(order.total_amount || '-') + '</p>',
+    guideHtml,
+    '<a class="btn primary" href="' + escapeHtml(href) + '">查看订单状态</a>'
+  ].join('');
+}
+
+function renderOrderLookup(order) {
+  const items = Array.isArray(order.items) ? order.items : [];
+  const tracking = [order.tracking_company, order.tracking_no].filter(Boolean).join(' / ') || '暂无物流信息';
+  const latest = readLatestOrder();
+  const phone = latest.phone || new URLSearchParams(location.search).get('phone') || '';
+  const guideHtml = order.payment_status === 'pending' ? renderPaymentGuide(readPaymentGuide(document), order) : '';
+  return [
+    '<div class="order-status-grid">',
+    '<div><span>订单号</span><strong>' + escapeHtml(order.order_no) + '</strong></div>',
+    '<div><span>支付状态</span><strong>' + escapeHtml(orderStatusLabel('payment', order.payment_status)) + '</strong></div>',
+    '<div><span>履约状态</span><strong>' + escapeHtml(orderStatusLabel('fulfillment', order.fulfillment_status)) + '</strong></div>',
+    '<div><span>订单金额</span><strong>' + escapeHtml(order.currency || 'CNY') + ' ' + escapeHtml(order.total_amount || '0.00') + '</strong></div>',
+    '</div>',
+    '<div class="order-lookup-block"><h2>商品明细</h2>',
+    items.map(function (item) {
+      return '<p>' + escapeHtml(item.title || '未命名商品') + ' x ' + escapeHtml(item.quantity || 1) + '，' + escapeHtml(item.price || 0) + '</p>';
+    }).join('') || '<p>暂无商品明细</p>',
+    '</div>',
+    '<div class="order-lookup-block"><h2>物流信息</h2>',
+    '<p>' + escapeHtml(tracking) + '</p>',
+    '<p>支付时间：' + escapeHtml(order.paid_at || '-') + '</p>',
+    '<p>发货时间：' + escapeHtml(order.shipped_at || '-') + '</p>',
+    '</div>',
+    guideHtml,
     '<form class="customer-note-form order-lookup-block" data-api="/api/orders/customer-note">',
     '<h2>补充说明</h2>',
     '<input type="hidden" name="order_no" value="' + escapeHtml(order.order_no || '') + '">',

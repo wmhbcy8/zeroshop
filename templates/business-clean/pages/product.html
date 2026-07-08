@@ -17,7 +17,7 @@
       </div>
 
       <div class="product-actions-panel">
-        <form class="order-form" data-api="/api/orders">
+        <form class="order-form" data-api="/api/orders" data-payment-account="{{ site.payment.account }}" data-payment-instructions="{{ site.payment.instructions }}">
           <input type="hidden" name="product_id" value="{{ product.id }}">
           <input type="hidden" name="title" value="{{ product.title }}">
           <input type="hidden" name="sku" value="{{ product.sku }}">

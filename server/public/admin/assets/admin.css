@@ -270,6 +270,32 @@ tr.selected-row td { background: #f0f7ff; }
   gap: 8px;
   margin-bottom: 12px;
 }
+.payment-extra-fields {
+  display: grid;
+  gap: 10px;
+}
+.payment-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.payment-summary div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+}
+.payment-summary small {
+  display: block;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.payment-summary strong {
+  display: block;
+  color: var(--text);
+  word-break: break-word;
+}
 .quick-note-row {
   margin-top: -4px;
 }

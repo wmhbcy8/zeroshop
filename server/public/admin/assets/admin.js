@@ -154,7 +154,9 @@ function getDefaultSite(site = {}) {
       mode: site.payment?.mode || 'manual',
       currency: site.payment?.currency || 'CNY',
       merchant_id: site.payment?.merchant_id || '',
-      webhook_url: site.payment?.webhook_url || ''
+      webhook_url: site.payment?.webhook_url || '',
+      account: site.payment?.account || '',
+      instructions: site.payment?.instructions || '订单提交后，请根据客服确认的金额完成转账，并在订单查询页提交付款说明或截图编号。'
     },
     deploy: {
       bt_panel_url: site.deploy?.bt_panel_url || '',
@@ -666,6 +668,8 @@ function fillSiteForm(site) {
   form.payment_currency.value = data.payment.currency;
   form.payment_merchant_id.value = data.payment.merchant_id;
   form.payment_webhook_url.value = data.payment.webhook_url;
+  if (form.payment_account) form.payment_account.value = data.payment.account;
+  if (form.payment_instructions) form.payment_instructions.value = data.payment.instructions;
   form.deploy_bt_panel_url.value = data.deploy.bt_panel_url;
   form.deploy_site_path.value = data.deploy.site_path;
   form.deploy_mode.value = data.deploy.mode;
@@ -728,7 +732,9 @@ function collectSiteForm() {
       mode: form.payment_mode.value,
       currency: form.payment_currency.value.trim() || 'CNY',
       merchant_id: form.payment_merchant_id.value.trim(),
-      webhook_url: form.payment_webhook_url.value.trim()
+      webhook_url: form.payment_webhook_url.value.trim(),
+      account: form.payment_account?.value.trim() || '',
+      instructions: form.payment_instructions?.value.trim() || ''
     },
     deploy: {
       bt_panel_url: form.deploy_bt_panel_url.value.trim(),
@@ -1137,7 +1143,24 @@ function fillOrderDetail(item) {
   form.followup_note.value = '';
   form.remark.value = item.remark || '';
   const trackingText = [item.tracking_company, item.tracking_no].filter(Boolean).join(' / ') || '-';
+  const paymentSummary = [
+    ['支付方式', item.payment_method || 'manual'],
+    ['支付状态', paymentStatusLabel(item.payment_status)],
+    ['订单金额', `${item.currency || 'CNY'} ${item.total_amount || 0}`],
+    ['付款备注', item.order_no || '-']
+  ];
+  const paymentSummaryHtml = `
+    <div class="payment-summary">
+      ${paymentSummary.map(([label, value]) => `
+        <div>
+          <small>${escapeHtml(label)}</small>
+          <strong>${escapeHtml(value)}</strong>
+        </div>
+      `).join('')}
+    </div>
+  `;
   detailBox.innerHTML = `
+    ${paymentSummaryHtml}
     <div class="form-detail-meta">
       <div><strong>${escapeHtml(item.order_no)}</strong><br><small>${escapeHtml(item.customer_name)} / ${escapeHtml(item.phone)}</small></div>
       <span>${escapeHtml(item.created_at || '')}</span>
@@ -1254,6 +1277,18 @@ function initOrderOpsTools() {
     button.textContent = '导出当前订单';
     filterForm.append(button);
   }
+}
+
+function initPaymentSettingsFields() {
+  const form = $('#siteSettingsForm');
+  if (!form || form.payment_account || !form.payment_webhook_url) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'payment-extra-fields';
+  wrap.innerHTML = `
+    <label>收款账户<input name="payment_account" placeholder="银行账户、微信/支付宝账号或客服联系方式"></label>
+    <label>付款指引<textarea name="payment_instructions" rows="3" placeholder="例如：提交订单后请转账，并在订单查询页提交付款说明或截图编号。"></textarea></label>
+  `;
+  form.payment_webhook_url.closest('label').after(wrap);
 }
 
 function renderOrderStats(stats = {}) {
@@ -2084,6 +2119,7 @@ $('#deployCheckBtn').addEventListener('click', async () => {
 $('#reloadDashboardBtn').addEventListener('click', () => loadDashboard().catch((error) => toast(error.message)));
 
 (async function boot() {
+  initPaymentSettingsFields();
   initOrderQuickNotes();
   initOrderOpsTools();
   if (!token()) {

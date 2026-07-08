@@ -201,6 +201,15 @@ function copy_dir(string $src, string $dst): void
 
 function site_for(array $site, string $rootBase): array
 {
+    $site['payment'] = array_replace([
+        'mode' => 'manual',
+        'currency' => 'CNY',
+        'merchant_id' => '',
+        'webhook_url' => '',
+        'account' => '',
+        'instructions' => '订单提交后，请根据客服确认的金额完成转账，并在订单查询页提交付款说明或截图编号。',
+    ], $site['payment'] ?? []);
+
     $nav = $site['nav'] ?? [
         ['title' => '首页', 'url' => 'index.html'],
         ['title' => '行业资讯', 'url' => 'news/index.html'],
