@@ -1070,6 +1070,29 @@ function list_batch_tasks(PDO $main): array
     $page = max(1, (int)($_GET['page'] ?? 1));
     $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
     $offset = ($page - 1) * $pageSize;
+    [$whereSql, $params] = batch_task_filter_sql();
+
+    $countStmt = $main->prepare("SELECT COUNT(*) FROM batch_tasks{$whereSql}");
+    $countStmt->execute($params);
+    $total = (int)$countStmt->fetchColumn();
+    $stmt = $main->prepare("SELECT * FROM batch_tasks{$whereSql} ORDER BY id DESC LIMIT {$pageSize} OFFSET {$offset}");
+    $stmt->execute($params);
+    $items = array_map('normalize_batch_task_row', $stmt->fetchAll());
+
+    return [
+        'items' => $items,
+        'pagination' => [
+            'page' => $page,
+            'page_size' => $pageSize,
+            'total' => $total,
+            'total_pages' => (int)ceil($total / $pageSize),
+        ],
+        'overview' => batch_task_overview($main, $whereSql, $params),
+    ];
+}
+
+function batch_task_filter_sql(): array
+{
     $action = trim((string)($_GET['action'] ?? ''));
     $status = trim((string)($_GET['status'] ?? ''));
     $date = trim((string)($_GET['date'] ?? ''));
@@ -1089,30 +1112,16 @@ function list_batch_tasks(PDO $main): array
         $params['date'] = $date;
     }
     $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
+    return [$whereSql, $params];
+}
 
-    $countStmt = $main->prepare("SELECT COUNT(*) FROM batch_tasks{$whereSql}");
-    $countStmt->execute($params);
-    $total = (int)$countStmt->fetchColumn();
-    $stmt = $main->prepare("SELECT * FROM batch_tasks{$whereSql} ORDER BY id DESC LIMIT {$pageSize} OFFSET {$offset}");
-    $stmt->execute($params);
-    $items = array_map(function (array $item) {
-        $summary = json_decode((string)($item['summary'] ?? ''), true);
-        $siteIds = json_decode((string)($item['site_ids'] ?? '[]'), true);
-        $item['summary_data'] = is_array($summary) ? $summary : [];
-        $item['site_id_list'] = is_array($siteIds) ? $siteIds : [];
-        return $item;
-    }, $stmt->fetchAll());
-
-    return [
-        'items' => $items,
-        'pagination' => [
-            'page' => $page,
-            'page_size' => $pageSize,
-            'total' => $total,
-            'total_pages' => (int)ceil($total / $pageSize),
-        ],
-        'overview' => batch_task_overview($main, $whereSql, $params),
-    ];
+function normalize_batch_task_row(array $item): array
+{
+    $summary = json_decode((string)($item['summary'] ?? ''), true);
+    $siteIds = json_decode((string)($item['site_ids'] ?? '[]'), true);
+    $item['summary_data'] = is_array($summary) ? $summary : [];
+    $item['site_id_list'] = is_array($siteIds) ? $siteIds : [];
+    return $item;
 }
 
 function batch_task_overview(PDO $main, string $whereSql = '', array $params = []): array
@@ -1142,6 +1151,62 @@ function batch_task_overview(PDO $main, string $whereSql = '', array $params = [
         'success_rate' => $siteRuns > 0 ? round($successRuns * 100 / $siteRuns, 1) : 0,
         'last_finished_at' => (string)($row['last_finished_at'] ?? ''),
     ];
+}
+
+function export_batch_tasks_csv(PDO $main): void
+{
+    ensure_center_tables($main);
+    [$whereSql, $params] = batch_task_filter_sql();
+    $stmt = $main->prepare("SELECT * FROM batch_tasks{$whereSql} ORDER BY id DESC LIMIT 5000");
+    $stmt->execute($params);
+
+    header_remove('Content-Type');
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="batch-tasks-' . date('Ymd-His') . '.csv"');
+    echo "\xEF\xBB\xBF";
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['任务号', '任务类型', '任务状态', '总站点数', '成功数', '失败数', '站点ID', '站点名称', '站点结果', '结果说明', '开始时间', '完成时间', '创建时间']);
+    while ($row = $stmt->fetch()) {
+        $item = normalize_batch_task_row($row);
+        $results = $item['summary_data']['results'] ?? [];
+        if (!$results) {
+            fputcsv($out, [
+                $item['task_no'] ?? '',
+                $item['action'] ?? '',
+                $item['status'] ?? '',
+                $item['total_count'] ?? 0,
+                $item['success_count'] ?? 0,
+                $item['failed_count'] ?? 0,
+                '',
+                '',
+                '',
+                '',
+                $item['started_at'] ?? '',
+                $item['finished_at'] ?? '',
+                $item['created_at'] ?? '',
+            ]);
+            continue;
+        }
+        foreach ($results as $result) {
+            fputcsv($out, [
+                $item['task_no'] ?? '',
+                $item['action'] ?? '',
+                $item['status'] ?? '',
+                $item['total_count'] ?? 0,
+                $item['success_count'] ?? 0,
+                $item['failed_count'] ?? 0,
+                $result['site_id'] ?? '',
+                $result['site_name'] ?? '',
+                !empty($result['ok']) ? 'success' : 'failed',
+                preg_replace('/\s+/', ' ', (string)($result['message'] ?? '')),
+                $item['started_at'] ?? '',
+                $item['finished_at'] ?? '',
+                $item['created_at'] ?? '',
+            ]);
+        }
+    }
+    fclose($out);
+    exit;
 }
 
 function save_batch_task(PDO $main, array $data): array
@@ -2621,6 +2686,10 @@ try {
 
     if ($method === 'GET' && $path === '/batch/tasks') {
         ok(list_batch_tasks(main_pdo()));
+    }
+
+    if ($method === 'GET' && $path === '/batch/tasks/export') {
+        export_batch_tasks_csv(main_pdo());
     }
 
     if ($method === 'POST' && $path === '/batch/tasks') {

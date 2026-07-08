@@ -762,7 +762,10 @@
             <template #header>
               <div class="card-head">
                 <strong>任务记录中心</strong>
-                <el-button @click="loadBatchTasks">刷新任务</el-button>
+                <div class="head-actions">
+                  <el-button @click="exportBatchTasks">导出 CSV</el-button>
+                  <el-button @click="loadBatchTasks">刷新任务</el-button>
+                </div>
               </div>
             </template>
             <div class="metric-grid mb16">
@@ -1683,16 +1686,23 @@ async function loadVersions() {
 }
 
 async function loadBatchTasks() {
-  const query = new URLSearchParams()
-  query.set('page', String(taskPager.page))
-  query.set('page_size', String(taskPager.page_size))
-  Object.entries(taskFilters).forEach(([key, value]) => {
-    if (value) query.set(key, String(value))
-  })
+  const query = batchTaskQuery()
   const data = await request(`/api/batch/tasks${query.toString() ? `?${query.toString()}` : ''}`)
   batchTasks.value = data.items || data || []
   batchTaskOverview.value = data.overview || {}
   taskPager.total = data.pagination?.total || batchTasks.value.length
+}
+
+function batchTaskQuery(includePagination = true) {
+  const query = new URLSearchParams()
+  if (includePagination) {
+    query.set('page', String(taskPager.page))
+    query.set('page_size', String(taskPager.page_size))
+  }
+  Object.entries(taskFilters).forEach(([key, value]) => {
+    if (value) query.set(key, String(value))
+  })
+  return query
 }
 
 function applyTaskFilters() {
@@ -1715,6 +1725,22 @@ function changeTaskPageSize(size: number) {
   taskPager.page_size = size
   taskPager.page = 1
   loadBatchTasks()
+}
+
+async function exportBatchTasks() {
+  const query = batchTaskQuery(false)
+  const response = await axios({
+    url: `/api/batch/tasks/export${query.toString() ? `?${query.toString()}` : ''}`,
+    method: 'GET',
+    responseType: 'blob',
+    headers: token.value ? { Authorization: `Bearer ${token.value}`, 'X-Site-Id': String(currentSiteId.value || 10001) } : undefined
+  })
+  const blobUrl = URL.createObjectURL(response.data)
+  const link = document.createElement('a')
+  link.href = blobUrl
+  link.download = `batch-tasks-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.csv`
+  link.click()
+  URL.revokeObjectURL(blobUrl)
 }
 
 function parseSummary(value: any) {
