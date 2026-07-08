@@ -777,7 +777,12 @@
                 <template #default="{ row }">{{ row.success_count }}/{{ row.total_count }} 成功</template>
               </el-table-column>
               <el-table-column prop="finished_at" label="完成时间" width="180" />
-              <el-table-column label="操作" width="100"><template #default="{ row }"><el-button link type="primary" @click="openBatchTask(row)">详情</el-button></template></el-table-column>
+              <el-table-column label="操作" width="180">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="openBatchTask(row)">详情</el-button>
+                  <el-button v-if="row.failed_count > 0" link type="warning" :loading="siteBatchRunning" @click="retryFailedTask(row)">重试失败</el-button>
+                </template>
+              </el-table-column>
             </el-table>
           </el-card>
           <el-drawer v-model="batchTaskDrawerVisible" size="560px" title="任务详情">
@@ -790,9 +795,12 @@
               <el-descriptions-item label="开始时间">{{ batchTaskDetail.started_at || '-' }}</el-descriptions-item>
               <el-descriptions-item label="完成时间">{{ batchTaskDetail.finished_at || '-' }}</el-descriptions-item>
             </el-descriptions>
+            <div class="drawer-actions">
+              <el-button v-if="failedBatchTaskResults(batchTaskDetail).length" type="warning" :loading="siteBatchRunning" @click="retryFailedTask(batchTaskDetail)">重试失败站点</el-button>
+            </div>
             <div class="batch-detail-list">
               <strong>执行结果</strong>
-              <span v-for="item in batchTaskResults(batchTaskDetail)" :key="`${item.site_id}-${item.site_name}`">
+              <span v-for="item in batchTaskResults(batchTaskDetail)" :key="`${item.site_id}-${item.site_name}`" :class="{ failed: !item.ok }">
                 {{ item.site_name || item.site_id }}：{{ item.ok ? '完成' : '失败' }}{{ item.message ? ` - ${item.message}` : '' }}
               </span>
             </div>
@@ -1683,6 +1691,14 @@ async function runSiteBatch(action: 'generate' | 'deploy-check' | 'package') {
     return
   }
   const targets = sites.value.filter((item: any) => selectedSiteIds.value.some((id) => String(id) === String(item.id)))
+  await executeSiteBatch(action, targets)
+}
+
+async function executeSiteBatch(action: 'generate' | 'deploy-check' | 'package', targets: any[], messagePrefix = '') {
+  if (!targets.length) {
+    ElMessage.warning('没有可执行的站点')
+    return
+  }
   const originalSiteId = currentSiteId.value
   siteBatchRunning.value = true
   siteBatchResults.value = []
@@ -1711,7 +1727,7 @@ async function runSiteBatch(action: 'generate' | 'deploy-check' | 'package') {
       }
     }
     currentSiteId.value = originalSiteId
-    await saveBatchTaskRecord(action, siteBatchResults.value)
+    await saveBatchTaskRecord(action, siteBatchResults.value, messagePrefix)
     await Promise.all([loadSites(), loadDashboard(), loadVersions(), loadBatchTasks()])
     ElMessage.success(siteBatchSummary.value || '批量任务完成')
   } finally {
@@ -1720,15 +1736,16 @@ async function runSiteBatch(action: 'generate' | 'deploy-check' | 'package') {
   }
 }
 
-async function saveBatchTaskRecord(action: string, results: any[]) {
+async function saveBatchTaskRecord(action: string, results: any[], messagePrefix = '') {
   if (!results.length) return
+  const message = messagePrefix ? `${messagePrefix}；${siteBatchSummary.value}` : siteBatchSummary.value
   try {
     await request('/api/batch/tasks', {
       method: 'POST',
       data: {
         action,
         results,
-        message: siteBatchSummary.value,
+        message,
         started_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
         finished_at: new Date().toISOString().slice(0, 19).replace('T', ' ')
       }
@@ -1791,6 +1808,24 @@ function openBatchTask(row: any) {
 
 function batchTaskResults(row: any) {
   return row?.summary_data?.results || parseSummary(row?.summary)?.results || []
+}
+
+function failedBatchTaskResults(row: any) {
+  return batchTaskResults(row).filter((item: any) => !item.ok)
+}
+
+async function retryFailedTask(row: any) {
+  const failedItems = failedBatchTaskResults(row)
+  if (!failedItems.length) {
+    ElMessage.warning('没有失败站点可重试')
+    return
+  }
+  const targets = failedItems.map((failed: any) => {
+    const existing = sites.value.find((item: any) => String(item.id) === String(failed.site_id))
+    return existing || { id: failed.site_id, name: failed.site_name || failed.site_id }
+  })
+  batchTaskDrawerVisible.value = false
+  await executeSiteBatch(row.action, targets, `重试任务 ${row.task_no}`)
 }
 
 function previewSite(item: any = currentSite.value) {
