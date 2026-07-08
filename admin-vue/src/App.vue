@@ -1804,8 +1804,46 @@
               <el-table-column prop="target_path" label="目标目录" min-width="220" />
               <el-table-column prop="message" label="说明" min-width="260" />
               <el-table-column prop="created_at" label="时间" width="170" />
+              <el-table-column label="操作" width="150">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="openDeployTask(row)">详情</el-button>
+                  <el-button v-if="row.can_retry" link type="warning" :loading="deployTaskRetrying" @click="retryDeployTask(row)">重试</el-button>
+                </template>
+              </el-table-column>
             </el-table>
           </el-card>
+          <el-drawer v-model="deployTaskDrawerVisible" size="620px" title="部署任务详情">
+            <el-descriptions :column="1" border>
+              <el-descriptions-item label="任务号">{{ deployTaskDetail.task_no || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="站点">{{ deployTaskDetail.site_name || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="动作">{{ deployTaskDetail.action || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="状态">{{ deployTaskDetail.status || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="部署模式">{{ deployTaskDetail.deploy_mode || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="发布版本">{{ deployTaskDetail.version_no || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="发布包">{{ deployTaskDetail.package_path || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="目标目录">{{ deployTaskDetail.target_path || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="说明">{{ deployTaskDetail.message || deployTaskDetail.summary_json?.message || '-' }}</el-descriptions-item>
+            </el-descriptions>
+            <div class="drawer-actions">
+              <el-button v-if="deployTaskDetail.package_file" type="primary" @click="downloadPackage(deployTaskDetail.package_file)">下载发布包</el-button>
+              <el-button v-if="deployTaskDetail.can_retry" type="warning" :loading="deployTaskRetrying" @click="retryDeployTask(deployTaskDetail)">重试任务</el-button>
+            </div>
+            <div v-if="deployTaskDetail.checks?.length" class="deploy-check-list mt16">
+              <el-tag v-for="item in deployTaskDetail.checks" :key="item.label" :type="item.ok ? 'success' : 'warning'" effect="plain">
+                {{ item.label }}：{{ item.value }}
+              </el-tag>
+            </div>
+            <div v-if="deployTaskDetail.steps?.length" class="deploy-step-list mt16">
+              <article v-for="item in deployTaskDetail.steps" :key="item.key">
+                <el-tag :type="deployStepTag(item.status)">{{ item.status }}</el-tag>
+                <div>
+                  <strong>{{ item.title }}</strong>
+                  <small>{{ item.description }}</small>
+                </div>
+              </article>
+            </div>
+            <el-alert v-if="deployTaskDetail.summary_json?.retry_from_task_no" class="mt16" type="info" show-icon :title="`本任务由 ${deployTaskDetail.summary_json.retry_from_task_no} 重试产生`" />
+          </el-drawer>
           <el-drawer v-model="publishDrawerVisible" size="520px" title="发布版本详情">
             <el-descriptions :column="1" border>
               <el-descriptions-item label="版本号">{{ publishDetail.version_no || '-' }}</el-descriptions-item>
@@ -2041,6 +2079,7 @@ const formDrawerVisible = ref(false)
 const collectorDrawerVisible = ref(false)
 const domainDrawerVisible = ref(false)
 const publishDrawerVisible = ref(false)
+const deployTaskDrawerVisible = ref(false)
 const siteDrawerVisible = ref(false)
 const batchTaskDrawerVisible = ref(false)
 const categoryDrawerVisible = ref(false)
@@ -2053,6 +2092,7 @@ const publishResult = ref<any>(null)
 const deployTesting = ref(false)
 const packaging = ref(false)
 const deploying = ref(false)
+const deployTaskRetrying = ref(false)
 const backingUp = ref(false)
 const siteBatchRunning = ref(false)
 const selectedSiteIds = ref<Array<number | string>>([])
@@ -2073,6 +2113,7 @@ const domainForm = reactive<any>({})
 const paymentForm = reactive<any>({})
 const paymentConfigText = ref('')
 const publishDetail = reactive<any>({})
+const deployTaskDetail = reactive<any>({})
 const batchTaskDetail = reactive<any>({})
 const categoryForm = reactive<any>({})
 const categoryType = ref<'article' | 'product'>('article')
@@ -4244,6 +4285,28 @@ async function deploySite() {
     await Promise.all([loadVersions(), loadDeployTasks(), loadSites(), loadDashboard()])
   } finally {
     deploying.value = false
+  }
+}
+
+async function openDeployTask(row: any) {
+  const data = await request(`/api/deploy/tasks/${row.id}`)
+  Object.assign(deployTaskDetail, data || row)
+  deployTaskDrawerVisible.value = true
+}
+
+async function retryDeployTask(row: any) {
+  await ElMessageBox.confirm(`确定重试部署任务 ${row.task_no} 吗？系统会基于当前站点重新生成发布任务。`)
+  deployTaskRetrying.value = true
+  try {
+    const data = await request(`/api/deploy/tasks/${row.id}/retry`, { method: 'POST' })
+    publishResult.value = data || { message: '部署任务已重试' }
+    ElMessage.success(data?.message || '部署任务已重试')
+    if (deployTaskDrawerVisible.value && data?.task?.id) {
+      Object.assign(deployTaskDetail, data.task)
+    }
+    await Promise.all([loadVersions(), loadDeployTasks(), loadDeployPlan(), loadSites(), loadDashboard()])
+  } finally {
+    deployTaskRetrying.value = false
   }
 }
 

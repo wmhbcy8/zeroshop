@@ -2746,6 +2746,12 @@ function normalize_deploy_task(array $row): array
 {
     $summary = json_decode((string)($row['summary'] ?? ''), true);
     $row['summary_json'] = is_array($summary) ? $summary : [];
+    $plan = $row['summary_json']['plan'] ?? [];
+    $row['steps'] = is_array($plan) && is_array($plan['steps'] ?? null) ? $plan['steps'] : [];
+    $row['checks'] = is_array($plan) && is_array($plan['checks'] ?? null) ? $plan['checks'] : [];
+    $row['package_file'] = basename((string)($row['package_path'] ?? ($row['summary_json']['package_path'] ?? '')));
+    $row['can_retry'] = in_array((string)($row['action'] ?? ''), ['deploy', 'package'], true)
+        && in_array((string)($row['status'] ?? ''), ['pending', 'failed'], true);
     return $row;
 }
 
@@ -2787,6 +2793,60 @@ function list_deploy_tasks(PDO $main): array
             'total_pages' => (int)ceil($total / $pageSize),
         ],
     ];
+}
+
+function get_deploy_task(PDO $main, int $id): array
+{
+    ensure_center_tables($main);
+    $task = fetch_one($main, 'deploy_tasks', $id);
+    if (!$task) {
+        fail('部署任务不存在', 'NOT_FOUND', 404);
+    }
+    assert_site_access((int)($task['site_id'] ?? 0), $main);
+    return normalize_deploy_task($task);
+}
+
+function retry_deploy_task(PDO $main, PDO $pdo, array $currentSite, int $id): array
+{
+    $task = get_deploy_task($main, $id);
+    if ((int)$task['site_id'] !== (int)$currentSite['id']) {
+        fail('请先切换到该任务所属站点后再重试', 'SITE_CONTEXT_MISMATCH', 409, [
+            'task_site_id' => (int)$task['site_id'],
+            'current_site_id' => (int)$currentSite['id'],
+        ]);
+    }
+    $action = (string)($task['action'] ?? '');
+    if (!in_array($action, ['deploy', 'package'], true)) {
+        fail('该任务类型暂不支持重试', 'TASK_RETRY_UNSUPPORTED', 422);
+    }
+    if ($action === 'package') {
+        $package = create_static_package($currentSite);
+        $summary = [
+            'site_id' => (int)$currentSite['id'],
+            'site_key' => $currentSite['site_key'],
+            'site_name' => $currentSite['name'],
+            'file_count' => $package['file_count'],
+            'file_size' => $package['file_size'],
+            'package_path' => $package['file_path'],
+            'message' => '发布包重试生成成功，可下载后上传到目标站点目录。',
+            'retry_from_task_no' => (string)($task['task_no'] ?? ''),
+        ];
+        ensure_publish_versions_site_column($pdo);
+        $stmt = $pdo->prepare("INSERT INTO publish_versions (site_id, version_no, publish_type, file_path, status, summary, created_at)
+            VALUES (:site_id, :version_no, 'package', :file_path, 'success', :summary, :created_at)");
+        $stmt->execute([
+            'site_id' => (int)$currentSite['id'],
+            'version_no' => $package['version_no'],
+            'file_path' => $package['file_path'],
+            'summary' => json_encode($summary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'created_at' => now(),
+        ]);
+        $newTask = save_deploy_task($main, $currentSite, 'package', 'success', $summary + ['version_no' => $package['version_no']]);
+        return $summary + ['version_no' => $package['version_no'], 'task' => $newTask, 'task_no' => $newTask['task_no'] ?? ''];
+    }
+    $result = execute_site_deploy($main, $pdo, $currentSite);
+    $result['retry_from_task_no'] = (string)($task['task_no'] ?? '');
+    return $result;
 }
 
 function deploy_config_status(array $site, array $settings): array
@@ -7407,6 +7467,20 @@ try {
 
     if ($method === 'GET' && $path === '/deploy/tasks') {
         ok(list_deploy_tasks(main_pdo()));
+    }
+
+    if ($params = route_param('/deploy/tasks/{id}/retry', $path)) {
+        if ($method === 'POST') {
+            $main = main_pdo();
+            $currentSite = current_site($main, $pdo);
+            ok(retry_deploy_task($main, $pdo, $currentSite, (int)$params['id']), '部署任务已重试');
+        }
+    }
+
+    if ($params = route_param('/deploy/tasks/{id}', $path)) {
+        if ($method === 'GET') {
+            ok(get_deploy_task(main_pdo(), (int)$params['id']));
+        }
     }
 
     if ($method === 'GET' && $path === '/site/package-download') {
