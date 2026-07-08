@@ -540,7 +540,7 @@ function base_context(array $site, array $categories, array $productCategories, 
 $root = dirname(__DIR__);
 $dataRoot = $root . DIRECTORY_SEPARATOR . 'demo-data';
 $templateRoot = $root . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . 'business-clean';
-$publicRoot = $root . DIRECTORY_SEPARATOR . 'sites' . DIRECTORY_SEPARATOR . 'site_10001' . DIRECTORY_SEPARATOR . 'public';
+$publicRoot = env_or_null('HJ_PUBLIC_PATH') ?: $root . DIRECTORY_SEPARATOR . 'sites' . DIRECTORY_SEPARATOR . 'site_10001' . DIRECTORY_SEPARATOR . 'public';
 
 $pdo = pdo_site();
 if ($pdo) {

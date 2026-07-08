@@ -545,7 +545,7 @@
                 </div>
               </div>
             </template>
-            <el-alert title="新版后台复用原 PHP 发布接口，不影响旧 admin.html。" type="info" show-icon class="mb16" />
+            <el-alert :title="`当前发布站点：${currentSite?.name || '默认站点'}，生成、部署检查和发布包都会写入该站点目录。`" type="info" show-icon class="mb16" />
             <el-result v-if="publishResult" class="publish-result" :icon="publishResult.configured === false ? 'warning' : 'success'" :title="publishResultTitle" :sub-title="publishResultSubtitle">
               <template #extra>
                 <el-button type="primary" @click="previewSite">预览站点</el-button>
@@ -677,17 +677,22 @@ const navItems = [
   { key: 'publish', label: '发布', hint: '生成静态站并查看发布记录。', icon: 'Upload' }
 ]
 const currentNav = computed(() => navItems.find((item) => item.key === view.value))
+const currentSite = computed(() => sites.value.find((item: any) => String(item.id) === String(currentSiteId.value)))
 const authHeaders = computed(() => ({ Authorization: `Bearer ${token.value}` }))
 const imageMedia = computed(() => media.value.filter((item) => item.file_type === 'image'))
 const homeModuleItems = computed(() => (moduleRegistry.value.modules || []).filter((item: any) => item.scope === 'home'))
 const globalModuleItems = computed(() => (moduleRegistry.value.modules || []).filter((item: any) => item.scope === 'global'))
 
 async function request(path: string, options: any = {}) {
+  const headers = {
+    ...(token.value ? { Authorization: `Bearer ${token.value}`, 'X-Site-Id': String(currentSiteId.value || 10001) } : {}),
+    ...(options.headers || {})
+  }
   const response = await axios({
     url: path,
     method: options.method || 'GET',
     data: options.body ? JSON.parse(options.body) : options.data,
-    headers: token.value ? { Authorization: `Bearer ${token.value}`, ...(options.headers || {}) } : options.headers
+    headers
   })
   if (!response.data.success) throw new Error(response.data.message || '请求失败')
   return response.data.data
@@ -785,7 +790,8 @@ async function loadSites() {
 
 function switchSite() {
   ElMessage.success('已切换当前站点')
-  loadSettings()
+  publishResult.value = null
+  refreshCurrentView()
 }
 
 function openSite(item: any) {
@@ -1275,7 +1281,7 @@ async function downloadPackage(path: string) {
     url: `/api/site/package-download?file=${encodeURIComponent(file)}`,
     method: 'GET',
     responseType: 'blob',
-    headers: token.value ? { Authorization: `Bearer ${token.value}` } : undefined
+    headers: token.value ? { Authorization: `Bearer ${token.value}`, 'X-Site-Id': String(currentSiteId.value || 10001) } : undefined
   })
   const blobUrl = URL.createObjectURL(response.data)
   const link = document.createElement('a')

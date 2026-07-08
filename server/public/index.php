@@ -202,9 +202,28 @@ function ensure_dir(string $dir): void
     }
 }
 
-function public_root(): string
+function site_public_path(array $site): string
 {
-    return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'sites' . DIRECTORY_SEPARATOR . 'site_10001' . DIRECTORY_SEPARATOR . 'public';
+    $siteKey = (string)($site['site_key'] ?? 'site_10001');
+    $relative = trim((string)($site['public_path'] ?? ''));
+    if ($relative === '') {
+        $relative = 'sites/' . $siteKey . '/public';
+    }
+    $relative = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $relative);
+    if (str_contains($relative, '..')) {
+        fail('站点发布目录不安全', 'INVALID_SITE_PATH', 422);
+    }
+    return $relative;
+}
+
+function site_public_root(array $site): string
+{
+    return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . site_public_path($site);
+}
+
+function public_root(?array $site = null): string
+{
+    return $site ? site_public_root($site) : dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'sites' . DIRECTORY_SEPARATOR . 'site_10001' . DIRECTORY_SEPARATOR . 'public';
 }
 
 function package_root(): string
@@ -212,9 +231,10 @@ function package_root(): string
     return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'packages';
 }
 
-function create_static_package(): array
+function create_static_package(?array $site = null): array
 {
-    $publicRoot = realpath(public_root());
+    $siteKey = (string)($site['site_key'] ?? 'site_10001');
+    $publicRoot = realpath(public_root($site));
     if (!$publicRoot || !is_dir($publicRoot)) {
         fail('请先生成静态站', 'STATIC_SITE_MISSING', 422);
     }
@@ -225,7 +245,7 @@ function create_static_package(): array
 
     $packageRoot = package_root();
     ensure_dir($packageRoot);
-    $versionNo = 'package_' . date('Ymd_His');
+    $versionNo = $siteKey . '_package_' . date('Ymd_His');
     $tarPath = $packageRoot . DIRECTORY_SEPARATOR . $versionNo . '.tar';
     $gzPath = $tarPath . '.gz';
     if (is_file($tarPath)) {
@@ -680,6 +700,61 @@ function center_overview(array $sites): array
         }
     }
     return $totals;
+}
+
+function requested_site_id(): int
+{
+    $siteId = (int)($_SERVER['HTTP_X_SITE_ID'] ?? 10001);
+    return $siteId > 0 ? $siteId : 10001;
+}
+
+function current_site(PDO $main, PDO $sitePdo): array
+{
+    center_site_items($main, $sitePdo);
+    $stmt = $main->prepare('SELECT * FROM sites WHERE id = ? LIMIT 1');
+    $stmt->execute([requested_site_id()]);
+    $site = $stmt->fetch();
+    if ($site) {
+        return $site;
+    }
+
+    $stmt = $main->prepare('SELECT * FROM sites WHERE id = 10001 LIMIT 1');
+    $stmt->execute();
+    $site = $stmt->fetch();
+    if ($site) {
+        return $site;
+    }
+    fail('站点不存在', 'SITE_NOT_FOUND', 404);
+}
+
+function ensure_publish_versions_site_column(PDO $pdo): void
+{
+    ensure_column($pdo, 'publish_versions', 'site_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 10001');
+}
+
+function list_publish_versions(PDO $pdo, int $siteId): array
+{
+    ensure_publish_versions_site_column($pdo);
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $offset = ($page - 1) * $pageSize;
+
+    $countStmt = $pdo->prepare('SELECT COUNT(*) FROM publish_versions WHERE site_id = ?');
+    $countStmt->execute([$siteId]);
+    $total = (int)$countStmt->fetchColumn();
+
+    $stmt = $pdo->prepare("SELECT * FROM publish_versions WHERE site_id = ? ORDER BY id DESC LIMIT {$pageSize} OFFSET {$offset}");
+    $stmt->execute([$siteId]);
+
+    return [
+        'items' => $stmt->fetchAll(),
+        'pagination' => [
+            'page' => $page,
+            'page_size' => $pageSize,
+            'total' => $total,
+            'total_pages' => (int)ceil($total / $pageSize),
+        ],
+    ];
 }
 
 function public_order_view(array $order): array
@@ -2187,9 +2262,15 @@ try {
     }
 
     if ($method === 'POST' && $path === '/site/generate') {
+        $main = main_pdo();
+        $currentSite = current_site($main, $pdo);
         $root = dirname(__DIR__, 2);
         $php = $root . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe';
         $script = $root . DIRECTORY_SEPARATOR . 'worker' . DIRECTORY_SEPARATOR . 'GenerateSite.php';
+        $publicPath = site_public_root($currentSite);
+        ensure_dir($publicPath);
+        putenv('HJ_SITE_KEY=' . (string)$currentSite['site_key']);
+        putenv('HJ_PUBLIC_PATH=' . $publicPath);
         $command = '"' . $php . '" "' . $script . '"';
         $output = [];
         $code = 0;
@@ -2197,37 +2278,45 @@ try {
         if ($code !== 0) {
             fail('生成失败', 'GENERATE_FAILED', 500, ['output' => $output]);
         }
-        $versionNo = 'version_' . date('Ymd_His');
-        $publicPath = $root . DIRECTORY_SEPARATOR . 'sites' . DIRECTORY_SEPARATOR . 'site_10001' . DIRECTORY_SEPARATOR . 'public';
+        $versionNo = (string)$currentSite['site_key'] . '_version_' . date('Ymd_His');
         $fileCount = count(iterator_to_array(new RecursiveIteratorIterator(new RecursiveDirectoryIterator($publicPath, FilesystemIterator::SKIP_DOTS))));
-        $stmt = $pdo->prepare("INSERT INTO publish_versions (version_no, publish_type, file_path, status, summary, created_at)
-            VALUES (:version_no, 'generate', :file_path, 'success', :summary, :created_at)");
+        ensure_publish_versions_site_column($pdo);
+        $stmt = $pdo->prepare("INSERT INTO publish_versions (site_id, version_no, publish_type, file_path, status, summary, created_at)
+            VALUES (:site_id, :version_no, 'generate', :file_path, 'success', :summary, :created_at)");
         $stmt->execute([
+            'site_id' => (int)$currentSite['id'],
             'version_no' => $versionNo,
-            'file_path' => 'sites/site_10001/public',
-            'summary' => json_encode(['file_count' => $fileCount, 'output' => $output], JSON_UNESCAPED_UNICODE),
+            'file_path' => str_replace(DIRECTORY_SEPARATOR, '/', site_public_path($currentSite)),
+            'summary' => json_encode(['site_id' => (int)$currentSite['id'], 'site_key' => $currentSite['site_key'], 'site_name' => $currentSite['name'], 'file_count' => $fileCount, 'output' => $output], JSON_UNESCAPED_UNICODE),
             'created_at' => now(),
         ]);
-        ok(['version_no' => $versionNo, 'file_count' => $fileCount, 'output' => $output], '生成成功');
+        ok(['site_id' => (int)$currentSite['id'], 'site_key' => $currentSite['site_key'], 'site_name' => $currentSite['name'], 'version_no' => $versionNo, 'file_count' => $fileCount, 'output' => $output], '生成成功');
     }
 
     if ($method === 'POST' && $path === '/site/deploy-test') {
+        $main = main_pdo();
+        $currentSite = current_site($main, $pdo);
         $site = site_settings($pdo);
         $deploy = $site['deploy'] ?? [];
         $configured = !empty($deploy['bt_panel_url']) && !empty($deploy['site_path']);
         $status = $configured ? 'ready' : 'pending';
         $summary = [
+            'site_id' => (int)$currentSite['id'],
+            'site_key' => $currentSite['site_key'],
+            'site_name' => $currentSite['name'],
             'configured' => $configured,
             'panel_url' => $deploy['bt_panel_url'] ?? '',
             'site_path' => $deploy['site_path'] ?? '',
             'mode' => $deploy['mode'] ?? 'manual',
             'message' => $configured ? '部署参数已填写，后续可接入宝塔 API 执行上传发布。' : '请先填写宝塔面板地址和站点目录。',
         ];
-        $stmt = $pdo->prepare("INSERT INTO publish_versions (version_no, publish_type, file_path, status, summary, created_at)
-            VALUES (:version_no, 'deploy-check', :file_path, :status, :summary, :created_at)");
+        ensure_publish_versions_site_column($pdo);
+        $stmt = $pdo->prepare("INSERT INTO publish_versions (site_id, version_no, publish_type, file_path, status, summary, created_at)
+            VALUES (:site_id, :version_no, 'deploy-check', :file_path, :status, :summary, :created_at)");
         $stmt->execute([
-            'version_no' => 'deploy_' . date('Ymd_His'),
-            'file_path' => 'sites/site_10001/public',
+            'site_id' => (int)$currentSite['id'],
+            'version_no' => (string)$currentSite['site_key'] . '_deploy_' . date('Ymd_His'),
+            'file_path' => str_replace(DIRECTORY_SEPARATOR, '/', site_public_path($currentSite)),
             'status' => $status,
             'summary' => json_encode($summary, JSON_UNESCAPED_UNICODE),
             'created_at' => now(),
@@ -2236,16 +2325,23 @@ try {
     }
 
     if ($method === 'POST' && $path === '/site/package') {
-        $package = create_static_package();
+        $main = main_pdo();
+        $currentSite = current_site($main, $pdo);
+        $package = create_static_package($currentSite);
         $summary = [
+            'site_id' => (int)$currentSite['id'],
+            'site_key' => $currentSite['site_key'],
+            'site_name' => $currentSite['name'],
             'file_count' => $package['file_count'],
             'file_size' => $package['file_size'],
             'package_path' => $package['file_path'],
             'message' => '发布包已生成，可下载后上传到宝塔站点目录解压。',
         ];
-        $stmt = $pdo->prepare("INSERT INTO publish_versions (version_no, publish_type, file_path, status, summary, created_at)
-            VALUES (:version_no, 'package', :file_path, 'success', :summary, :created_at)");
+        ensure_publish_versions_site_column($pdo);
+        $stmt = $pdo->prepare("INSERT INTO publish_versions (site_id, version_no, publish_type, file_path, status, summary, created_at)
+            VALUES (:site_id, :version_no, 'package', :file_path, 'success', :summary, :created_at)");
         $stmt->execute([
+            'site_id' => (int)$currentSite['id'],
             'version_no' => $package['version_no'],
             'file_path' => $package['file_path'],
             'summary' => json_encode($summary, JSON_UNESCAPED_UNICODE),
@@ -2256,7 +2352,7 @@ try {
 
     if ($method === 'GET' && $path === '/site/package-download') {
         $file = basename((string)($_GET['file'] ?? ''));
-        if ($file === '' || !preg_match('/^package_\d{8}_\d{6}\.tar\.gz$/', $file)) {
+        if ($file === '' || !preg_match('/^(site_\d+_)?package_\d{8}_\d{6}\.tar\.gz$/', $file)) {
             fail('发布包不存在', 'PACKAGE_NOT_FOUND', 404);
         }
         $packageBase = realpath(package_root());
@@ -2273,7 +2369,9 @@ try {
     }
 
     if ($method === 'GET' && $path === '/site/publish-versions') {
-        ok(paginate($pdo, 'publish_versions', [], 'id DESC', 'version_no'));
+        $main = main_pdo();
+        $currentSite = current_site($main, $pdo);
+        ok(list_publish_versions($pdo, (int)$currentSite['id']));
     }
 
     fail('接口不存在', 'NOT_FOUND', 404);
