@@ -111,6 +111,7 @@ function json_response(array $data, int $status = 200): void
 
 function ok($data = [], string $message = 'ok'): void
 {
+    auto_operation_log($message, $data);
     json_response(['success' => true, 'message' => $message, 'data' => $data]);
 }
 
@@ -181,6 +182,15 @@ function body_json(): array
 function now(): string
 {
     return date('Y-m-d H:i:s');
+}
+
+function client_ip(): string
+{
+    $ip = (string)($_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '');
+    if (str_contains($ip, ',')) {
+        $ip = trim(explode(',', $ip)[0]);
+    }
+    return text_limit($ip, 64);
 }
 
 function read_config_json(string $filename): array
@@ -931,6 +941,27 @@ function ensure_center_tables(PDO $main): void
         INDEX idx_status (status),
         INDEX idx_created_at (created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $main->exec("CREATE TABLE IF NOT EXISTS operation_logs (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        user_id BIGINT UNSIGNED,
+        username VARCHAR(80),
+        site_id BIGINT UNSIGNED,
+        method VARCHAR(10) NOT NULL,
+        path VARCHAR(255) NOT NULL,
+        action VARCHAR(80),
+        target_type VARCHAR(80),
+        target_id VARCHAR(80),
+        message VARCHAR(255),
+        summary TEXT,
+        ip_address VARCHAR(64),
+        user_agent VARCHAR(255),
+        created_at DATETIME NOT NULL,
+        INDEX idx_user_id (user_id),
+        INDEX idx_site_id (site_id),
+        INDEX idx_method (method),
+        INDEX idx_path (path(120)),
+        INDEX idx_created_at (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $now = now();
     $main->exec("INSERT INTO customers (id, name, phone, email, company, status, created_at, updated_at)
         VALUES (1, '默认客户', '', '', '', 'active', '{$now}', '{$now}')
@@ -1192,6 +1223,128 @@ function list_batch_tasks(PDO $main): array
             'total_pages' => (int)ceil($total / $pageSize),
         ],
         'overview' => batch_task_overview($main, $whereSql, $params),
+    ];
+}
+
+function operation_log_action(string $method, string $path): array
+{
+    $segments = array_values(array_filter(explode('/', trim($path, '/'))));
+    $targetType = $segments[0] ?? 'system';
+    if (($segments[0] ?? '') === 'platform') {
+        $targetType = 'platform_' . ($segments[1] ?? 'system');
+    } elseif (($segments[0] ?? '') === 'site' && isset($segments[1])) {
+        $targetType = 'site_' . $segments[1];
+    }
+    $targetId = '';
+    foreach (array_reverse($segments) as $segment) {
+        if (ctype_digit($segment)) {
+            $targetId = $segment;
+            break;
+        }
+    }
+    $verb = ['POST' => 'create_or_action', 'PUT' => 'update', 'DELETE' => 'delete'][$method] ?? strtolower($method);
+    return [$verb, $targetType, $targetId];
+}
+
+function summarize_log_data($data): string
+{
+    $summary = $data;
+    if (is_array($summary)) {
+        foreach (['api_key', 'password', 'token', 'access_token', 'config'] as $key) {
+            if (array_key_exists($key, $summary)) {
+                $summary[$key] = '***';
+            }
+        }
+    }
+    $encoded = json_encode($summary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    return text_limit((string)$encoded, 1200);
+}
+
+function auto_operation_log(string $message, $data = []): void
+{
+    static $recording = false;
+    if ($recording) {
+        return;
+    }
+    $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+    if (!in_array($method, ['POST', 'PUT', 'DELETE'], true)) {
+        return;
+    }
+    if (empty($GLOBALS['AUTH_USER']) || !is_array($GLOBALS['AUTH_USER'])) {
+        return;
+    }
+    $requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+    $path = preg_replace('#^/api#', '', $requestPath);
+    if (in_array($path, ['/auth/logout'], true)) {
+        return;
+    }
+    try {
+        $recording = true;
+        $main = main_pdo();
+        ensure_center_tables($main);
+        [$action, $targetType, $targetId] = operation_log_action($method, $path);
+        $user = $GLOBALS['AUTH_USER'];
+        $stmt = $main->prepare("INSERT INTO operation_logs (user_id, username, site_id, method, path, action, target_type, target_id, message, summary, ip_address, user_agent, created_at)
+            VALUES (:user_id, :username, :site_id, :method, :path, :action, :target_type, :target_id, :message, :summary, :ip_address, :user_agent, :created_at)");
+        $stmt->execute([
+            'user_id' => (int)($user['id'] ?? 0) ?: null,
+            'username' => (string)($user['username'] ?? $user['name'] ?? ''),
+            'site_id' => requested_site_id(),
+            'method' => $method,
+            'path' => $path,
+            'action' => $action,
+            'target_type' => $targetType,
+            'target_id' => $targetId,
+            'message' => text_limit($message, 255),
+            'summary' => summarize_log_data($data),
+            'ip_address' => client_ip(),
+            'user_agent' => text_limit((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 255),
+            'created_at' => now(),
+        ]);
+    } catch (Throwable $error) {
+        // Logging must never break the business response.
+    } finally {
+        $recording = false;
+    }
+}
+
+function list_operation_logs(PDO $main): array
+{
+    ensure_center_tables($main);
+    $where = [];
+    $params = [];
+    $keyword = trim((string)($_GET['keyword'] ?? ''));
+    if ($keyword !== '') {
+        $where[] = '(username LIKE :keyword OR path LIKE :keyword OR message LIKE :keyword OR target_type LIKE :keyword)';
+        $params['keyword'] = '%' . $keyword . '%';
+    }
+    $method = trim((string)($_GET['method'] ?? ''));
+    if ($method !== '') {
+        $where[] = 'method = :method';
+        $params['method'] = strtoupper($method);
+    }
+    $siteId = trim((string)($_GET['site_id'] ?? ''));
+    if ($siteId !== '' && $siteId !== 'all') {
+        $where[] = 'site_id = :site_id';
+        $params['site_id'] = (int)$siteId;
+    }
+    $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $offset = ($page - 1) * $pageSize;
+    $countStmt = $main->prepare("SELECT COUNT(*) FROM operation_logs {$whereSql}");
+    $countStmt->execute($params);
+    $total = (int)$countStmt->fetchColumn();
+    $stmt = $main->prepare("SELECT * FROM operation_logs {$whereSql} ORDER BY id DESC LIMIT {$pageSize} OFFSET {$offset}");
+    $stmt->execute($params);
+    return [
+        'items' => $stmt->fetchAll(),
+        'pagination' => [
+            'page' => $page,
+            'page_size' => $pageSize,
+            'total' => $total,
+            'total_pages' => (int)ceil($total / $pageSize),
+        ],
     ];
 }
 
@@ -3663,6 +3816,7 @@ function require_login(PDO $pdo): array
     if (!$user) {
         fail('请先登录', 'UNAUTHORIZED', 401);
     }
+    $GLOBALS['AUTH_USER'] = $user;
     return $user;
 }
 
@@ -3906,6 +4060,10 @@ try {
 
     if ($method === 'GET' && $path === '/dashboard/metrics') {
         ok(dashboard_metrics($pdo));
+    }
+
+    if ($method === 'GET' && $path === '/operation-logs') {
+        ok(list_operation_logs(main_pdo()));
     }
 
     if ($method === 'GET' && $path === '/platform/overview') {

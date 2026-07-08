@@ -1485,6 +1485,57 @@
             </div>
           </el-drawer>
         </section>
+
+        <section v-if="view === 'logs'">
+          <el-card class="panel" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>操作日志</strong>
+                <el-button @click="loadOperationLogs">刷新日志</el-button>
+              </div>
+            </template>
+            <el-form :inline="true" class="toolbar" @submit.prevent="applyLogFilters">
+              <el-form-item>
+                <el-select v-model="logFilters.site_id" placeholder="站点范围" style="width: 180px" @change="applyLogFilters">
+                  <el-option label="全部站点" value="all" />
+                  <el-option v-for="item in sites" :key="item.id" :label="item.name" :value="String(item.id)" />
+                </el-select>
+              </el-form-item>
+              <el-form-item>
+                <el-select v-model="logFilters.method" clearable placeholder="操作类型" style="width: 140px" @change="applyLogFilters">
+                  <el-option label="新增/执行" value="POST" />
+                  <el-option label="更新" value="PUT" />
+                  <el-option label="删除" value="DELETE" />
+                </el-select>
+              </el-form-item>
+              <el-form-item><el-input v-model="logFilters.keyword" clearable placeholder="搜索用户/路径/说明" /></el-form-item>
+              <el-button type="primary" @click="applyLogFilters">筛选</el-button>
+              <el-button @click="resetLogFilters">重置</el-button>
+            </el-form>
+            <el-table :data="operationLogs" height="650" row-key="id">
+              <el-table-column prop="created_at" label="时间" width="170" />
+              <el-table-column label="用户" width="120"><template #default="{ row }">{{ row.username || '-' }}</template></el-table-column>
+              <el-table-column label="站点" width="110"><template #default="{ row }">{{ row.site_id || '-' }}</template></el-table-column>
+              <el-table-column label="方法" width="90"><template #default="{ row }"><el-tag :type="logMethodTag(row.method)">{{ row.method }}</el-tag></template></el-table-column>
+              <el-table-column prop="target_type" label="对象" width="150" />
+              <el-table-column prop="path" label="接口路径" min-width="220" />
+              <el-table-column prop="message" label="说明" min-width="180" />
+              <el-table-column label="摘要" min-width="260">
+                <template #default="{ row }"><small>{{ compactSummary(row.summary) }}</small></template>
+              </el-table-column>
+            </el-table>
+            <el-pagination
+              class="table-pager"
+              layout="sizes, prev, pager, next, total"
+              :current-page="logPager.page"
+              :page-size="logPager.page_size"
+              :page-sizes="[10, 20, 50]"
+              :total="logPager.total"
+              @current-change="changeLogPage"
+              @size-change="changeLogPageSize"
+            />
+          </el-card>
+        </section>
       </el-main>
     </el-container>
   </el-container>
@@ -1523,6 +1574,7 @@ const paymentChannels = ref<any[]>([])
 const seoAudit = ref<any>({})
 const versions = ref<any[]>([])
 const batchTasks = ref<any[]>([])
+const operationLogs = ref<any[]>([])
 const batchTaskOverview = ref<any>({})
 const sites = ref<any[]>([])
 const centerOverview = ref<any>({})
@@ -1562,6 +1614,7 @@ const formFilters = reactive({ keyword: '', status: '' })
 const collectorFilters = reactive({ keyword: '', status: '' })
 const mediaFilters = reactive({ keyword: '', file_type: '' })
 const taskFilters = reactive({ action: '', status: '', date: '' })
+const logFilters = reactive({ keyword: '', method: '', site_id: 'all' })
 const orderDetail = reactive<any>({})
 const formDetail = reactive<any>({})
 const collectorForm = reactive<any>({})
@@ -1604,6 +1657,7 @@ const collectorSourcePager = reactive({ page: 1, page_size: 10, total: 0 })
 const collectorRecordPager = reactive({ page: 1, page_size: 10, total: 0 })
 const aiTaskPager = reactive({ page: 1, page_size: 10, total: 0 })
 const taskPager = reactive({ page: 1, page_size: 10, total: 0 })
+const logPager = reactive({ page: 1, page_size: 20, total: 0 })
 const aiDrafts = ref<any[]>([])
 const aiTasks = ref<any[]>([])
 const pagePlan = ref<any>(null)
@@ -1634,6 +1688,7 @@ const navItems = [
   { key: 'service', label: '服务', hint: '集中处理客户服务请求。', icon: 'Service' },
   { key: 'payments', label: '支付', hint: '统一配置收款通道并分配到各站点。', icon: 'Money' },
   { key: 'tasks', label: '任务', hint: '查看批量生成、发布和部署检查的执行记录。', icon: 'List' },
+  { key: 'logs', label: '日志', hint: '查看后台、中台关键写操作的审计记录。', icon: 'Notebook' },
   { key: 'media', label: '媒体库', hint: '上传并复用图片和文件素材。', icon: 'Picture' },
   { key: 'forms', label: '留言', hint: '处理询盘线索和联系表单。', icon: 'ChatLineRound' },
   { key: 'collector', label: '采集', hint: '管理 RSS 和指定 URL 采集，沉淀 SEO 文章草稿。', icon: 'Connection' },
@@ -1733,6 +1788,7 @@ function setView(key: string) {
   if (key === 'service') loadServices()
   if (key === 'payments') loadPaymentChannels()
   if (key === 'tasks') loadBatchTasks()
+  if (key === 'logs') loadOperationLogs()
   if (key === 'media') loadMedia()
   if (key === 'forms') loadForms()
   if (key === 'collector') loadCollector()
@@ -1757,6 +1813,7 @@ function refreshCurrentView() {
     service: loadServices,
     payments: loadPaymentChannels,
     tasks: loadBatchTasks,
+    logs: loadOperationLogs,
     media: loadMedia,
     forms: loadForms,
     collector: loadCollector,
@@ -1771,7 +1828,7 @@ function openLegacyAdmin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadPlatform(), loadSites(), loadDomains(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadCollector(), loadSeoAudit(), loadAiTasks(), loadVersions()])
+  await Promise.all([loadPlatform(), loadSites(), loadDomains(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadOperationLogs(), loadMedia(), loadForms(), loadCollector(), loadSeoAudit(), loadAiTasks(), loadVersions()])
 }
 
 async function loadPlatform() {
@@ -3055,6 +3112,58 @@ function changeTaskPageSize(size: number) {
   taskPager.page_size = size
   taskPager.page = 1
   loadBatchTasks()
+}
+
+async function loadOperationLogs() {
+  const query = new URLSearchParams()
+  query.set('page', String(logPager.page))
+  query.set('page_size', String(logPager.page_size))
+  if (logFilters.keyword) query.set('keyword', logFilters.keyword)
+  if (logFilters.method) query.set('method', logFilters.method)
+  if (logFilters.site_id) query.set('site_id', logFilters.site_id)
+  const data = await request(`/api/operation-logs?${query.toString()}`)
+  operationLogs.value = data.items || []
+  logPager.total = data.pagination?.total || operationLogs.value.length
+}
+
+function applyLogFilters() {
+  logPager.page = 1
+  loadOperationLogs()
+}
+
+function resetLogFilters() {
+  Object.assign(logFilters, { keyword: '', method: '', site_id: 'all' })
+  logPager.page = 1
+  loadOperationLogs()
+}
+
+function changeLogPage(page: number) {
+  logPager.page = page
+  loadOperationLogs()
+}
+
+function changeLogPageSize(size: number) {
+  logPager.page_size = size
+  logPager.page = 1
+  loadOperationLogs()
+}
+
+function logMethodTag(method: string) {
+  return method === 'DELETE' ? 'danger' : (method === 'PUT' ? 'warning' : 'success')
+}
+
+function compactSummary(value: string) {
+  if (!value) return '-'
+  try {
+    const data = JSON.parse(value)
+    if (data?.id) return `ID: ${data.id}`
+    if (data?.count !== undefined) return `数量: ${data.count}`
+    if (data?.updated !== undefined) return `更新: ${data.updated}`
+    if (data?.version_no) return data.version_no
+    return JSON.stringify(data).slice(0, 120)
+  } catch {
+    return String(value).slice(0, 120)
+  }
 }
 
 async function exportBatchTasks() {
