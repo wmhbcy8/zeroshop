@@ -283,6 +283,51 @@
             <MetricCard title="AI额度" :value="quotaText('ai')" :note="quotaNote('ai')" icon="Cpu" />
             <MetricCard title="存储容量" :value="quotaText('storage')" :note="quotaNote('storage')" icon="FolderOpened" />
           </div>
+          <el-row :gutter="16" class="mb16">
+            <el-col :span="7">
+              <el-card class="panel todo-panel" shadow="never">
+                <template #header><strong>中台待办</strong></template>
+                <div class="todo-summary-grid">
+                  <article class="critical"><strong>{{ dashboardTodos.summary?.critical || 0 }}</strong><span>紧急</span></article>
+                  <article class="high"><strong>{{ dashboardTodos.summary?.high || 0 }}</strong><span>高优先级</span></article>
+                  <article><strong>{{ dashboardTodos.summary?.medium || 0 }}</strong><span>中优先级</span></article>
+                  <article><strong>{{ dashboardTodos.summary?.low || 0 }}</strong><span>低优先级</span></article>
+                </div>
+                <el-alert
+                  class="mt16"
+                  type="info"
+                  show-icon
+                  :closable="false"
+                  :title="`共 ${dashboardTodos.summary?.total || 0} 条待办，按订单、询盘、发布、域名和内容完整度自动生成。`"
+                />
+              </el-card>
+            </el-col>
+            <el-col :span="17">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>下一步处理队列</strong>
+                    <el-button @click="loadDashboardTodos">刷新待办</el-button>
+                  </div>
+                </template>
+                <el-table :data="dashboardTodos.items || []" height="300" row-key="id">
+                  <el-table-column label="优先级" width="100">
+                    <template #default="{ row }"><el-tag :type="todoPriorityTag(row.priority)">{{ todoPriorityLabel(row.priority) }}</el-tag></template>
+                  </el-table-column>
+                  <el-table-column label="站点" width="170">
+                    <template #default="{ row }"><strong>{{ row.site_name }}</strong><br /><small>{{ row.site_key || row.site_id }}</small></template>
+                  </el-table-column>
+                  <el-table-column label="待办" min-width="300">
+                    <template #default="{ row }"><strong>{{ row.title }}</strong><br /><small>{{ row.description }}</small></template>
+                  </el-table-column>
+                  <el-table-column label="数量" width="80"><template #default="{ row }">{{ row.count || '-' }}</template></el-table-column>
+                  <el-table-column label="操作" width="120">
+                    <template #default="{ row }"><el-button link type="primary" @click="openTodo(row)">{{ row.action_label || '处理' }}</el-button></template>
+                  </el-table-column>
+                </el-table>
+              </el-card>
+            </el-col>
+          </el-row>
           <el-card class="panel" shadow="never">
             <template #header><strong>全局任务池</strong></template>
             <el-table :data="sites" row-key="id">
@@ -2050,6 +2095,7 @@ const templateTab = ref('home')
 const loginForm = reactive({ username: 'admin', password: 'admin123456' })
 const site = reactive<any>({ ai: {}, payment: {}, deploy: {}, content: {} })
 const metrics = ref<any>({})
+const dashboardTodos = ref<any>({ summary: {}, items: [] })
 const totals = reactive({ articles: 0, products: 0, orders: 0, media: 0, forms: 0 })
 const pages = ref<any[]>([])
 const articles = ref<any[]>([])
@@ -2319,6 +2365,21 @@ function quotaNote(type: 'ai' | 'storage') {
   return `媒体库已用 ${quota.value?.storage_used_mb || 0}MB`
 }
 
+function todoPriorityLabel(value: string) {
+  return ({ critical: '紧急', high: '高', medium: '中', low: '低' } as any)[value] || value || '-'
+}
+
+function todoPriorityTag(value: string) {
+  return value === 'critical' ? 'danger' : (value === 'high' ? 'warning' : (value === 'medium' ? 'primary' : 'info'))
+}
+
+function openTodo(row: any) {
+  if (row?.site_id) {
+    currentSiteId.value = row.site_id
+  }
+  setView(row?.action_view || 'dashboard')
+}
+
 async function request(path: string, options: any = {}) {
   const headers = {
     ...(token.value ? { Authorization: `Bearer ${token.value}`, 'X-Site-Id': String(currentSiteId.value || 10001) } : {}),
@@ -2477,14 +2538,15 @@ async function loadPlatform() {
 }
 
 async function loadDashboard() {
-  const [siteData, articleData, productData, orderData, mediaData, formData, metricData] = await Promise.all([
+  const [siteData, articleData, productData, orderData, mediaData, formData, metricData, todoData] = await Promise.all([
     request('/api/sites'),
     request('/api/articles?page_size=1'),
     request('/api/products?page_size=1'),
     request('/api/orders?page_size=1'),
     request('/api/media?page_size=1'),
     request('/api/forms/submissions?page_size=1'),
-    request('/api/dashboard/metrics')
+    request('/api/dashboard/metrics'),
+    request('/api/dashboard/todos')
   ])
   totals.articles = articleData.pagination?.total || 0
   totals.products = productData.pagination?.total || 0
@@ -2492,10 +2554,15 @@ async function loadDashboard() {
   totals.media = mediaData.pagination?.total || 0
   totals.forms = formData.pagination?.total || 0
   metrics.value = metricData
+  dashboardTodos.value = todoData || { summary: {}, items: [] }
   sites.value = siteData.items || []
   centerOverview.value = siteData.overview || {}
   quota.value = siteData.quota || {}
   if (!currentSiteId.value) currentSiteId.value = siteData.current_site_id || sites.value[0]?.id || 10001
+}
+
+async function loadDashboardTodos() {
+  dashboardTodos.value = await request('/api/dashboard/todos')
 }
 
 async function loadSites() {

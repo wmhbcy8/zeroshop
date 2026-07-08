@@ -123,6 +123,38 @@ body {
   border-color: var(--hj-line);
   box-shadow: var(--hj-shadow);
 }
+.todo-panel {
+  height: 100%;
+}
+.todo-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.todo-summary-grid article {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--hj-line);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.todo-summary-grid article.critical {
+  border-color: #fecaca;
+  background: #fff1f2;
+}
+.todo-summary-grid article.high {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+.todo-summary-grid strong {
+  font-size: 24px;
+  line-height: 1;
+}
+.todo-summary-grid span {
+  color: var(--hj-muted);
+  font-size: 12px;
+}
 .card-head {
   display: flex;
   justify-content: space-between;

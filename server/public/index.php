@@ -1123,6 +1123,183 @@ function dashboard_metrics(PDO $pdo): array
     ];
 }
 
+function dashboard_todos(PDO $pdo, PDO $main): array
+{
+    $sites = filter_sites_for_user($main, center_site_items($main, $pdo), current_user($pdo));
+    $items = [];
+    $summary = ['critical' => 0, 'high' => 0, 'medium' => 0, 'low' => 0, 'total' => 0];
+    $now = time();
+    $add = static function (array $todo) use (&$items, &$summary): void {
+        $priority = (string)($todo['priority'] ?? 'medium');
+        if (!isset($summary[$priority])) {
+            $priority = 'medium';
+        }
+        $todo['priority'] = $priority;
+        $todo['id'] = ($todo['type'] ?? 'todo') . '-' . ($todo['site_id'] ?? 0) . '-' . count($items);
+        $items[] = $todo;
+        $summary[$priority]++;
+        $summary['total']++;
+    };
+
+    foreach ($sites as $site) {
+        $siteId = (int)($site['id'] ?? 0);
+        if ($siteId <= 0) {
+            continue;
+        }
+        $settings = site_settings($pdo, $siteId);
+        $siteName = (string)($site['name'] ?? ($settings['name'] ?? ('站点 ' . $siteId)));
+        $domain = trim((string)($site['domain'] ?? $settings['domain'] ?? ''));
+        $subdomain = trim((string)($site['subdomain'] ?? ''));
+        $stats = is_array($site['stats'] ?? null) ? $site['stats'] : [];
+        $publish = is_array($site['publish'] ?? null) ? $site['publish'] : [];
+        $deploy = is_array($site['deploy'] ?? null) ? $site['deploy'] : [];
+        $primaryDomain = primary_site_domain($main, $siteId);
+
+        $base = [
+            'site_id' => $siteId,
+            'site_name' => $siteName,
+            'site_key' => (string)($site['site_key'] ?? ''),
+        ];
+        if (($site['status'] ?? 'active') !== 'active') {
+            $add($base + [
+                'type' => 'site_status',
+                'priority' => 'high',
+                'title' => '站点未启用',
+                'description' => '站点当前状态为 ' . (string)($site['status'] ?? '-') . '，前台发布和运营可能受影响。',
+                'action_view' => 'sites',
+                'action_label' => '查看站点',
+            ]);
+        }
+        if ($domain === '' && $subdomain === '') {
+            $add($base + [
+                'type' => 'domain_missing',
+                'priority' => 'high',
+                'title' => '未绑定访问域名',
+                'description' => '建议先绑定主域名或平台二级域名，便于预览、生成 sitemap 和上线。',
+                'action_view' => 'domains',
+                'action_label' => '绑定域名',
+            ]);
+        } elseif ($primaryDomain) {
+            $dns = (string)($primaryDomain['dns_status'] ?? 'pending');
+            $ssl = (string)($primaryDomain['ssl_status'] ?? 'pending');
+            if ($dns !== 'valid' || !in_array($ssl, ['ready', 'pending'], true)) {
+                $add($base + [
+                    'type' => 'domain_check',
+                    'priority' => $dns === 'failed' ? 'high' : 'medium',
+                    'title' => '域名解析或 HTTPS 待确认',
+                    'description' => '当前 DNS：' . $dns . '，HTTPS：' . $ssl . '。上线前建议完成检查。',
+                    'action_view' => 'domains',
+                    'action_label' => '检查域名',
+                ]);
+            }
+        }
+        if (empty($publish['generated'])) {
+            $add($base + [
+                'type' => 'publish_missing',
+                'priority' => 'high',
+                'title' => '尚未生成静态站',
+                'description' => '站点内容还没有生成到前台 public 目录，客户无法验收完整页面。',
+                'action_view' => 'publish',
+                'action_label' => '生成静态站',
+            ]);
+        } elseif (!empty($publish['last_created_at'])) {
+            $age = $now - strtotime((string)$publish['last_created_at']);
+            if ($age > 7 * 86400) {
+                $add($base + [
+                    'type' => 'publish_stale',
+                    'priority' => 'low',
+                    'title' => '静态站超过 7 天未重新生成',
+                    'description' => '如果最近修改过内容、模板或导航，建议重新生成一次静态站。',
+                    'action_view' => 'publish',
+                    'action_label' => '查看发布',
+                ]);
+            }
+        }
+        $mode = (string)($deploy['mode'] ?? 'manual');
+        $sitePath = trim((string)($deploy['site_path'] ?? ''));
+        $panelUrl = trim((string)($deploy['bt_panel_url'] ?? ''));
+        if ($sitePath === '' || ($mode === 'bt-api' && $panelUrl === '')) {
+            $add($base + [
+                'type' => 'deploy_missing',
+                'priority' => 'medium',
+                'title' => '部署参数未完善',
+                'description' => '当前部署模式为 ' . ($mode ?: 'manual') . '，请补齐站点目录' . ($mode === 'bt-api' ? '和宝塔面板地址。' : '。'),
+                'action_view' => 'publish',
+                'action_label' => '配置部署',
+            ]);
+        }
+        if ((int)($stats['pending_orders'] ?? 0) > 0) {
+            $add($base + [
+                'type' => 'pending_orders',
+                'priority' => 'critical',
+                'title' => '有待处理订单',
+                'description' => '当前站点有 ' . (int)$stats['pending_orders'] . ' 个订单需要支付确认或履约处理。',
+                'action_view' => 'orders',
+                'action_label' => '处理订单',
+                'count' => (int)$stats['pending_orders'],
+            ]);
+        }
+        if ((int)($stats['pending_forms'] ?? 0) > 0) {
+            $add($base + [
+                'type' => 'pending_forms',
+                'priority' => 'high',
+                'title' => '有待跟进询盘',
+                'description' => '当前站点有 ' . (int)$stats['pending_forms'] . ' 条留言线索等待处理。',
+                'action_view' => 'forms',
+                'action_label' => '处理询盘',
+                'count' => (int)$stats['pending_forms'],
+            ]);
+        }
+        if ((int)($stats['articles'] ?? 0) === 0) {
+            $add($base + [
+                'type' => 'article_empty',
+                'priority' => 'medium',
+                'title' => '文章内容为空',
+                'description' => '建议用 AI 或采集中心先生成一批 SEO 文章，提高搜索收录入口。',
+                'action_view' => 'ai',
+                'action_label' => '生成文章',
+            ]);
+        }
+        if ((int)($stats['products'] ?? 0) === 0) {
+            $add($base + [
+                'type' => 'product_empty',
+                'priority' => 'medium',
+                'title' => '商品库为空',
+                'description' => '独立站商城需要至少配置一批商品，前台产品列表和详情页才完整。',
+                'action_view' => 'products',
+                'action_label' => '添加商品',
+            ]);
+        }
+        $seoDescription = trim((string)($settings['seo_description'] ?? $settings['description'] ?? ''));
+        $keywords = trim((string)($settings['keywords'] ?? ''));
+        if ($seoDescription === '' || $keywords === '') {
+            $add($base + [
+                'type' => 'seo_missing',
+                'priority' => 'low',
+                'title' => 'SEO 基础信息不完整',
+                'description' => '建议补齐网站描述和关键词，生成 sitemap/search.json 后更利于搜索引擎理解站点。',
+                'action_view' => 'settings',
+                'action_label' => '完善 SEO',
+            ]);
+        }
+    }
+
+    $priorityRank = ['critical' => 0, 'high' => 1, 'medium' => 2, 'low' => 3];
+    usort($items, static function (array $a, array $b) use ($priorityRank): int {
+        $rankA = $priorityRank[$a['priority']] ?? 9;
+        $rankB = $priorityRank[$b['priority']] ?? 9;
+        if ($rankA !== $rankB) {
+            return $rankA <=> $rankB;
+        }
+        return ((int)($b['count'] ?? 0)) <=> ((int)($a['count'] ?? 0));
+    });
+
+    return [
+        'summary' => $summary,
+        'items' => array_slice($items, 0, 100),
+    ];
+}
+
 function ensure_center_tables(PDO $main): void
 {
     $main->exec("CREATE TABLE IF NOT EXISTS customers (
@@ -6386,6 +6563,10 @@ try {
 
     if ($method === 'GET' && $path === '/dashboard/metrics') {
         ok(dashboard_metrics($pdo));
+    }
+
+    if ($method === 'GET' && $path === '/dashboard/todos') {
+        ok(dashboard_todos($pdo, main_pdo()));
     }
 
     if ($method === 'GET' && $path === '/operation-logs') {
