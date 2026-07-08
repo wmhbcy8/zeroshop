@@ -765,6 +765,28 @@
                 <el-button @click="loadBatchTasks">刷新任务</el-button>
               </div>
             </template>
+            <div class="metric-grid mb16">
+              <MetricCard title="任务总数" :value="batchTaskOverview.total || 0" note="当前筛选范围" icon="List" />
+              <MetricCard title="站点执行次数" :value="batchTaskOverview.site_runs || 0" note="所有任务站点累计" icon="Grid" />
+              <MetricCard title="执行成功率" :value="batchTaskOverview.success_rate || 0" suffix="%" note="按站点执行次数计算" icon="TrendCharts" />
+              <MetricCard title="失败站点数" :value="batchTaskOverview.failed_runs || 0" note="可进入详情重试" icon="Warning" />
+              <MetricCard title="部分成功任务" :value="batchTaskOverview.partial_tasks || 0" note="需要关注的任务" icon="Tickets" />
+              <MetricCard title="最近执行" :value="batchTaskOverview.last_finished_at || '-'" note="最近完成时间" icon="Clock" />
+            </div>
+            <div class="task-toolbar">
+              <el-select v-model="taskFilters.action" clearable placeholder="任务类型" @change="loadBatchTasks">
+                <el-option label="生成静态站" value="generate" />
+                <el-option label="部署检查" value="deploy-check" />
+                <el-option label="生成发布包" value="package" />
+              </el-select>
+              <el-select v-model="taskFilters.status" clearable placeholder="任务状态" @change="loadBatchTasks">
+                <el-option label="成功" value="success" />
+                <el-option label="部分成功" value="partial" />
+                <el-option label="失败" value="failed" />
+              </el-select>
+              <el-date-picker v-model="taskFilters.date" type="date" value-format="YYYY-MM-DD" placeholder="执行日期" @change="loadBatchTasks" />
+              <el-button @click="resetTaskFilters">重置</el-button>
+            </div>
             <el-table :data="batchTasks">
               <el-table-column prop="task_no" label="任务号" min-width="180" />
               <el-table-column label="类型" width="120"><template #default="{ row }">{{ batchActionLabel(row.action) }}</template></el-table-column>
@@ -837,6 +859,7 @@ const forms = ref<any[]>([])
 const paymentChannels = ref<any[]>([])
 const versions = ref<any[]>([])
 const batchTasks = ref<any[]>([])
+const batchTaskOverview = ref<any>({})
 const sites = ref<any[]>([])
 const centerOverview = ref<any>({})
 const currentSiteId = ref<number | string>(10001)
@@ -862,6 +885,7 @@ const orderFilters = reactive({ keyword: '', payment_status: '', fulfillment_sta
 const serviceFilters = reactive({ keyword: '', status: '', type: '' })
 const formFilters = reactive({ keyword: '', status: '' })
 const mediaFilters = reactive({ keyword: '', file_type: '' })
+const taskFilters = reactive({ action: '', status: '', date: '' })
 const orderDetail = reactive<any>({})
 const formDetail = reactive<any>({})
 const paymentForm = reactive<any>({})
@@ -1648,8 +1672,18 @@ async function loadVersions() {
 }
 
 async function loadBatchTasks() {
-  const data = await request('/api/batch/tasks')
+  const query = new URLSearchParams()
+  Object.entries(taskFilters).forEach(([key, value]) => {
+    if (value) query.set(key, String(value))
+  })
+  const data = await request(`/api/batch/tasks${query.toString() ? `?${query.toString()}` : ''}`)
   batchTasks.value = data.items || data || []
+  batchTaskOverview.value = data.overview || {}
+}
+
+function resetTaskFilters() {
+  Object.assign(taskFilters, { action: '', status: '', date: '' })
+  loadBatchTasks()
 }
 
 function parseSummary(value: any) {

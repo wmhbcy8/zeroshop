@@ -1070,10 +1070,31 @@ function list_batch_tasks(PDO $main): array
     $page = max(1, (int)($_GET['page'] ?? 1));
     $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
     $offset = ($page - 1) * $pageSize;
+    $action = trim((string)($_GET['action'] ?? ''));
+    $status = trim((string)($_GET['status'] ?? ''));
+    $date = trim((string)($_GET['date'] ?? ''));
 
-    $total = (int)$main->query('SELECT COUNT(*) FROM batch_tasks')->fetchColumn();
-    $stmt = $main->prepare("SELECT * FROM batch_tasks ORDER BY id DESC LIMIT {$pageSize} OFFSET {$offset}");
-    $stmt->execute();
+    $clauses = [];
+    $params = [];
+    if ($action !== '' && in_array($action, ['generate', 'deploy-check', 'package'], true)) {
+        $clauses[] = 'action = :action';
+        $params['action'] = $action;
+    }
+    if ($status !== '' && in_array($status, ['success', 'partial', 'failed'], true)) {
+        $clauses[] = 'status = :status';
+        $params['status'] = $status;
+    }
+    if ($date !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+        $clauses[] = 'DATE(created_at) = :date';
+        $params['date'] = $date;
+    }
+    $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
+
+    $countStmt = $main->prepare("SELECT COUNT(*) FROM batch_tasks{$whereSql}");
+    $countStmt->execute($params);
+    $total = (int)$countStmt->fetchColumn();
+    $stmt = $main->prepare("SELECT * FROM batch_tasks{$whereSql} ORDER BY id DESC LIMIT {$pageSize} OFFSET {$offset}");
+    $stmt->execute($params);
     $items = array_map(function (array $item) {
         $summary = json_decode((string)($item['summary'] ?? ''), true);
         $siteIds = json_decode((string)($item['site_ids'] ?? '[]'), true);
@@ -1090,6 +1111,36 @@ function list_batch_tasks(PDO $main): array
             'total' => $total,
             'total_pages' => (int)ceil($total / $pageSize),
         ],
+        'overview' => batch_task_overview($main, $whereSql, $params),
+    ];
+}
+
+function batch_task_overview(PDO $main, string $whereSql = '', array $params = []): array
+{
+    $stmt = $main->prepare("SELECT
+        COUNT(*) AS total,
+        SUM(status = 'success') AS success_tasks,
+        SUM(status = 'partial') AS partial_tasks,
+        SUM(status = 'failed') AS failed_tasks,
+        COALESCE(SUM(total_count), 0) AS site_runs,
+        COALESCE(SUM(success_count), 0) AS success_runs,
+        COALESCE(SUM(failed_count), 0) AS failed_runs,
+        MAX(finished_at) AS last_finished_at
+        FROM batch_tasks{$whereSql}");
+    $stmt->execute($params);
+    $row = $stmt->fetch() ?: [];
+    $siteRuns = (int)($row['site_runs'] ?? 0);
+    $successRuns = (int)($row['success_runs'] ?? 0);
+    return [
+        'total' => (int)($row['total'] ?? 0),
+        'success_tasks' => (int)($row['success_tasks'] ?? 0),
+        'partial_tasks' => (int)($row['partial_tasks'] ?? 0),
+        'failed_tasks' => (int)($row['failed_tasks'] ?? 0),
+        'site_runs' => $siteRuns,
+        'success_runs' => $successRuns,
+        'failed_runs' => (int)($row['failed_runs'] ?? 0),
+        'success_rate' => $siteRuns > 0 ? round($successRuns * 100 / $siteRuns, 1) : 0,
+        'last_finished_at' => (string)($row['last_finished_at'] ?? ''),
     ];
 }
 

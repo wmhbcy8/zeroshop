@@ -177,6 +177,16 @@ body {
   background: #fff1f2;
   color: #9f1239;
 }
+.task-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.task-toolbar .el-select,
+.task-toolbar .el-date-editor {
+  width: 180px;
+}
 .site-card {
   display: grid;
   gap: 12px;
