@@ -529,6 +529,9 @@
                   <el-table-column label="结果" width="100">
                     <template #default="{ row }">{{ row.result_json?.length || row.success_count || 0 }} 条</template>
                   </el-table-column>
+                  <el-table-column label="发布范围" min-width="160">
+                    <template #default="{ row }"><small>{{ contentSiteLabel(row.site_ids || []) }}</small></template>
+                  </el-table-column>
                   <el-table-column prop="created_at" label="时间" width="170" />
                   <el-table-column label="操作" width="250">
                     <template #default="{ row }">
@@ -563,6 +566,7 @@
             @save="saveArticle"
             @delete="deleteArticle"
             @ai="generateArticleDraft"
+            @bulk-distribute="bulkDistributeArticles"
             @page-change="changeArticlePage"
           />
         </section>
@@ -585,6 +589,7 @@
             @save="savePage"
             @delete="deletePage"
             @ai="generatePageDraft"
+            @bulk-distribute="bulkDistributePages"
             @page-change="changePagePage"
           />
         </section>
@@ -607,6 +612,7 @@
             @save="saveProduct"
             @delete="deleteProduct"
             @ai="generateProductDraft"
+            @bulk-distribute="bulkDistributeProducts"
             @page-change="changeProductPage"
           />
         </section>
@@ -1051,7 +1057,7 @@
           <el-card class="panel mb16" shadow="never">
             <template #header>
               <div class="card-head">
-                <strong>当前站点部署配置</strong>
+                <strong>宝塔面板 / 部署配置</strong>
                 <div class="head-actions">
                   <el-button @click="saveSettings">保存部署配置</el-button>
                   <el-button @click="saveSettingsAsDefault">保存为公共默认</el-button>
@@ -1361,7 +1367,7 @@ const navItems = [
   { key: 'media', label: '媒体库', hint: '上传并复用图片和文件素材。', icon: 'Picture' },
   { key: 'forms', label: '留言', hint: '处理询盘线索和联系表单。', icon: 'ChatLineRound' },
   { key: 'collector', label: '采集', hint: '管理 RSS 和指定 URL 采集，沉淀 SEO 文章草稿。', icon: 'Connection' },
-  { key: 'publish', label: '发布', hint: '生成静态站并查看发布记录。', icon: 'Upload' }
+  { key: 'publish', label: '部署', hint: '配置宝塔面板、生成静态站并查看发布记录。', icon: 'Upload' }
 ]
 const currentNav = computed(() => navItems.find((item) => item.key === view.value))
 const currentSite = computed(() => sites.value.find((item: any) => String(item.id) === String(currentSiteId.value)))
@@ -1952,6 +1958,14 @@ function siteIdsForScope(scope: string, selected: any[] = []) {
   return currentSiteIds()
 }
 
+function contentSiteLabel(siteIds: any[] = []) {
+  const ids = (siteIds || []).map((id: any) => Number(id)).filter((id) => id > 0)
+  const allIds = allSiteIds()
+  if (allIds.length && ids.length === allIds.length && allIds.every((id) => ids.includes(id))) return '全部站点'
+  const names = sites.value.filter((site: any) => ids.includes(Number(site.id))).map((site: any) => site.name)
+  return names.length ? names.join('、') : '当前站点'
+}
+
 function inferSiteScope(siteIds: any[] = []) {
   const ids = (siteIds || []).map((id: any) => Number(id)).filter((id) => id > 0)
   const allIds = allSiteIds()
@@ -1969,6 +1983,23 @@ function normalizeDistributionPayload(form: any) {
   }
 }
 
+async function bulkDistributeContent(type: 'article' | 'product' | 'page', payload: any, reload: () => Promise<void>) {
+  const items = Array.isArray(payload?.items) ? payload.items : []
+  if (!items.length) {
+    ElMessage.warning('请先选择需要分发的内容')
+    return
+  }
+  const site_scope = payload.site_scope || 'current'
+  const site_ids = siteIdsForScope(site_scope, payload.site_ids)
+  const endpoint = type === 'article' ? '/api/articles' : type === 'product' ? '/api/products' : '/api/pages'
+  await Promise.all(items.map((item: any) => request(`${endpoint}/${item.id}`, {
+    method: 'PUT',
+    data: normalizeDistributionPayload({ ...item, site_scope, site_ids })
+  })))
+  ElMessage.success(`已更新 ${items.length} 条内容的发布范围`)
+  await Promise.all([reload(), loadDashboard()])
+}
+
 function syncAiSiteScope() {
   aiForm.site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
 }
@@ -1982,6 +2013,10 @@ async function savePage() {
   ElMessage.success('页面已保存')
   pagePager.page = pageForm.id ? pagePager.page : 1
   await Promise.all([loadPages(), loadStaticPages()])
+}
+async function bulkDistributePages(payload: any) {
+  await bulkDistributeContent('page', payload, loadPages)
+  await loadStaticPages()
 }
 async function deletePage(item: any) {
   await ElMessageBox.confirm(`确定删除页面「${item.title}」？`)
@@ -2003,6 +2038,9 @@ async function saveArticle() {
   articlePager.page = articleForm.id ? articlePager.page : 1
   await loadArticles()
 }
+async function bulkDistributeArticles(payload: any) {
+  await bulkDistributeContent('article', payload, loadArticles)
+}
 async function deleteArticle(item: any) {
   await ElMessageBox.confirm(`确定删除文章「${item.title}」？`)
   await request(`/api/articles/${item.id}`, { method: 'DELETE' })
@@ -2022,6 +2060,9 @@ async function saveProduct() {
   ElMessage.success('商品已保存')
   productPager.page = productForm.id ? productPager.page : 1
   await loadProducts()
+}
+async function bulkDistributeProducts(payload: any) {
+  await bulkDistributeContent('product', payload, loadProducts)
 }
 async function deleteProduct(item: any) {
   await ElMessageBox.confirm(`确定删除商品「${item.title}」？`)
@@ -2105,7 +2146,8 @@ async function createAiTask() {
 async function confirmAiTask(row: any, action: 'save_draft' | 'publish' | 'discard') {
   const text = action === 'discard' ? '确定丢弃这个 AI 任务结果？' : (action === 'publish' ? '确定把这个 AI 任务结果直接发布？' : '确定把这个 AI 任务结果保存为草稿？')
   await ElMessageBox.confirm(text)
-  await request(`/api/ai/tasks/${row.id}/confirm`, { method: 'POST', data: { action } })
+  const site_scope = inferSiteScope(row.site_ids || [])
+  await request(`/api/ai/tasks/${row.id}/confirm`, { method: 'POST', data: { action, site_scope, site_ids: row.site_ids || [] } })
   ElMessage.success('AI 任务已处理')
   await Promise.all([loadAiTasks(), loadArticles(), loadProducts(), loadDashboard()])
 }

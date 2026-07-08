@@ -7,7 +7,23 @@
           <el-button type="primary" @click="openNew">新建{{ title }}</el-button>
         </div>
       </template>
-      <el-table :data="items" height="650">
+      <div class="content-distribution-bar">
+        <div>
+          <strong>发布范围</strong>
+          <small>选中{{ title }}后，可统一发布到全部站点或指定站点。</small>
+        </div>
+        <el-radio-group v-model="bulkForm.site_scope" size="small" @change="syncBulkScope">
+          <el-radio-button label="current">当前站点</el-radio-button>
+          <el-radio-button label="all">全部站点</el-radio-button>
+          <el-radio-button label="selected">指定站点</el-radio-button>
+        </el-radio-group>
+        <el-select v-if="bulkForm.site_scope === 'selected'" v-model="bulkForm.site_ids" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择站点" class="bulk-site-select">
+          <el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id" />
+        </el-select>
+        <el-button type="primary" :disabled="!selectedRows.length" @click="applyBulkDistribution">应用到 {{ selectedRows.length }} 条</el-button>
+      </div>
+      <el-table :data="items" height="650" @selection-change="selectedRows = $event">
+        <el-table-column type="selection" width="46" />
         <el-table-column prop="title" label="标题" min-width="260">
           <template #default="{ row }">
             <strong>{{ row.title }}</strong><br />
@@ -116,11 +132,13 @@ const props = defineProps<{
   currentSiteId: number | string
 }>()
 
-const emit = defineEmits(['new', 'edit', 'save', 'delete', 'ai', 'page-change'])
+const emit = defineEmits(['new', 'edit', 'save', 'delete', 'ai', 'page-change', 'bulk-distribute'])
 
 const prompt = ref('')
 const drawerVisible = ref(false)
 const mediaDrawerVisible = ref(false)
+const selectedRows = ref<any[]>([])
+const bulkForm = ref<any>({ site_scope: 'current', site_ids: [] })
 const title = computed(() => props.type === 'article' ? '文章' : (props.type === 'product' ? '商品' : '页面'))
 const bodyField = computed(() => props.type === 'product' ? 'description' : 'content')
 const bodyLabel = computed(() => props.type === 'product' ? '描述' : '正文')
@@ -141,8 +159,40 @@ function saveForm() {
   emit('save')
 }
 
+function allSiteIds() {
+  return props.sites.map((site: any) => Number(site.id)).filter((id: number) => id > 0)
+}
+
+function currentSiteIds() {
+  return [Number(props.currentSiteId || 10001)]
+}
+
+function siteIdsForScope(scope: string, selected: any[] = []) {
+  if (scope === 'all') return allSiteIds()
+  if (scope === 'selected') {
+    const ids = (selected || []).map((id: any) => Number(id)).filter((id: number) => id > 0)
+    return ids.length ? ids : currentSiteIds()
+  }
+  return currentSiteIds()
+}
+
+function syncBulkScope() {
+  bulkForm.value.site_ids = siteIdsForScope(bulkForm.value.site_scope, bulkForm.value.site_ids)
+}
+
+function applyBulkDistribution() {
+  syncBulkScope()
+  emit('bulk-distribute', {
+    items: selectedRows.value,
+    site_scope: bulkForm.value.site_scope,
+    site_ids: bulkForm.value.site_ids
+  })
+}
+
 function siteNames(row: any) {
   const ids = (row.site_ids || []).map((id: any) => Number(id))
+  const allIds = allSiteIds()
+  if (allIds.length && ids.length === allIds.length && allIds.every((id) => ids.includes(id))) return '全部站点'
   const names = (props.sites || []).filter((site: any) => ids.includes(Number(site.id))).map((site: any) => site.name)
   return names.length ? names.join('、') : '未分发'
 }

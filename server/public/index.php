@@ -820,10 +820,20 @@ function ensure_center_tables(PDO $main): void
         phone VARCHAR(50),
         email VARCHAR(120),
         company VARCHAR(150),
+        plan_key VARCHAR(60) NOT NULL DEFAULT 'starter',
+        max_sites INT UNSIGNED NOT NULL DEFAULT 10,
+        ai_quota INT UNSIGNED NOT NULL DEFAULT 1000,
+        storage_quota_mb INT UNSIGNED NOT NULL DEFAULT 1024,
+        expires_at DATE,
         status VARCHAR(30) NOT NULL DEFAULT 'active',
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    ensure_column($main, 'customers', 'plan_key', "VARCHAR(60) NOT NULL DEFAULT 'starter'");
+    ensure_column($main, 'customers', 'max_sites', 'INT UNSIGNED NOT NULL DEFAULT 10');
+    ensure_column($main, 'customers', 'ai_quota', 'INT UNSIGNED NOT NULL DEFAULT 1000');
+    ensure_column($main, 'customers', 'storage_quota_mb', 'INT UNSIGNED NOT NULL DEFAULT 1024');
+    ensure_column($main, 'customers', 'expires_at', 'DATE');
     $main->exec("CREATE TABLE IF NOT EXISTS sites (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
         customer_id BIGINT UNSIGNED NOT NULL,
@@ -844,6 +854,23 @@ function ensure_center_tables(PDO $main): void
         INDEX idx_status (status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     ensure_column($main, 'sites', 'deploy_config_json', 'TEXT');
+    ensure_column($main, 'sites', 'deploy_node_id', 'BIGINT UNSIGNED');
+    $main->exec("CREATE TABLE IF NOT EXISTS deploy_nodes (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(120) NOT NULL,
+        node_type VARCHAR(40) NOT NULL DEFAULT 'bt-panel',
+        server_ip VARCHAR(80),
+        panel_url VARCHAR(255),
+        api_key TEXT,
+        root_path VARCHAR(255),
+        status VARCHAR(30) NOT NULL DEFAULT 'active',
+        last_checked_at DATETIME,
+        last_result VARCHAR(255),
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_node_type (node_type),
+        INDEX idx_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $main->exec("CREATE TABLE IF NOT EXISTS payment_channels (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
         name VARCHAR(120) NOT NULL,
@@ -2715,7 +2742,9 @@ function confirm_ai_task(PDO $pdo, int $taskId, array $data): array
     }
     $selected = array_values(array_unique(array_map('intval', $selected)));
     $contentStatus = $action === 'publish' ? 'published' : 'draft';
-    $siteIds = array_values(array_filter(array_map('intval', $task['site_ids'] ?? []))) ?: [requested_site_id()];
+    $siteIds = (isset($data['site_scope']) || isset($data['site_ids']) || isset($data['distribution_site_ids']))
+        ? normalize_site_ids($data)
+        : (array_values(array_filter(array_map('intval', $task['site_ids'] ?? []))) ?: [requested_site_id()]);
     $articleIds = [];
     $productIds = [];
     foreach ($selected as $index) {
