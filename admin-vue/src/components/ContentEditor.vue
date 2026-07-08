@@ -46,6 +46,11 @@
         <el-form-item><el-button @click="$emit('ai', prompt)">AI 生成草稿</el-button></el-form-item>
         <el-form-item label="标题"><el-input v-model="form.title" /></el-form-item>
         <el-form-item label="Slug"><el-input v-model="form.slug" /></el-form-item>
+        <el-form-item label="分类">
+          <el-select v-model="form.category_id" clearable filterable placeholder="选择分类">
+            <el-option v-for="item in categoryOptions" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item v-if="type === 'product'" label="SKU"><el-input v-model="form.sku" /></el-form-item>
         <el-form-item label="封面">
           <div class="cover-field">
@@ -106,6 +111,8 @@ const props = defineProps<{
   total: number
   media: any[]
   sites: any[]
+  categories?: any[]
+  productCategories?: any[]
   currentSiteId: number | string
 }>()
 
@@ -116,6 +123,7 @@ const drawerVisible = ref(false)
 const mediaDrawerVisible = ref(false)
 const title = computed(() => props.type === 'article' ? '文章' : '商品')
 const bodyField = computed(() => props.type === 'article' ? 'content' : 'description')
+const categoryOptions = computed(() => props.type === 'article' ? (props.categories || []) : (props.productCategories || []))
 
 function openNew() {
   emit('new')

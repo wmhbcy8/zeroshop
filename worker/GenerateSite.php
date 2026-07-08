@@ -490,6 +490,11 @@ function inquiry_field_html(array $field): string
     return '<input type="' . e($type) . '" name="' . e($name) . '" placeholder="' . e($placeholder) . '"' . $required . '>';
 }
 
+function category_items(array $items, int $categoryId): array
+{
+    return array_values(array_filter($items, fn($item) => (int)($item['category_id'] ?? 0) === $categoryId));
+}
+
 function home_modules_html(array $site, array $articles, array $products, string $rootBase): string
 {
     $site = site_for($site, $rootBase);
@@ -699,6 +704,21 @@ write_file($publicRoot . DIRECTORY_SEPARATOR . 'news' . DIRECTORY_SEPARATOR . 'i
     ],
 ]));
 
+foreach ($categories as $category) {
+    $categoryArticles = category_items($articles, (int)$category['id']);
+    if (!$categoryArticles) {
+        continue;
+    }
+    write_file($publicRoot . DIRECTORY_SEPARATOR . 'category' . DIRECTORY_SEPARATOR . $category['slug'] . DIRECTORY_SEPARATOR . 'index.html', $engine->renderFile('pages/article-list.html', base_context($site, $categories, $productCategories, $categoryArticles, $products, '../../', '../../') + [
+        'articles' => with_urls($categoryArticles, '../../news/'),
+        'seo' => [
+            'title' => ($category['seo_title'] ?? $category['name']) . ' - ' . ($site['name'] ?? ''),
+            'description' => $category['seo_description'] ?? ($category['description'] ?? ''),
+            'keywords' => $category['seo_keywords'] ?? ($site['keywords'] ?? ''),
+        ],
+    ]));
+}
+
 foreach ($articles as $article) {
     $relatedArticles = array_values(array_filter($articles, fn($item) => (int)$item['id'] !== (int)$article['id']));
     $relatedArticles = array_map(fn($item) => [
@@ -731,6 +751,21 @@ write_file($publicRoot . DIRECTORY_SEPARATOR . 'products' . DIRECTORY_SEPARATOR 
     ],
 ]));
 
+foreach ($productCategories as $category) {
+    $categoryProducts = category_items($products, (int)$category['id']);
+    if (!$categoryProducts) {
+        continue;
+    }
+    write_file($publicRoot . DIRECTORY_SEPARATOR . 'product-category' . DIRECTORY_SEPARATOR . $category['slug'] . DIRECTORY_SEPARATOR . 'index.html', $engine->renderFile('pages/product-list.html', base_context($site, $categories, $productCategories, $articles, $categoryProducts, '../../', '../../') + [
+        'products' => with_urls($categoryProducts, '../../products/'),
+        'seo' => [
+            'title' => ($category['seo_title'] ?? $category['name']) . ' - ' . ($site['name'] ?? ''),
+            'description' => $category['seo_description'] ?? ($category['description'] ?? ''),
+            'keywords' => $category['seo_keywords'] ?? ($site['keywords'] ?? ''),
+        ],
+    ]));
+}
+
 foreach ($products as $product) {
     $relatedProducts = array_values(array_filter($products, fn($item) => (int)$item['id'] !== (int)$product['id']));
     $relatedProducts = array_map(fn($item) => [
@@ -760,8 +795,18 @@ $sitemap[] = '  <url><loc>https://' . $domain . '/index.html</loc></url>';
 $sitemap[] = '  <url><loc>https://' . $domain . '/contact.html</loc></url>';
 $sitemap[] = '  <url><loc>https://' . $domain . '/search.html</loc></url>';
 $sitemap[] = '  <url><loc>https://' . $domain . '/order.html</loc></url>';
+foreach ($categories as $category) {
+    if (category_items($articles, (int)$category['id'])) {
+        $sitemap[] = '  <url><loc>https://' . $domain . '/category/' . $category['slug'] . '/index.html</loc></url>';
+    }
+}
 foreach ($articles as $article) {
     $sitemap[] = '  <url><loc>https://' . $domain . '/news/' . $article['slug'] . '.html</loc></url>';
+}
+foreach ($productCategories as $category) {
+    if (category_items($products, (int)$category['id'])) {
+        $sitemap[] = '  <url><loc>https://' . $domain . '/product-category/' . $category['slug'] . '/index.html</loc></url>';
+    }
 }
 foreach ($products as $product) {
     $sitemap[] = '  <url><loc>https://' . $domain . '/products/' . $product['slug'] . '.html</loc></url>';
@@ -771,8 +816,18 @@ write_file($publicRoot . DIRECTORY_SEPARATOR . 'sitemap.xml', implode(PHP_EOL, $
 write_file($publicRoot . DIRECTORY_SEPARATOR . 'robots.txt', "User-agent: *\nAllow: /\nSitemap: https://{$domain}/sitemap.xml\n");
 
 $search = [];
+foreach ($categories as $category) {
+    if (category_items($articles, (int)$category['id'])) {
+        $search[] = ['type' => 'category', 'title' => $category['name'], 'summary' => $category['description'] ?? '', 'url' => 'category/' . $category['slug'] . '/index.html'];
+    }
+}
 foreach ($articles as $article) {
     $search[] = ['type' => 'article', 'title' => $article['title'], 'summary' => $article['summary'], 'url' => 'news/' . $article['slug'] . '.html'];
+}
+foreach ($productCategories as $category) {
+    if (category_items($products, (int)$category['id'])) {
+        $search[] = ['type' => 'product_category', 'title' => $category['name'], 'summary' => $category['description'] ?? '', 'url' => 'product-category/' . $category['slug'] . '/index.html'];
+    }
 }
 foreach ($products as $product) {
     $search[] = ['type' => 'product', 'title' => $product['title'], 'summary' => $product['summary'], 'url' => 'products/' . $product['slug'] . '.html'];

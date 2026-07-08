@@ -524,6 +524,8 @@
             :total="articlePager.total"
             :media="imageMedia"
             :sites="sites"
+            :categories="categories"
+            :product-categories="productCategories"
             :current-site-id="currentSiteId"
             @new="newArticle"
             @edit="editArticle"
@@ -544,6 +546,8 @@
             :total="productPager.total"
             :media="imageMedia"
             :sites="sites"
+            :categories="categories"
+            :product-categories="productCategories"
             :current-site-id="currentSiteId"
             @new="newProduct"
             @edit="editProduct"
@@ -552,6 +556,79 @@
             @ai="generateProductDraft"
             @page-change="changeProductPage"
           />
+        </section>
+
+        <section v-if="view === 'categories'">
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>文章分类</strong>
+                    <el-button type="primary" @click="newCategory('article')">新建分类</el-button>
+                  </div>
+                </template>
+                <el-table :data="categories" height="620" row-key="id">
+                  <el-table-column prop="name" label="分类名称" min-width="160">
+                    <template #default="{ row }"><strong>{{ row.name }}</strong><br /><small>{{ row.slug }}</small></template>
+                  </el-table-column>
+                  <el-table-column prop="sort_order" label="排序" width="90" />
+                  <el-table-column prop="description" label="说明" min-width="180" />
+                  <el-table-column label="操作" width="140">
+                    <template #default="{ row }">
+                      <el-button link type="primary" @click="editCategory('article', row)">编辑</el-button>
+                      <el-button link type="danger" @click="deleteCategory('article', row)">删除</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </el-card>
+            </el-col>
+            <el-col :span="12">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>商品分类</strong>
+                    <el-button type="primary" @click="newCategory('product')">新建分类</el-button>
+                  </div>
+                </template>
+                <el-table :data="productCategories" height="620" row-key="id">
+                  <el-table-column prop="name" label="分类名称" min-width="160">
+                    <template #default="{ row }"><strong>{{ row.name }}</strong><br /><small>{{ row.slug }}</small></template>
+                  </el-table-column>
+                  <el-table-column prop="sort_order" label="排序" width="90" />
+                  <el-table-column prop="description" label="说明" min-width="180" />
+                  <el-table-column label="操作" width="140">
+                    <template #default="{ row }">
+                      <el-button link type="primary" @click="editCategory('product', row)">编辑</el-button>
+                      <el-button link type="danger" @click="deleteCategory('product', row)">删除</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </el-card>
+            </el-col>
+          </el-row>
+          <el-drawer v-model="categoryDrawerVisible" size="560px" :title="(categoryForm.id ? '编辑' : '新建') + (categoryType === 'article' ? '文章分类' : '商品分类')">
+            <el-form :model="categoryForm" label-width="96px">
+              <el-form-item label="分类名称"><el-input v-model="categoryForm.name" /></el-form-item>
+              <el-form-item label="Slug"><el-input v-model="categoryForm.slug" /></el-form-item>
+              <el-form-item label="上级分类">
+                <el-select v-model="categoryForm.parent_id" clearable filterable placeholder="无上级分类">
+                  <el-option label="无上级分类" :value="0" />
+                  <el-option v-for="item in currentCategoryOptions" :key="item.id" :label="item.name" :value="item.id" />
+                </el-select>
+              </el-form-item>
+              <el-form-item v-if="categoryType === 'product'" label="封面图"><el-input v-model="categoryForm.cover" /></el-form-item>
+              <el-form-item label="排序"><el-input-number v-model="categoryForm.sort_order" :min="0" /></el-form-item>
+              <el-form-item label="说明"><el-input v-model="categoryForm.description" type="textarea" :rows="3" /></el-form-item>
+              <el-form-item label="SEO 标题"><el-input v-model="categoryForm.seo_title" /></el-form-item>
+              <el-form-item label="SEO 关键词"><el-input v-model="categoryForm.seo_keywords" /></el-form-item>
+              <el-form-item label="SEO 描述"><el-input v-model="categoryForm.seo_description" type="textarea" :rows="3" /></el-form-item>
+              <div class="drawer-actions">
+                <el-button @click="categoryDrawerVisible = false">取消</el-button>
+                <el-button type="primary" @click="saveCategory">保存分类</el-button>
+              </div>
+            </el-form>
+          </el-drawer>
         </section>
 
         <section v-if="view === 'orders'">
@@ -993,6 +1070,8 @@ const metrics = ref<any>({})
 const totals = reactive({ articles: 0, products: 0, orders: 0, media: 0, forms: 0 })
 const articles = ref<any[]>([])
 const products = ref<any[]>([])
+const categories = ref<any[]>([])
+const productCategories = ref<any[]>([])
 const orders = ref<any[]>([])
 const services = ref<any[]>([])
 const media = ref<any[]>([])
@@ -1016,6 +1095,7 @@ const formDrawerVisible = ref(false)
 const publishDrawerVisible = ref(false)
 const siteDrawerVisible = ref(false)
 const batchTaskDrawerVisible = ref(false)
+const categoryDrawerVisible = ref(false)
 const publishResult = ref<any>(null)
 const deployTesting = ref(false)
 const packaging = ref(false)
@@ -1035,6 +1115,8 @@ const paymentForm = reactive<any>({})
 const paymentConfigText = ref('')
 const publishDetail = reactive<any>({})
 const batchTaskDetail = reactive<any>({})
+const categoryForm = reactive<any>({})
+const categoryType = ref<'article' | 'product'>('article')
 const publishSummary = computed(() => parseSummary(publishDetail.summary))
 const publishResultTitle = computed(() => {
   if (!publishResult.value) return ''
@@ -1078,6 +1160,7 @@ const navItems = [
   { key: 'ai', label: 'AI', hint: '批量生成文章、商品文案和封面素材。', icon: 'MagicStick' },
   { key: 'articles', label: '文章', hint: '管理 SEO 文章和知识库内容。', icon: 'Document' },
   { key: 'products', label: '商品', hint: '管理独立站商品与商城展示内容。', icon: 'Goods' },
+  { key: 'categories', label: '分类', hint: '管理文章分类和商品分类，生成 SEO 分类聚合页。', icon: 'FolderOpened' },
   { key: 'orders', label: '订单', hint: '处理支付、发货和订单跟进。', icon: 'ShoppingCart' },
   { key: 'service', label: '服务', hint: '集中处理客户服务请求。', icon: 'Service' },
   { key: 'payments', label: '支付', hint: '统一配置收款通道并分配到各站点。', icon: 'Money' },
@@ -1093,8 +1176,8 @@ const settingsScopeText = computed(() => {
   return site.has_site_override ? '当前站点已有独立配置' : '当前站点正在继承公共默认配置'
 })
 const staticPageGroups = computed(() => {
-  const labels: any = { system: '系统页面', article: '文章页面', product: '商品页面', custom: '自定义页面' }
-  return ['system', 'article', 'product', 'custom']
+  const labels: any = { system: '系统页面', article_category: '文章分类页', article: '文章页面', product_category: '商品分类页', product: '商品页面', custom: '自定义页面' }
+  return ['system', 'article_category', 'article', 'product_category', 'product', 'custom']
     .map((type) => ({
       type,
       label: labels[type] || type,
@@ -1170,6 +1253,7 @@ function setView(key: string) {
   if (key === 'templates') Promise.all([loadTemplates(), loadModuleRegistry()])
   if (key === 'articles') loadArticles()
   if (key === 'products') loadProducts()
+  if (key === 'categories') loadCategories()
   if (key === 'orders') loadOrders()
   if (key === 'service') loadServices()
   if (key === 'payments') loadPaymentChannels()
@@ -1186,8 +1270,9 @@ function refreshCurrentView() {
     settings: async () => { await Promise.all([loadSettings(), loadStaticPages()]) },
     templates: async () => { await Promise.all([loadTemplates(), loadModuleRegistry(), loadSettings(), loadStaticPages()]) },
     ai: async () => {},
-    articles: loadArticles,
-    products: loadProducts,
+    articles: async () => { await Promise.all([loadArticles(), loadCategories()]) },
+    products: async () => { await Promise.all([loadProducts(), loadCategories()]) },
+    categories: loadCategories,
     orders: loadOrders,
     service: loadServices,
     payments: loadPaymentChannels,
@@ -1204,7 +1289,7 @@ function openLegacyAdmin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadSites(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadVersions()])
+  await Promise.all([loadSites(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadCategories(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadVersions()])
 }
 
 async function loadDashboard() {
@@ -1576,6 +1661,69 @@ async function loadProducts() {
 function changeProductPage(page: number) {
   productPager.page = page
   loadProducts()
+}
+
+async function loadCategories() {
+  const [articleData, productData] = await Promise.all([
+    request('/api/categories'),
+    request('/api/product-categories')
+  ])
+  categories.value = articleData.items || []
+  productCategories.value = productData.items || []
+}
+
+const currentCategoryOptions = computed(() => {
+  const items = categoryType.value === 'article' ? categories.value : productCategories.value
+  return items.filter((item: any) => Number(item.id) !== Number(categoryForm.id || 0))
+})
+
+function resetCategoryForm() {
+  Object.assign(categoryForm, {
+    id: '',
+    parent_id: 0,
+    name: '',
+    slug: '',
+    cover: '',
+    description: '',
+    sort_order: 0,
+    seo_title: '',
+    seo_keywords: '',
+    seo_description: ''
+  })
+}
+
+function categoryEndpoint(type: 'article' | 'product') {
+  return type === 'article' ? '/api/categories' : '/api/product-categories'
+}
+
+function newCategory(type: 'article' | 'product') {
+  categoryType.value = type
+  resetCategoryForm()
+  categoryDrawerVisible.value = true
+}
+
+function editCategory(type: 'article' | 'product', item: any) {
+  categoryType.value = type
+  resetCategoryForm()
+  Object.assign(categoryForm, { ...item, parent_id: Number(item.parent_id || 0), sort_order: Number(item.sort_order || 0) })
+  categoryDrawerVisible.value = true
+}
+
+async function saveCategory() {
+  const endpoint = categoryEndpoint(categoryType.value)
+  const method = categoryForm.id ? 'PUT' : 'POST'
+  const path = categoryForm.id ? `${endpoint}/${categoryForm.id}` : endpoint
+  await request(path, { method, data: { ...categoryForm } })
+  categoryDrawerVisible.value = false
+  ElMessage.success('分类已保存')
+  await loadCategories()
+}
+
+async function deleteCategory(type: 'article' | 'product', item: any) {
+  await ElMessageBox.confirm(`确定删除分类“${item.name}”？`)
+  await request(`${categoryEndpoint(type)}/${item.id}`, { method: 'DELETE' })
+  ElMessage.success('分类已删除')
+  await loadCategories()
 }
 
 function allSiteIds() {

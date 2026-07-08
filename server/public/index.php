@@ -1889,11 +1889,21 @@ function site_static_pages(PDO $pdo): array
         }
     }
 
+    $categoryRows = $pdo->query('SELECT id, name, slug FROM categories ORDER BY sort_order ASC, id ASC LIMIT 200')->fetchAll();
+    foreach ($categoryRows as $row) {
+        $items[] = ['type' => 'article_category', 'title' => $row['name'], 'url' => 'category/' . $row['slug'] . '/index.html'];
+    }
+
     $articleSql .= ' ORDER BY published_at DESC, id DESC LIMIT 200';
     $articleStmt = $pdo->prepare($articleSql);
     $articleStmt->execute(array_filter($params, fn($key) => $key === 'article_site_id', ARRAY_FILTER_USE_KEY));
     foreach ($articleStmt->fetchAll() as $row) {
         $items[] = ['type' => 'article', 'title' => $row['title'], 'url' => 'news/' . $row['slug'] . '.html'];
+    }
+
+    $productCategoryRows = $pdo->query('SELECT id, name, slug FROM product_categories ORDER BY sort_order ASC, id ASC LIMIT 200')->fetchAll();
+    foreach ($productCategoryRows as $row) {
+        $items[] = ['type' => 'product_category', 'title' => $row['name'], 'url' => 'product-category/' . $row['slug'] . '/index.html'];
     }
 
     $productSql .= ' ORDER BY id DESC LIMIT 200';
