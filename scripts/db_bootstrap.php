@@ -258,6 +258,7 @@ exec_all($site, [
         source_url VARCHAR(255),
         ip_address VARCHAR(80),
         user_agent VARCHAR(255),
+        stock_reserved TINYINT(1) NOT NULL DEFAULT 0,
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL,
         INDEX idx_order_no (order_no),

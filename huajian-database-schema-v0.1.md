@@ -483,6 +483,7 @@ CREATE TABLE orders (
   currency VARCHAR(20) DEFAULT 'CNY',
   payment_status VARCHAR(30) DEFAULT 'unpaid',
   order_status VARCHAR(30) DEFAULT 'pending',
+  stock_reserved TINYINT(1) NOT NULL DEFAULT 0,
   shipping_address JSON,
   note TEXT,
   created_at DATETIME NOT NULL,
@@ -638,4 +639,3 @@ deleted     已删除
 - 权限角色表。
 - API 调用日志表。
 - 搜索关键词排名表。
-

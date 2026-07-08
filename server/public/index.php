@@ -4782,6 +4782,7 @@ function ensure_auth_tables(PDO $pdo): void
         source_url VARCHAR(255),
         ip_address VARCHAR(80),
         user_agent VARCHAR(255),
+        stock_reserved TINYINT(1) NOT NULL DEFAULT 0,
         created_at DATETIME NOT NULL,
         updated_at DATETIME NOT NULL,
         INDEX idx_order_no (order_no),
@@ -4794,6 +4795,7 @@ function ensure_auth_tables(PDO $pdo): void
     ensure_column($pdo, 'orders', 'paid_at', 'DATETIME');
     ensure_column($pdo, 'orders', 'shipped_at', 'DATETIME');
     ensure_column($pdo, 'orders', 'site_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 10001');
+    ensure_column($pdo, 'orders', 'stock_reserved', 'TINYINT(1) NOT NULL DEFAULT 0');
 
     $pdo->exec("CREATE TABLE IF NOT EXISTS form_submissions (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
@@ -4884,6 +4886,114 @@ function normalize_order_items(array $items): array
         ];
     }
     return $normalized;
+}
+
+function content_relation_exists(PDO $pdo, string $type, int $contentId, int $siteId): bool
+{
+    try {
+        $stmt = $pdo->prepare('SELECT COUNT(*) FROM content_site_relations WHERE content_type = ? AND content_id = ? AND site_id = ?');
+        $stmt->execute([$type, $contentId, $siteId]);
+        return (int)$stmt->fetchColumn() > 0;
+    } catch (Throwable $error) {
+        return $siteId === 10001;
+    }
+}
+
+function reserve_order_stock(PDO $pdo, int $siteId, array $items): array
+{
+    $normalized = [];
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $quantity = max(1, (int)($item['quantity'] ?? 1));
+        $productId = (int)($item['product_id'] ?? 0);
+        if ($productId <= 0) {
+            $price = max(0, (float)($item['price'] ?? 0));
+            $normalized[] = [
+                'product_id' => 0,
+                'title' => trim((string)($item['title'] ?? '')),
+                'sku' => trim((string)($item['sku'] ?? '')),
+                'quantity' => $quantity,
+                'price' => $price,
+                'amount' => round($quantity * $price, 2),
+                'stock_reserved' => false,
+            ];
+            continue;
+        }
+        $stmt = $pdo->prepare('SELECT id, title, sku, price, stock, status FROM products WHERE id = ? LIMIT 1 FOR UPDATE');
+        $stmt->execute([$productId]);
+        $product = $stmt->fetch();
+        if (!$product || (string)($product['status'] ?? '') !== 'published' || !content_relation_exists($pdo, 'product', $productId, $siteId)) {
+            fail('商品不存在或当前站点不可售', 'PRODUCT_UNAVAILABLE', 422);
+        }
+        $stock = (int)($product['stock'] ?? 0);
+        if ($stock < $quantity) {
+            fail('商品库存不足', 'OUT_OF_STOCK', 422, [
+                'product_id' => $productId,
+                'stock' => $stock,
+                'requested' => $quantity,
+            ]);
+        }
+        $update = $pdo->prepare('UPDATE products SET stock = stock - :quantity, updated_at = :updated_at WHERE id = :id AND stock >= :quantity');
+        $update->execute([
+            'id' => $productId,
+            'quantity' => $quantity,
+            'updated_at' => now(),
+        ]);
+        if ($update->rowCount() !== 1) {
+            fail('商品库存不足', 'OUT_OF_STOCK', 422, ['product_id' => $productId]);
+        }
+        $price = max(0, (float)($product['price'] ?? 0));
+        $normalized[] = [
+            'product_id' => $productId,
+            'title' => (string)($product['title'] ?? ''),
+            'sku' => (string)($product['sku'] ?? ''),
+            'quantity' => $quantity,
+            'price' => $price,
+            'amount' => round($quantity * $price, 2),
+            'stock_reserved' => true,
+        ];
+    }
+    return $normalized;
+}
+
+function restore_order_stock(PDO $pdo, array $order): bool
+{
+    if ((int)($order['stock_reserved'] ?? 0) !== 1) {
+        return false;
+    }
+    $items = [];
+    try {
+        $items = json_decode((string)($order['items'] ?? '[]'), true, 512, JSON_THROW_ON_ERROR);
+    } catch (Throwable $error) {
+        $items = [];
+    }
+    $restored = false;
+    foreach (is_array($items) ? $items : [] as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $productId = (int)($item['product_id'] ?? 0);
+        $quantity = max(0, (int)($item['quantity'] ?? 0));
+        if ($productId <= 0 || $quantity <= 0 || empty($item['stock_reserved'])) {
+            continue;
+        }
+        $stmt = $pdo->prepare('UPDATE products SET stock = stock + :quantity, updated_at = :updated_at WHERE id = :id');
+        $stmt->execute([
+            'id' => $productId,
+            'quantity' => $quantity,
+            'updated_at' => now(),
+        ]);
+        $restored = true;
+    }
+    if ($restored) {
+        $pdo->prepare('UPDATE orders SET stock_reserved = 0, updated_at = :updated_at WHERE id = :id')->execute([
+            'id' => (int)$order['id'],
+            'updated_at' => now(),
+        ]);
+    }
+    return $restored;
 }
 
 function bearer_token(): string
@@ -5106,33 +5216,47 @@ try {
             fail('订单商品格式错误', 'VALIDATION_ERROR', 422);
         }
         assert_public_rate_limit($pdo, $siteId, 'orders.create', [trim((string)$data['phone'])], 3, 300);
-        $items = normalize_order_items($data['items']);
-        if (!$items) {
-            fail('订单至少需要一个商品', 'VALIDATION_ERROR', 422);
+        ensure_content_distribution_table($pdo);
+        $pdo->beginTransaction();
+        try {
+            $items = reserve_order_stock($pdo, $siteId, $data['items']);
+            if (!$items) {
+                $pdo->rollBack();
+                fail('订单至少需要一个商品', 'VALIDATION_ERROR', 422);
+            }
+            $total = array_reduce($items, fn($sum, $item) => $sum + (float)$item['amount'], 0.0);
+            $stockReserved = array_reduce($items, fn($reserved, $item) => $reserved || !empty($item['stock_reserved']), false) ? 1 : 0;
+            $time = now();
+            $stmt = $pdo->prepare("INSERT INTO orders (site_id, order_no, customer_name, phone, email, address, items, total_amount, currency, payment_method, payment_status, fulfillment_status, remark, source_url, ip_address, user_agent, stock_reserved, created_at, updated_at)
+                VALUES (:site_id, :order_no, :customer_name, :phone, :email, :address, :items, :total_amount, :currency, :payment_method, 'pending', 'new', :remark, :source_url, :ip_address, :user_agent, :stock_reserved, :created_at, :updated_at)");
+            $stmt->execute([
+                'site_id' => $siteId,
+                'order_no' => create_order_no(),
+                'customer_name' => trim((string)$data['customer_name']),
+                'phone' => trim((string)$data['phone']),
+                'email' => trim((string)($data['email'] ?? '')),
+                'address' => trim((string)($data['address'] ?? '')),
+                'items' => json_encode($items, JSON_UNESCAPED_UNICODE),
+                'total_amount' => round($total, 2),
+                'currency' => trim((string)($data['currency'] ?? 'CNY')) ?: 'CNY',
+                'payment_method' => trim((string)($data['payment_method'] ?? 'manual')) ?: 'manual',
+                'remark' => trim((string)($data['remark'] ?? '')),
+                'source_url' => trim((string)($data['source_url'] ?? '')),
+                'ip_address' => $_SERVER['REMOTE_ADDR'] ?? '',
+                'user_agent' => substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255),
+                'stock_reserved' => $stockReserved,
+                'created_at' => $time,
+                'updated_at' => $time,
+            ]);
+            $orderId = (int)$pdo->lastInsertId();
+            $pdo->commit();
+            ok(fetch_one($pdo, 'orders', $orderId), '订单已创建');
+        } catch (Throwable $error) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $error;
         }
-        $total = array_reduce($items, fn($sum, $item) => $sum + (float)$item['amount'], 0.0);
-        $time = now();
-        $stmt = $pdo->prepare("INSERT INTO orders (site_id, order_no, customer_name, phone, email, address, items, total_amount, currency, payment_method, payment_status, fulfillment_status, remark, source_url, ip_address, user_agent, created_at, updated_at)
-            VALUES (:site_id, :order_no, :customer_name, :phone, :email, :address, :items, :total_amount, :currency, :payment_method, 'pending', 'new', :remark, :source_url, :ip_address, :user_agent, :created_at, :updated_at)");
-        $stmt->execute([
-            'site_id' => $siteId,
-            'order_no' => create_order_no(),
-            'customer_name' => trim((string)$data['customer_name']),
-            'phone' => trim((string)$data['phone']),
-            'email' => trim((string)($data['email'] ?? '')),
-            'address' => trim((string)($data['address'] ?? '')),
-            'items' => json_encode($items, JSON_UNESCAPED_UNICODE),
-            'total_amount' => round($total, 2),
-            'currency' => trim((string)($data['currency'] ?? 'CNY')) ?: 'CNY',
-            'payment_method' => trim((string)($data['payment_method'] ?? 'manual')) ?: 'manual',
-            'remark' => trim((string)($data['remark'] ?? '')),
-            'source_url' => trim((string)($data['source_url'] ?? '')),
-            'ip_address' => $_SERVER['REMOTE_ADDR'] ?? '',
-            'user_agent' => substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255),
-            'created_at' => $time,
-            'updated_at' => $time,
-        ]);
-        ok(fetch_one($pdo, 'orders', (int)$pdo->lastInsertId()), '订单已创建');
     }
 
     if ($method === 'POST' && $path === '/orders/lookup') {
@@ -6087,6 +6211,11 @@ try {
                 $shipmentText = $trackingNo ? "订单标记为已发货，物流单号：{$trackingNo}" : '订单标记为已发货';
                 $remark = append_order_note($remark, $shipmentText);
             }
+            if (($paymentStatus === 'refunded' || $fulfillmentStatus === 'closed') && (int)($current['stock_reserved'] ?? 0) === 1) {
+                if (restore_order_stock($pdo, $current)) {
+                    $remark = append_order_note($remark, '订单关闭或退款，系统已回补商品库存');
+                }
+            }
             $stmt = $pdo->prepare("UPDATE orders SET payment_status=:payment_status, fulfillment_status=:fulfillment_status, tracking_company=:tracking_company, tracking_no=:tracking_no, paid_at=:paid_at, shipped_at=:shipped_at, remark=:remark, updated_at=:updated_at WHERE id=:id");
             $stmt->execute([
                 'id' => $id,
@@ -6102,6 +6231,10 @@ try {
             ok(fetch_one($pdo, 'orders', $id), '订单已更新');
         }
         if ($method === 'DELETE') {
+            $current = fetch_one($pdo, 'orders', $id);
+            if ($current) {
+                restore_order_stock($pdo, $current);
+            }
             $pdo->prepare('DELETE FROM orders WHERE id = ?')->execute([$id]);
             ok([], '订单已删除');
         }
