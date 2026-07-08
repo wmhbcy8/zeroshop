@@ -162,6 +162,9 @@ function load_data_from_mysql(PDO $pdo): array
     $productCategories = $pdo->query("SELECT id, name, slug, description FROM product_categories ORDER BY sort_order ASC, id ASC")->fetchAll();
     $articles = $pdo->query("SELECT id, category_id, title, slug, cover, summary, content, seo_title, seo_keywords, seo_description, published_at FROM articles WHERE status = 'published' ORDER BY published_at DESC, id DESC")->fetchAll();
     $products = $pdo->query("SELECT id, category_id, title, slug, sku, cover, summary, description, price, market_price, stock, seo_title, seo_keywords, seo_description FROM products WHERE status = 'published' ORDER BY id DESC")->fetchAll();
+    $siteId = (int)(env_or_null('HJ_SITE_ID') ?: 10001);
+    $articles = filter_distributed_content($pdo, 'article', $articles, $siteId);
+    $products = filter_distributed_content($pdo, 'product', $products, $siteId);
 
     foreach ($products as &$product) {
         $product['price'] = number_format((float)$product['price'], 2, '.', '');
@@ -170,6 +173,26 @@ function load_data_from_mysql(PDO $pdo): array
     unset($product);
 
     return [$site, $categories, $productCategories, $articles, $products];
+}
+
+function filter_distributed_content(PDO $pdo, string $type, array $items, int $siteId): array
+{
+    try {
+        $tableExists = (bool)$pdo->query("SHOW TABLES LIKE 'content_site_relations'")->fetchColumn();
+        if (!$tableExists || !$items) {
+            return $items;
+        }
+        $hasRelations = (int)$pdo->query("SELECT COUNT(*) FROM content_site_relations WHERE content_type = " . $pdo->quote($type))->fetchColumn();
+        if ($hasRelations === 0) {
+            return $items;
+        }
+        $stmt = $pdo->prepare("SELECT content_id FROM content_site_relations WHERE content_type = ? AND site_id = ?");
+        $stmt->execute([$type, $siteId]);
+        $allowed = array_flip(array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN)));
+        return array_values(array_filter($items, fn($item) => isset($allowed[(int)$item['id']])));
+    } catch (Throwable $error) {
+        return $items;
+    }
 }
 
 function write_file(string $path, string $content): void
@@ -196,6 +219,44 @@ function copy_dir(string $src, string $dst): void
         } else {
             write_file($target, file_get_contents($item->getPathname()));
         }
+    }
+}
+
+function remove_path(string $path): void
+{
+    if (!file_exists($path)) {
+        return;
+    }
+    if (is_file($path) || is_link($path)) {
+        unlink($path);
+        return;
+    }
+    $items = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($path, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+    foreach ($items as $item) {
+        $item->isDir() ? rmdir($item->getPathname()) : unlink($item->getPathname());
+    }
+    rmdir($path);
+}
+
+function reset_generated_output(string $publicRoot): void
+{
+    $generatedPaths = [
+        'assets',
+        'news',
+        'products',
+        'index.html',
+        'contact.html',
+        'search.html',
+        'order.html',
+        'sitemap.xml',
+        'robots.txt',
+        'search.json',
+    ];
+    foreach ($generatedPaths as $relativePath) {
+        remove_path($publicRoot . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativePath));
     }
 }
 
@@ -565,6 +626,7 @@ foreach ($articles as &$article) {
 unset($article);
 
 $engine = new HuajianTemplateEngine($templateRoot);
+reset_generated_output($publicRoot);
 copy_dir($templateRoot . DIRECTORY_SEPARATOR . 'assets', $publicRoot . DIRECTORY_SEPARATOR . 'assets');
 
 write_file($publicRoot . DIRECTORY_SEPARATOR . 'index.html', $engine->renderFile('pages/index.html', base_context($site, $categories, $productCategories, $articles, $products) + [

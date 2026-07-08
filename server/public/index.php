@@ -653,6 +653,7 @@ function site_table_count(PDO $pdo, string $table, string $where = ''): int
 function center_site_items(PDO $main, PDO $sitePdo): array
 {
     ensure_center_tables($main);
+    ensure_content_distribution_table($sitePdo);
     $settings = site_settings($sitePdo);
     $now = now();
     $stmt = $main->prepare("INSERT INTO sites (id, customer_id, name, site_key, domain, subdomain, language, template_key, database_name, public_path, status, created_at, updated_at)
@@ -669,19 +670,21 @@ function center_site_items(PDO $main, PDO $sitePdo): array
     ]);
 
     $items = $main->query('SELECT * FROM sites ORDER BY id ASC')->fetchAll();
+    $articleCounts = distribution_site_counts($sitePdo, 'article');
+    $productCounts = distribution_site_counts($sitePdo, 'product');
     $currentStats = [
-        'articles' => site_table_count($sitePdo, 'articles'),
-        'products' => site_table_count($sitePdo, 'products'),
+        'articles' => $articleCounts[10001] ?? site_table_count($sitePdo, 'articles'),
+        'products' => $productCounts[10001] ?? site_table_count($sitePdo, 'products'),
         'orders' => site_table_count($sitePdo, 'orders'),
         'pending_orders' => site_table_count($sitePdo, 'orders', " WHERE payment_status = 'pending' OR fulfillment_status IN ('new', 'confirmed')"),
         'forms' => site_table_count($sitePdo, 'form_submissions'),
         'pending_forms' => site_table_count($sitePdo, 'form_submissions', " WHERE status = 'pending'"),
     ];
 
-    return array_map(function (array $item) use ($currentStats) {
+    return array_map(function (array $item) use ($currentStats, $articleCounts, $productCounts) {
         $stats = (int)$item['id'] === 10001 ? $currentStats : [
-            'articles' => 0,
-            'products' => 0,
+            'articles' => $articleCounts[(int)$item['id']] ?? 0,
+            'products' => $productCounts[(int)$item['id']] ?? 0,
             'orders' => 0,
             'pending_orders' => 0,
             'forms' => 0,
@@ -700,6 +703,113 @@ function center_overview(array $sites): array
         }
     }
     return $totals;
+}
+
+function ensure_content_distribution_table(PDO $pdo): void
+{
+    $pdo->exec("CREATE TABLE IF NOT EXISTS content_site_relations (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        content_type VARCHAR(30) NOT NULL,
+        content_id BIGINT UNSIGNED NOT NULL,
+        site_id BIGINT UNSIGNED NOT NULL,
+        created_at DATETIME NOT NULL,
+        UNIQUE KEY uk_content_site (content_type, content_id, site_id),
+        INDEX idx_site_id (site_id),
+        INDEX idx_content (content_type, content_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    seed_content_distribution($pdo, 'article', 'articles');
+    seed_content_distribution($pdo, 'product', 'products');
+}
+
+function seed_content_distribution(PDO $pdo, string $type, string $table): void
+{
+    $exists = (int)$pdo->query("SELECT COUNT(*) FROM content_site_relations WHERE content_type = " . $pdo->quote($type))->fetchColumn();
+    if ($exists > 0) {
+        return;
+    }
+    $ids = $pdo->query("SELECT id FROM {$table}")->fetchAll(PDO::FETCH_COLUMN);
+    if (!$ids) {
+        return;
+    }
+    $stmt = $pdo->prepare("INSERT IGNORE INTO content_site_relations (content_type, content_id, site_id, created_at)
+        VALUES (:content_type, :content_id, 10001, :created_at)");
+    foreach ($ids as $id) {
+        $stmt->execute([
+            'content_type' => $type,
+            'content_id' => (int)$id,
+            'created_at' => now(),
+        ]);
+    }
+}
+
+function normalize_site_ids(array $data): array
+{
+    $ids = $data['site_ids'] ?? $data['distribution_site_ids'] ?? [requested_site_id()];
+    if (!is_array($ids)) {
+        $ids = [$ids];
+    }
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids), fn($id) => $id > 0)));
+    return $ids ?: [requested_site_id()];
+}
+
+function sync_content_distribution(PDO $pdo, string $type, int $contentId, array $siteIds): void
+{
+    ensure_content_distribution_table($pdo);
+    $pdo->prepare('DELETE FROM content_site_relations WHERE content_type = ? AND content_id = ?')->execute([$type, $contentId]);
+    $stmt = $pdo->prepare("INSERT IGNORE INTO content_site_relations (content_type, content_id, site_id, created_at)
+        VALUES (:content_type, :content_id, :site_id, :created_at)");
+    foreach ($siteIds as $siteId) {
+        $stmt->execute([
+            'content_type' => $type,
+            'content_id' => $contentId,
+            'site_id' => (int)$siteId,
+            'created_at' => now(),
+        ]);
+    }
+}
+
+function distribution_map(PDO $pdo, string $type, array $ids): array
+{
+    ensure_content_distribution_table($pdo);
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids), fn($id) => $id > 0)));
+    if (!$ids) {
+        return [];
+    }
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $stmt = $pdo->prepare("SELECT content_id, site_id FROM content_site_relations WHERE content_type = ? AND content_id IN ({$placeholders}) ORDER BY site_id ASC");
+    $stmt->execute(array_merge([$type], $ids));
+    $map = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $contentId = (int)$row['content_id'];
+        $map[$contentId] ??= [];
+        $map[$contentId][] = (int)$row['site_id'];
+    }
+    return $map;
+}
+
+function attach_distribution(PDO $pdo, string $type, array $items): array
+{
+    $map = distribution_map($pdo, $type, array_column($items, 'id'));
+    return array_map(function (array $item) use ($map) {
+        $item['site_ids'] = $map[(int)$item['id']] ?? [10001];
+        return $item;
+    }, $items);
+}
+
+function distribution_site_counts(PDO $pdo, string $type): array
+{
+    try {
+        $stmt = $pdo->prepare('SELECT site_id, COUNT(*) AS total FROM content_site_relations WHERE content_type = ? GROUP BY site_id');
+        $stmt->execute([$type]);
+        $counts = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $counts[(int)$row['site_id']] = (int)$row['total'];
+        }
+        return $counts;
+    } catch (Throwable $error) {
+        return [];
+    }
 }
 
 function requested_site_id(): int
@@ -1807,6 +1917,7 @@ try {
         $status = in_array(($data['status'] ?? 'draft'), ['draft', 'published'], true) ? $data['status'] : 'draft';
         $site = site_settings($pdo);
         $created = [];
+        $siteIds = normalize_site_ids($data);
         $angles = ['行业趋势', '选型指南', '应用案例', 'SEO 获客', '产品卖点', '客户痛点', '解决方案', '常见问题', '运营方法', '转化路径'];
         for ($i = 1; $i <= $count; $i++) {
             $angle = $angles[($i - 1) % count($angles)];
@@ -1819,7 +1930,8 @@ try {
             $draft['status'] = $status;
             $draft['published_at'] = $status === 'published' ? now() : null;
             $id = insert_article($pdo, $draft);
-            $created[] = fetch_one($pdo, 'articles', $id);
+            sync_content_distribution($pdo, 'article', $id, $siteIds);
+            $created[] = attach_distribution($pdo, 'article', [fetch_one($pdo, 'articles', $id)])[0];
         }
         ok(['items' => $created, 'count' => count($created)], '批量生成成功');
     }
@@ -1832,6 +1944,7 @@ try {
         $status = in_array(($data['status'] ?? 'draft'), ['draft', 'published'], true) ? $data['status'] : 'draft';
         $site = site_settings($pdo);
         $created = [];
+        $siteIds = normalize_site_ids($data);
         $angles = ['标准款', '专业款', '旗舰款', '入门套装', '行业方案', '高续航版', '轻量版', '企业定制版', '巡检版', '营销组合'];
         for ($i = 1; $i <= $count; $i++) {
             $angle = $angles[($i - 1) % count($angles)];
@@ -1845,7 +1958,8 @@ try {
             $draft['status'] = $status;
             $draft['published_at'] = $status === 'published' ? now() : null;
             $id = insert_product($pdo, $draft);
-            $created[] = fetch_one($pdo, 'products', $id);
+            sync_content_distribution($pdo, 'product', $id, $siteIds);
+            $created[] = attach_distribution($pdo, 'product', [fetch_one($pdo, 'products', $id)])[0];
         }
         ok(['items' => $created, 'count' => count($created)], '批量生成成功');
     }
@@ -1965,18 +2079,25 @@ try {
     }
 
     if ($method === 'GET' && $path === '/articles') {
-        ok(paginate($pdo, 'articles', [], 'published_at DESC, id DESC'));
+        $result = paginate($pdo, 'articles', [], 'published_at DESC, id DESC');
+        $result['items'] = attach_distribution($pdo, 'article', $result['items']);
+        ok($result);
     }
 
     if ($method === 'POST' && $path === '/articles') {
         $data = body_json();
-        ok(['id' => insert_article($pdo, $data)], '创建成功');
+        $id = insert_article($pdo, $data);
+        sync_content_distribution($pdo, 'article', $id, normalize_site_ids($data));
+        ok(['id' => $id], '创建成功');
     }
 
     if ($params = route_param('/articles/{id}', $path)) {
         $id = (int)$params['id'];
         if ($method === 'GET') {
             $item = fetch_one($pdo, 'articles', $id);
+            if ($item) {
+                $item = attach_distribution($pdo, 'article', [$item])[0];
+            }
             $item ? ok($item) : fail('文章不存在', 'NOT_FOUND', 404);
         }
         if ($method === 'PUT') {
@@ -1998,27 +2119,38 @@ try {
                 'published_at' => $data['published_at'] ?? null,
                 'updated_at' => now(),
             ]);
-            ok(fetch_one($pdo, 'articles', $id), '保存成功');
+            sync_content_distribution($pdo, 'article', $id, normalize_site_ids($data));
+            $item = attach_distribution($pdo, 'article', [fetch_one($pdo, 'articles', $id)])[0];
+            ok($item, '保存成功');
         }
         if ($method === 'DELETE') {
+            ensure_content_distribution_table($pdo);
+            $pdo->prepare("DELETE FROM content_site_relations WHERE content_type = 'article' AND content_id = ?")->execute([$id]);
             $pdo->prepare('DELETE FROM articles WHERE id = ?')->execute([$id]);
             ok([], '删除成功');
         }
     }
 
     if ($method === 'GET' && $path === '/products') {
-        ok(paginate($pdo, 'products', [], 'id DESC'));
+        $result = paginate($pdo, 'products', [], 'id DESC');
+        $result['items'] = attach_distribution($pdo, 'product', $result['items']);
+        ok($result);
     }
 
     if ($method === 'POST' && $path === '/products') {
         $data = body_json();
-        ok(['id' => insert_product($pdo, $data)], '创建成功');
+        $id = insert_product($pdo, $data);
+        sync_content_distribution($pdo, 'product', $id, normalize_site_ids($data));
+        ok(['id' => $id], '创建成功');
     }
 
     if ($params = route_param('/products/{id}', $path)) {
         $id = (int)$params['id'];
         if ($method === 'GET') {
             $item = fetch_one($pdo, 'products', $id);
+            if ($item) {
+                $item = attach_distribution($pdo, 'product', [$item])[0];
+            }
             $item ? ok($item) : fail('商品不存在', 'NOT_FOUND', 404);
         }
         if ($method === 'PUT') {
@@ -2046,9 +2178,13 @@ try {
                 'published_at' => $data['published_at'] ?? null,
                 'updated_at' => now(),
             ]);
-            ok(fetch_one($pdo, 'products', $id), '保存成功');
+            sync_content_distribution($pdo, 'product', $id, normalize_site_ids($data));
+            $item = attach_distribution($pdo, 'product', [fetch_one($pdo, 'products', $id)])[0];
+            ok($item, '保存成功');
         }
         if ($method === 'DELETE') {
+            ensure_content_distribution_table($pdo);
+            $pdo->prepare("DELETE FROM content_site_relations WHERE content_type = 'product' AND content_id = ?")->execute([$id]);
             $pdo->prepare('DELETE FROM products WHERE id = ?')->execute([$id]);
             ok([], '删除成功');
         }
@@ -2270,6 +2406,7 @@ try {
         $publicPath = site_public_root($currentSite);
         ensure_dir($publicPath);
         putenv('HJ_SITE_KEY=' . (string)$currentSite['site_key']);
+        putenv('HJ_SITE_ID=' . (string)$currentSite['id']);
         putenv('HJ_PUBLIC_PATH=' . $publicPath);
         $command = '"' . $php . '" "' . $script . '"';
         $output = [];

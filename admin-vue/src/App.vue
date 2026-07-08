@@ -393,6 +393,8 @@
             :page-size="articlePager.page_size"
             :total="articlePager.total"
             :media="imageMedia"
+            :sites="sites"
+            :current-site-id="currentSiteId"
             @new="newArticle"
             @edit="editArticle"
             @save="saveArticle"
@@ -411,6 +413,8 @@
             :page-size="productPager.page_size"
             :total="productPager.total"
             :media="imageMedia"
+            :sites="sites"
+            :current-site-id="currentSiteId"
             @new="newProduct"
             @edit="editProduct"
             @save="saveProduct"
@@ -592,6 +596,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
+import ContentEditor from './components/ContentEditor.vue'
 
 const TOKEN_KEY = 'huajian_admin_token'
 const token = ref(localStorage.getItem(TOKEN_KEY) || '')
@@ -1002,8 +1007,8 @@ function changeProductPage(page: number) {
   loadProducts()
 }
 
-function newArticle() { Object.assign(articleForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft' }) }
-function editArticle(item: any) { Object.assign(articleForm, item) }
+function newArticle() { Object.assign(articleForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', site_ids: [Number(currentSiteId.value || 10001)] }) }
+function editArticle(item: any) { Object.assign(articleForm, { ...item, site_ids: item.site_ids?.length ? item.site_ids : [Number(currentSiteId.value || 10001)] }) }
 async function saveArticle() {
   const method = articleForm.id ? 'PUT' : 'POST'
   const path = articleForm.id ? `/api/articles/${articleForm.id}` : '/api/articles'
@@ -1022,8 +1027,8 @@ async function generateArticleDraft(prompt: string) {
   Object.assign(articleForm, data.draft || data)
 }
 
-function newProduct() { Object.assign(productForm, { id: '', title: '', slug: '', sku: '', cover: '', summary: '', description: '', price: 0, stock: 0, status: 'draft' }) }
-function editProduct(item: any) { Object.assign(productForm, item) }
+function newProduct() { Object.assign(productForm, { id: '', title: '', slug: '', sku: '', cover: '', summary: '', description: '', price: 0, stock: 0, status: 'draft', site_ids: [Number(currentSiteId.value || 10001)] }) }
+function editProduct(item: any) { Object.assign(productForm, { ...item, site_ids: item.site_ids?.length ? item.site_ids : [Number(currentSiteId.value || 10001)] }) }
 async function saveProduct() {
   const method = productForm.id ? 'PUT' : 'POST'
   const path = productForm.id ? `/api/products/${productForm.id}` : '/api/products'
@@ -1083,10 +1088,10 @@ async function generateAiPreview() {
 
 async function saveAiDraft(item: any, index: number) {
   if (item.type === 'article') {
-    await request('/api/articles', { method: 'POST', data: { ...item, status: 'draft' } })
+    await request('/api/articles', { method: 'POST', data: { ...item, status: 'draft', site_ids: [Number(currentSiteId.value || 10001)] } })
     await loadArticles()
   } else {
-    await request('/api/products', { method: 'POST', data: { ...item, status: 'draft' } })
+    await request('/api/products', { method: 'POST', data: { ...item, status: 'draft', site_ids: [Number(currentSiteId.value || 10001)] } })
     await loadProducts()
   }
   aiDrafts.value.splice(index, 1)
@@ -1098,7 +1103,7 @@ async function batchCreateAiContent() {
   aiBatchLoading.value = true
   try {
     const path = aiForm.type === 'article' ? '/api/ai/batch-articles' : '/api/ai/batch-products'
-    const data = await request(path, { method: 'POST', data: { prompt: aiForm.prompt, count: aiForm.count, status: aiForm.status } })
+    const data = await request(path, { method: 'POST', data: { prompt: aiForm.prompt, count: aiForm.count, status: aiForm.status, site_ids: [Number(currentSiteId.value || 10001)] } })
     ElMessage.success(`已批量生成 ${data.count || 0} 条内容`)
     await Promise.all([loadArticles(), loadProducts(), loadDashboard()])
   } finally {
@@ -1337,92 +1342,6 @@ export default defineComponent({
           <strong>{{ value }}</strong>
           <small>{{ note }}</small>
         </el-card>
-      `
-    },
-    ContentEditor: {
-      props: ['type', 'items', 'form', 'page', 'pageSize', 'total', 'media'],
-      emits: ['new', 'edit', 'save', 'delete', 'ai', 'page-change'],
-      data() {
-        return { prompt: '', drawerVisible: false, mediaDrawerVisible: false }
-      },
-      computed: {
-        title() { return this.type === 'article' ? '文章' : '商品' },
-        bodyField() { return this.type === 'article' ? 'content' : 'description' }
-      },
-      methods: {
-        openNew() {
-          this.$emit('new')
-          this.drawerVisible = true
-        },
-        openEdit(row: any) {
-          this.$emit('edit', row)
-          this.drawerVisible = true
-        },
-        saveForm() {
-          this.$emit('save')
-        },
-        selectCover(item: any) {
-          this.form.cover = item.file_path
-          this.mediaDrawerVisible = false
-        }
-      },
-      template: `
-        <div>
-          <el-card class="panel" shadow="never">
-            <template #header><div class="card-head"><strong>{{ title }}列表</strong><el-button type="primary" @click="openNew">新建{{ title }}</el-button></div></template>
-            <el-table :data="items" height="650">
-              <el-table-column prop="title" label="标题" min-width="260">
-                <template #default="{ row }"><strong>{{ row.title }}</strong><br /><small>{{ row.slug }}</small></template>
-              </el-table-column>
-              <el-table-column v-if="type === 'product'" prop="sku" label="SKU" width="140" />
-              <el-table-column v-if="type === 'product'" label="价格/库存" width="150">
-                <template #default="{ row }">{{ row.price || 0 }} / {{ row.stock || 0 }}</template>
-              </el-table-column>
-              <el-table-column prop="status" label="状态" width="110" />
-              <el-table-column label="操作" width="160">
-                <template #default="{ row }">
-                  <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-                  <el-button link type="danger" @click="$emit('delete', row)">删除</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-            <el-pagination class="table-pager" layout="prev, pager, next, total" :current-page="page" :page-size="pageSize" :total="total" @current-change="$emit('page-change', $event)" />
-          </el-card>
-          <el-drawer v-model="drawerVisible" :title="(form.id ? '编辑' : '新建') + title" size="620px">
-              <el-form :model="form" label-width="90px">
-                <el-alert type="info" show-icon :closable="false" class="mb16" title="AI 生成入口保留，内容会填充到当前表单。" />
-                <el-form-item label="AI 要求"><el-input v-model="prompt" placeholder="输入生成要求" /></el-form-item>
-                <el-form-item><el-button @click="$emit('ai', prompt)">AI 生成草稿</el-button></el-form-item>
-                <el-form-item label="标题"><el-input v-model="form.title" /></el-form-item>
-                <el-form-item label="Slug"><el-input v-model="form.slug" /></el-form-item>
-                <el-form-item v-if="type === 'product'" label="SKU"><el-input v-model="form.sku" /></el-form-item>
-                <el-form-item label="封面">
-                  <div class="cover-field">
-                    <el-input v-model="form.cover" placeholder="选择或输入图片路径" />
-                    <el-button @click="mediaDrawerVisible = true">选择图片</el-button>
-                  </div>
-                  <img v-if="form.cover" class="cover-preview" :src="form.cover.startsWith('/') ? form.cover : '/' + form.cover" />
-                </el-form-item>
-                <el-form-item label="摘要"><el-input v-model="form.summary" type="textarea" :rows="3" /></el-form-item>
-                <el-form-item :label="type === 'article' ? '正文' : '描述'"><el-input v-model="form[bodyField]" type="textarea" :rows="7" /></el-form-item>
-                <el-row v-if="type === 'product'" :gutter="12">
-                  <el-col :span="12"><el-form-item label="价格"><el-input-number v-model="form.price" :min="0" /></el-form-item></el-col>
-                  <el-col :span="12"><el-form-item label="库存"><el-input-number v-model="form.stock" :min="0" /></el-form-item></el-col>
-                </el-row>
-                <el-form-item label="状态"><el-select v-model="form.status"><el-option label="草稿" value="draft" /><el-option label="发布" value="published" /></el-select></el-form-item>
-                <el-button type="primary" @click="saveForm">保存{{ title }}</el-button>
-              </el-form>
-          </el-drawer>
-          <el-drawer v-model="mediaDrawerVisible" title="选择封面图片" size="520px">
-            <div class="picker-grid">
-              <button v-for="item in media" :key="item.id" type="button" class="picker-card" @click="selectCover(item)">
-                <img :src="'/' + item.file_path" />
-                <span>{{ item.file_name }}</span>
-              </button>
-            </div>
-            <el-empty v-if="!media || !media.length" description="媒体库暂无图片" />
-          </el-drawer>
-        </div>
       `
     }
   }

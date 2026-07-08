@@ -1,0 +1,137 @@
+<template>
+  <div>
+    <el-card class="panel" shadow="never">
+      <template #header>
+        <div class="card-head">
+          <strong>{{ title }}列表</strong>
+          <el-button type="primary" @click="openNew">新建{{ title }}</el-button>
+        </div>
+      </template>
+      <el-table :data="items" height="650">
+        <el-table-column prop="title" label="标题" min-width="260">
+          <template #default="{ row }">
+            <strong>{{ row.title }}</strong><br />
+            <small>{{ row.slug }}</small>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="type === 'product'" prop="sku" label="SKU" width="140" />
+        <el-table-column v-if="type === 'product'" label="价格/库存" width="150">
+          <template #default="{ row }">{{ row.price || 0 }} / {{ row.stock || 0 }}</template>
+        </el-table-column>
+        <el-table-column prop="status" label="状态" width="110" />
+        <el-table-column label="分发站点" min-width="180">
+          <template #default="{ row }"><small>{{ siteNames(row) }}</small></template>
+        </el-table-column>
+        <el-table-column label="操作" width="160">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button link type="danger" @click="$emit('delete', row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-pagination
+        class="table-pager"
+        layout="prev, pager, next, total"
+        :current-page="page"
+        :page-size="pageSize"
+        :total="total"
+        @current-change="$emit('page-change', $event)"
+      />
+    </el-card>
+
+    <el-drawer v-model="drawerVisible" :title="(form.id ? '编辑' : '新建') + title" size="620px">
+      <el-form :model="form" label-width="90px">
+        <el-alert type="info" show-icon :closable="false" class="mb16" title="AI 生成入口保留，内容会填充到当前表单。" />
+        <el-form-item label="AI 要求"><el-input v-model="prompt" placeholder="输入生成要求" /></el-form-item>
+        <el-form-item><el-button @click="$emit('ai', prompt)">AI 生成草稿</el-button></el-form-item>
+        <el-form-item label="标题"><el-input v-model="form.title" /></el-form-item>
+        <el-form-item label="Slug"><el-input v-model="form.slug" /></el-form-item>
+        <el-form-item v-if="type === 'product'" label="SKU"><el-input v-model="form.sku" /></el-form-item>
+        <el-form-item label="封面">
+          <div class="cover-field">
+            <el-input v-model="form.cover" placeholder="选择或输入图片路径" />
+            <el-button @click="mediaDrawerVisible = true">选择图片</el-button>
+          </div>
+          <img v-if="form.cover" class="cover-preview" :src="form.cover.startsWith('/') ? form.cover : '/' + form.cover" />
+        </el-form-item>
+        <el-form-item label="摘要"><el-input v-model="form.summary" type="textarea" :rows="3" /></el-form-item>
+        <el-form-item :label="type === 'article' ? '正文' : '描述'"><el-input v-model="form[bodyField]" type="textarea" :rows="7" /></el-form-item>
+        <el-form-item label="分发站点">
+          <el-select v-model="form.site_ids" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择站点">
+            <el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id" />
+          </el-select>
+        </el-form-item>
+        <el-row v-if="type === 'product'" :gutter="12">
+          <el-col :span="12"><el-form-item label="价格"><el-input-number v-model="form.price" :min="0" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="库存"><el-input-number v-model="form.stock" :min="0" /></el-form-item></el-col>
+        </el-row>
+        <el-form-item label="状态">
+          <el-select v-model="form.status">
+            <el-option label="草稿" value="draft" />
+            <el-option label="发布" value="published" />
+          </el-select>
+        </el-form-item>
+        <el-button type="primary" @click="saveForm">保存{{ title }}</el-button>
+      </el-form>
+    </el-drawer>
+
+    <el-drawer v-model="mediaDrawerVisible" title="选择封面图片" size="520px">
+      <div class="picker-grid">
+        <button v-for="item in media" :key="item.id" type="button" class="picker-card" @click="selectCover(item)">
+          <img :src="'/' + item.file_path" />
+          <span>{{ item.file_name }}</span>
+        </button>
+      </div>
+      <el-empty v-if="!media || !media.length" description="媒体库暂无图片" />
+    </el-drawer>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+
+const props = defineProps<{
+  type: 'article' | 'product'
+  items: any[]
+  form: any
+  page: number
+  pageSize: number
+  total: number
+  media: any[]
+  sites: any[]
+  currentSiteId: number | string
+}>()
+
+const emit = defineEmits(['new', 'edit', 'save', 'delete', 'ai', 'page-change'])
+
+const prompt = ref('')
+const drawerVisible = ref(false)
+const mediaDrawerVisible = ref(false)
+const title = computed(() => props.type === 'article' ? '文章' : '商品')
+const bodyField = computed(() => props.type === 'article' ? 'content' : 'description')
+
+function openNew() {
+  emit('new')
+  drawerVisible.value = true
+}
+
+function openEdit(row: any) {
+  emit('edit', row)
+  drawerVisible.value = true
+}
+
+function saveForm() {
+  emit('save')
+}
+
+function siteNames(row: any) {
+  const ids = (row.site_ids || []).map((id: any) => Number(id))
+  const names = (props.sites || []).filter((site: any) => ids.includes(Number(site.id))).map((site: any) => site.name)
+  return names.length ? names.join('、') : '未分发'
+}
+
+function selectCover(item: any) {
+  props.form.cover = item.file_path
+  mediaDrawerVisible.value = false
+}
+</script>
