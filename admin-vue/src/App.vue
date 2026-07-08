@@ -465,6 +465,7 @@
                 <strong>发布中心</strong>
                 <div class="head-actions">
                   <el-button :loading="deployTesting" @click="checkDeployConfig">检查部署配置</el-button>
+                  <el-button :loading="packaging" @click="createPackage">生成发布包</el-button>
                   <el-button type="primary" :loading="generating" @click="generateSite">生成静态站</el-button>
                 </div>
               </div>
@@ -494,10 +495,14 @@
               <el-descriptions-item label="时间">{{ publishDetail.created_at || '-' }}</el-descriptions-item>
               <el-descriptions-item label="文件路径">{{ publishDetail.file_path || '-' }}</el-descriptions-item>
               <el-descriptions-item label="生成文件数">{{ publishSummary.file_count ?? '-' }}</el-descriptions-item>
+              <el-descriptions-item label="发布包大小">{{ publishSummary.file_size ? formatFileSize(publishSummary.file_size) : '-' }}</el-descriptions-item>
               <el-descriptions-item label="面板地址">{{ publishSummary.panel_url || '-' }}</el-descriptions-item>
               <el-descriptions-item label="站点目录">{{ publishSummary.site_path || '-' }}</el-descriptions-item>
               <el-descriptions-item label="说明">{{ publishSummary.message || publishDetail.message || publishDetail.remark || '-' }}</el-descriptions-item>
             </el-descriptions>
+            <div v-if="publishDetail.publish_type === 'package'" class="drawer-actions">
+              <el-button type="primary" @click="downloadPackage(publishDetail.file_path || publishSummary.package_path)">下载发布包</el-button>
+            </div>
             <el-alert v-if="publishSummary.output?.length" class="mt16" type="info" show-icon title="生成输出">
               <pre class="output-log">{{ publishSummary.output.join('\n') }}</pre>
             </el-alert>
@@ -539,6 +544,7 @@ const orderDrawerVisible = ref(false)
 const publishDrawerVisible = ref(false)
 const publishResult = ref<any>(null)
 const deployTesting = ref(false)
+const packaging = ref(false)
 
 const orderFilters = reactive({ keyword: '', payment_status: '', fulfillment_status: '' })
 const serviceFilters = reactive({ keyword: '', status: '', type: '' })
@@ -1128,12 +1134,48 @@ async function checkDeployConfig() {
   }
 }
 
+async function createPackage() {
+  packaging.value = true
+  try {
+    const data = await request('/api/site/package', { method: 'POST' })
+    publishResult.value = data || { message: '发布包已生成' }
+    ElMessage.success(data?.message || '发布包已生成')
+    await loadVersions()
+  } finally {
+    packaging.value = false
+  }
+}
+
+async function downloadPackage(path: string) {
+  const file = String(path || '').split('/').pop()
+  if (!file) return ElMessage.warning('发布包路径为空')
+  const response = await axios({
+    url: `/api/site/package-download?file=${encodeURIComponent(file)}`,
+    method: 'GET',
+    responseType: 'blob',
+    headers: token.value ? { Authorization: `Bearer ${token.value}` } : undefined
+  })
+  const blobUrl = URL.createObjectURL(response.data)
+  const link = document.createElement('a')
+  link.href = blobUrl
+  link.download = file
+  link.click()
+  URL.revokeObjectURL(blobUrl)
+}
+
 function openPublishVersion(row: any) {
   Object.assign(publishDetail, row)
   publishDrawerVisible.value = true
 }
 function previewSite() {
   window.open('/', '_blank')
+}
+
+function formatFileSize(value: number) {
+  if (!value) return '0 B'
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / 1024 / 1024).toFixed(2)} MB`
 }
 
 function paymentLabel(value: string) {

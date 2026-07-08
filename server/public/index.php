@@ -192,6 +192,66 @@ function public_root(): string
     return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'sites' . DIRECTORY_SEPARATOR . 'site_10001' . DIRECTORY_SEPARATOR . 'public';
 }
 
+function package_root(): string
+{
+    return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'packages';
+}
+
+function create_static_package(): array
+{
+    $publicRoot = realpath(public_root());
+    if (!$publicRoot || !is_dir($publicRoot)) {
+        fail('请先生成静态站', 'STATIC_SITE_MISSING', 422);
+    }
+
+    if (!class_exists(PharData::class)) {
+        fail('当前 PHP 环境不支持 PharData 打包', 'PACKAGE_UNSUPPORTED', 500);
+    }
+
+    $packageRoot = package_root();
+    ensure_dir($packageRoot);
+    $versionNo = 'package_' . date('Ymd_His');
+    $tarPath = $packageRoot . DIRECTORY_SEPARATOR . $versionNo . '.tar';
+    $gzPath = $tarPath . '.gz';
+    if (is_file($tarPath)) {
+        unlink($tarPath);
+    }
+    if (is_file($gzPath)) {
+        unlink($gzPath);
+    }
+
+    $tar = new PharData($tarPath);
+    $files = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($publicRoot, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+    $fileCount = 0;
+    foreach ($files as $file) {
+        $pathName = $file->getPathname();
+        $relative = str_replace(DIRECTORY_SEPARATOR, '/', substr($pathName, strlen($publicRoot) + 1));
+        if ($file->isDir()) {
+            $tar->addEmptyDir($relative);
+            continue;
+        }
+        $tar->addFile($pathName, $relative);
+        $fileCount++;
+    }
+    $tar->compress(Phar::GZ);
+    unset($tar);
+    if (is_file($tarPath)) {
+        unlink($tarPath);
+    }
+    clearstatcache(true, $gzPath);
+
+    return [
+        'version_no' => $versionNo,
+        'file_path' => 'storage/packages/' . basename($gzPath),
+        'absolute_path' => $gzPath,
+        'file_count' => $fileCount,
+        'file_size' => is_file($gzPath) ? filesize($gzPath) : 0,
+    ];
+}
+
 function route_param(string $pattern, string $path): ?array
 {
     $regex = '#^' . preg_replace('#\{([a-z_]+)\}#', '(?P<$1>[^/]+)', $pattern) . '$#';
@@ -2011,6 +2071,43 @@ try {
             'created_at' => now(),
         ]);
         ok($summary, '部署配置检查完成');
+    }
+
+    if ($method === 'POST' && $path === '/site/package') {
+        $package = create_static_package();
+        $summary = [
+            'file_count' => $package['file_count'],
+            'file_size' => $package['file_size'],
+            'package_path' => $package['file_path'],
+            'message' => '发布包已生成，可下载后上传到宝塔站点目录解压。',
+        ];
+        $stmt = $pdo->prepare("INSERT INTO publish_versions (version_no, publish_type, file_path, status, summary, created_at)
+            VALUES (:version_no, 'package', :file_path, 'success', :summary, :created_at)");
+        $stmt->execute([
+            'version_no' => $package['version_no'],
+            'file_path' => $package['file_path'],
+            'summary' => json_encode($summary, JSON_UNESCAPED_UNICODE),
+            'created_at' => now(),
+        ]);
+        ok($summary + ['version_no' => $package['version_no']], '发布包已生成');
+    }
+
+    if ($method === 'GET' && $path === '/site/package-download') {
+        $file = basename((string)($_GET['file'] ?? ''));
+        if ($file === '' || !preg_match('/^package_\d{8}_\d{6}\.tar\.gz$/', $file)) {
+            fail('发布包不存在', 'PACKAGE_NOT_FOUND', 404);
+        }
+        $packageBase = realpath(package_root());
+        $packagePath = realpath(package_root() . DIRECTORY_SEPARATOR . $file);
+        if (!$packageBase || !$packagePath || !str_starts_with($packagePath, $packageBase) || !is_file($packagePath)) {
+            fail('发布包不存在', 'PACKAGE_NOT_FOUND', 404);
+        }
+        header_remove('Content-Type');
+        header('Content-Type: application/gzip');
+        header('Content-Disposition: attachment; filename="' . $file . '"');
+        header('Content-Length: ' . filesize($packagePath));
+        readfile($packagePath);
+        exit;
     }
 
     if ($method === 'GET' && $path === '/site/publish-versions') {

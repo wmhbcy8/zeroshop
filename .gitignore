@@ -6,6 +6,7 @@
 /admin-vue/node_modules/
 /admin-vue/dist/
 /storage-api-*.log
+/storage/packages/
 /*.png
 
 config/database.local.php

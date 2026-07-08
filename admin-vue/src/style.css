@@ -243,6 +243,11 @@ body {
   white-space: pre-wrap;
   line-height: 1.6;
 }
+.drawer-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
 .template-grid {
   display: grid;
   gap: 14px;
