@@ -2740,7 +2740,16 @@ function apply_template_clone_task(PDO $main, PDO $sitePdo, int $taskId): array
         'template_key' => $key,
         'applied_at' => now(),
     ];
-    return ['task' => $task, 'site' => save_site_settings($sitePdo, $settings)];
+    $siteId = requested_site_id();
+    $main->prepare('UPDATE sites SET template_key = :template_key, updated_at = :updated_at WHERE id = :id')
+        ->execute(['id' => $siteId, 'template_key' => $key, 'updated_at' => now()]);
+    return [
+        'task' => $task,
+        'site_id' => $siteId,
+        'template_key' => $key,
+        'preview_url' => '/s/site_' . $siteId . '/',
+        'site' => save_site_settings($sitePdo, $settings),
+    ];
 }
 
 function delete_template_clone_task(PDO $main, int $taskId): void

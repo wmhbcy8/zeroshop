@@ -3048,8 +3048,11 @@ async function createTemplateCloneTask() {
 async function applyTemplateCloneTask(item: any) {
   const data = await request(`/api/template-clone/tasks/${item.id}/apply`, { method: 'POST' })
   Object.assign(site, normalizeSite(data.site || site))
-  ElMessage.success(`已应用模板草稿：${item.template_name || item.template_key}`)
-  await Promise.all([loadTemplates(), loadSettings()])
+  site.template_key = data.template_key || item.template_key || site.template_key
+  ElMessage.success(`已应用模板草稿：${item.template_name || item.template_key}，正在生成预览`)
+  await Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadSettings(), loadSites()])
+  await generateSite()
+  await loadStaticPages()
 }
 
 async function deleteTemplateCloneTask(item: any) {
