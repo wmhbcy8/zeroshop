@@ -838,6 +838,52 @@ function center_site_items(PDO $main, PDO $sitePdo): array
     }, $items);
 }
 
+function normalize_center_site_payload(array $data, array $current = []): array
+{
+    $name = trim((string)($data['name'] ?? ($current['name'] ?? '')));
+    if ($name === '') {
+        fail('站点名称不能为空', 'VALIDATION_ERROR', 422);
+    }
+    $status = trim((string)($data['status'] ?? ($current['status'] ?? 'active')));
+    if (!in_array($status, ['active', 'disabled', 'archived'], true)) {
+        fail('站点状态不正确', 'VALIDATION_ERROR', 422);
+    }
+
+    return [
+        'name' => mb_substr($name, 0, 120, 'UTF-8'),
+        'domain' => mb_substr(trim((string)($data['domain'] ?? ($current['domain'] ?? ''))), 0, 180, 'UTF-8'),
+        'subdomain' => mb_substr(trim((string)($data['subdomain'] ?? ($current['subdomain'] ?? ''))), 0, 180, 'UTF-8'),
+        'language' => mb_substr(trim((string)($data['language'] ?? ($current['language'] ?? 'zh-CN'))) ?: 'zh-CN', 0, 20, 'UTF-8'),
+        'template_key' => mb_substr(trim((string)($data['template_key'] ?? ($current['template_key'] ?? 'business-clean'))) ?: 'business-clean', 0, 100, 'UTF-8'),
+        'status' => $status,
+    ];
+}
+
+function update_center_site(PDO $main, int $id, array $data, ?PDO $sitePdo = null): array
+{
+    ensure_center_tables($main);
+    $current = fetch_one($main, 'sites', $id);
+    if (!$current) {
+        fail('站点不存在', 'NOT_FOUND', 404);
+    }
+    $payload = normalize_center_site_payload($data, $current);
+    $stmt = $main->prepare('UPDATE sites SET name = :name, domain = :domain, subdomain = :subdomain, language = :language, template_key = :template_key, status = :status, updated_at = :updated_at WHERE id = :id');
+    $stmt->execute($payload + [
+        'id' => $id,
+        'updated_at' => now(),
+    ]);
+    if ($sitePdo && $id === 10001) {
+        $settings = site_settings($sitePdo);
+        foreach (['name', 'domain', 'language', 'template_key'] as $field) {
+            $settings[$field] = $payload[$field];
+        }
+        $settings['updated_at'] = now();
+        $settingsStmt = $sitePdo->prepare("REPLACE INTO site_settings (setting_key, setting_value, updated_at) VALUES ('site', :value, :updated_at)");
+        $settingsStmt->execute(['value' => json_encode($settings, JSON_UNESCAPED_UNICODE), 'updated_at' => $settings['updated_at']]);
+    }
+    return fetch_one($main, 'sites', $id) ?: ($current + $payload);
+}
+
 function site_group_counts(PDO $pdo, string $table, string $where = ''): array
 {
     try {
@@ -2216,18 +2262,17 @@ try {
         require_fields($data, ['name']);
         $main = main_pdo();
         ensure_center_tables($main);
-        $name = trim((string)$data['name']);
-        $domain = trim((string)($data['domain'] ?? ''));
-        $language = trim((string)($data['language'] ?? 'zh-CN')) ?: 'zh-CN';
-        $templateKey = trim((string)($data['template_key'] ?? 'business-clean')) ?: 'business-clean';
+        $payload = normalize_center_site_payload($data);
         $now = now();
         $stmt = $main->prepare("INSERT INTO sites (customer_id, name, site_key, domain, subdomain, language, template_key, database_name, public_path, status, created_at, updated_at)
-            VALUES (1, :name, '', :domain, '', :language, :template_key, :database_name, '', 'active', :created_at, :updated_at)");
+            VALUES (1, :name, '', :domain, :subdomain, :language, :template_key, :database_name, '', :status, :created_at, :updated_at)");
         $stmt->execute([
-            'name' => $name,
-            'domain' => $domain,
-            'language' => $language,
-            'template_key' => $templateKey,
+            'name' => $payload['name'],
+            'domain' => $payload['domain'],
+            'subdomain' => $payload['subdomain'],
+            'language' => $payload['language'],
+            'template_key' => $payload['template_key'],
+            'status' => $payload['status'],
             'database_name' => env_value('HJ_DB_SITE', 'huajian_site_10001'),
             'created_at' => $now,
             'updated_at' => $now,
@@ -2249,6 +2294,20 @@ try {
             'items' => $items,
             'overview' => center_overview($items),
         ], '站点已创建');
+    }
+
+    if ($params = route_param('/sites/{id}', $path)) {
+        $id = (int)$params['id'];
+        if ($method === 'PUT') {
+            $main = main_pdo();
+            $siteItem = update_center_site($main, $id, body_json(), $pdo);
+            $items = center_site_items($main, $pdo);
+            ok([
+                'site' => $siteItem,
+                'items' => $items,
+                'overview' => center_overview($items),
+            ], '站点已保存');
+        }
     }
 
     if ($method === 'GET' && $path === '/site/settings') {

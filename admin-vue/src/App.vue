@@ -85,7 +85,15 @@
               <el-table-column label="待处理" width="110"><template #default="{ row }">{{ row.stats?.pending_orders || 0 }}</template></el-table-column>
               <el-table-column label="询盘" width="90"><template #default="{ row }">{{ row.stats?.forms || 0 }}</template></el-table-column>
               <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status }}</el-tag></template></el-table-column>
-              <el-table-column label="操作" width="120"><template #default="{ row }"><el-button link type="primary" @click="openSite(row)">进入站点</el-button></template></el-table-column>
+              <el-table-column label="操作" width="210">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="openSite(row)">进入</el-button>
+                  <el-button link type="primary" @click="editSite(row)">编辑</el-button>
+                  <el-button link :type="row.status === 'active' ? 'warning' : 'success'" @click="toggleSiteStatus(row)">
+                    {{ row.status === 'active' ? '停用' : '恢复' }}
+                  </el-button>
+                </template>
+              </el-table-column>
             </el-table>
           </el-card>
         </section>
@@ -97,21 +105,30 @@
                 <template #header>
                   <div class="card-head">
                     <strong>站点工作台</strong>
-                    <el-button type="primary" @click="siteDrawerVisible = true">新建站点</el-button>
+                    <el-button type="primary" @click="newSite">新建站点</el-button>
                   </div>
                 </template>
                 <div class="site-grid">
                   <article v-for="item in sites" :key="item.id" class="site-card" :class="{ active: item.id === currentSiteId }" @click="openSite(item)">
-                    <div>
-                      <strong>{{ item.name }}</strong>
-                      <small>{{ item.domain || item.subdomain || item.site_key }}</small>
+                    <div class="site-card-head">
+                      <div>
+                        <strong>{{ item.name }}</strong>
+                        <small>{{ item.domain || item.subdomain || item.site_key }}</small>
+                      </div>
+                      <el-tag size="small" :type="item.status === 'active' ? 'success' : 'info'">{{ item.status }}</el-tag>
                     </div>
-                    <el-tag size="small" :type="item.status === 'active' ? 'success' : 'info'">{{ item.status }}</el-tag>
                     <div class="site-stats">
                       <span>文章 {{ item.stats?.articles || 0 }}</span>
                       <span>商品 {{ item.stats?.products || 0 }}</span>
                       <span>订单 {{ item.stats?.orders || 0 }}</span>
                       <span>待处理 {{ item.stats?.pending_orders || 0 }}</span>
+                    </div>
+                    <div class="site-actions" @click.stop>
+                      <el-button size="small" type="primary" plain @click="openSite(item)">进入</el-button>
+                      <el-button size="small" @click="editSite(item)">编辑</el-button>
+                      <el-button size="small" :type="item.status === 'active' ? 'warning' : 'success'" plain @click="toggleSiteStatus(item)">
+                        {{ item.status === 'active' ? '停用' : '恢复' }}
+                      </el-button>
                     </div>
                   </article>
                 </div>
@@ -131,10 +148,11 @@
               </el-card>
             </el-col>
           </el-row>
-          <el-drawer v-model="siteDrawerVisible" size="480px" title="新建站点">
+          <el-drawer v-model="siteDrawerVisible" size="480px" :title="siteEditingId ? '编辑站点' : '新建站点'">
             <el-form :model="siteForm" label-width="92px">
               <el-form-item label="站点名称"><el-input v-model="siteForm.name" placeholder="例如：农业无人机英文站" /></el-form-item>
               <el-form-item label="绑定域名"><el-input v-model="siteForm.domain" placeholder="例如：www.example.com" /></el-form-item>
+              <el-form-item label="备用域名"><el-input v-model="siteForm.subdomain" placeholder="例如：site10002.huajian.local" /></el-form-item>
               <el-form-item label="站点语言">
                 <el-select v-model="siteForm.language">
                   <el-option label="中文" value="zh-CN" />
@@ -146,7 +164,14 @@
                   <el-option v-for="item in templates" :key="item.key" :label="item.name" :value="item.key" />
                 </el-select>
               </el-form-item>
-              <el-button type="primary" :loading="siteCreating" @click="createSite">创建站点</el-button>
+              <el-form-item label="站点状态">
+                <el-select v-model="siteForm.status">
+                  <el-option label="启用" value="active" />
+                  <el-option label="停用" value="disabled" />
+                  <el-option label="归档" value="archived" />
+                </el-select>
+              </el-form-item>
+              <el-button type="primary" :loading="siteCreating" @click="saveSite">{{ siteEditingId ? '保存站点' : '创建站点' }}</el-button>
             </el-form>
           </el-drawer>
         </section>
@@ -755,7 +780,8 @@ const publishResultSubtitle = computed(() => {
 })
 const articleForm = reactive<any>({})
 const productForm = reactive<any>({})
-const siteForm = reactive({ name: '', domain: '', language: 'zh-CN', template_key: 'business-clean' })
+const siteEditingId = ref<number | string>('')
+const siteForm = reactive({ name: '', domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active' })
 const aiForm = reactive({ type: 'article', prompt: '围绕自主品牌商品、行业解决方案和独立站 SEO 关键词生成内容', count: 5, status: 'draft' })
 const pageBuilder = reactive({ prompt: '围绕自主品牌商品、行业解决方案、SEO 内容沉淀和询盘转化，生成一个企业官网 + 博客知识库 + 独立站商城首页方案' })
 const articlePager = reactive({ page: 1, page_size: 10, total: 0 })
@@ -916,19 +942,57 @@ function openSite(item: any) {
   loadSettings()
 }
 
-async function createSite() {
+function resetSiteForm() {
+  Object.assign(siteForm, { name: '', domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active' })
+}
+
+function newSite() {
+  siteEditingId.value = ''
+  resetSiteForm()
+  siteDrawerVisible.value = true
+}
+
+function editSite(item: any) {
+  siteEditingId.value = item.id
+  Object.assign(siteForm, {
+    name: item.name || '',
+    domain: item.domain || '',
+    subdomain: item.subdomain || '',
+    language: item.language || 'zh-CN',
+    template_key: item.template_key || 'business-clean',
+    status: item.status || 'active'
+  })
+  siteDrawerVisible.value = true
+}
+
+async function saveSite() {
   siteCreating.value = true
   try {
-    const data = await request('/api/sites', { method: 'POST', data: siteForm })
+    const editing = !!siteEditingId.value
+    const data = editing
+      ? await request(`/api/sites/${siteEditingId.value}`, { method: 'PUT', data: siteForm })
+      : await request('/api/sites', { method: 'POST', data: siteForm })
     sites.value = data.items || sites.value
     centerOverview.value = data.overview || centerOverview.value
     if (data.site?.id) currentSiteId.value = data.site.id
-    Object.assign(siteForm, { name: '', domain: '', language: 'zh-CN', template_key: 'business-clean' })
+    resetSiteForm()
+    siteEditingId.value = ''
     siteDrawerVisible.value = false
-    ElMessage.success('站点已创建')
+    ElMessage.success(editing ? '站点已保存' : '站点已创建')
+    await loadDashboard()
   } finally {
     siteCreating.value = false
   }
+}
+
+async function toggleSiteStatus(item: any) {
+  const nextStatus = item.status === 'active' ? 'disabled' : 'active'
+  await request(`/api/sites/${item.id}`, {
+    method: 'PUT',
+    data: { ...item, status: nextStatus }
+  })
+  ElMessage.success(nextStatus === 'active' ? '站点已恢复' : '站点已停用')
+  await Promise.all([loadSites(), loadDashboard()])
 }
 
 async function loadSettings() {

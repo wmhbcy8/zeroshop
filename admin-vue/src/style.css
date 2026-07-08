@@ -153,6 +153,21 @@ body {
   background: #fff;
   cursor: pointer;
 }
+.site-card-head,
+.site-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.site-card-head > div {
+  min-width: 0;
+}
+.site-actions {
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
 .site-card.active,
 .site-card:hover {
   border-color: var(--hj-primary);
