@@ -330,6 +330,7 @@ function reset_generated_output(string $publicRoot): void
         'contact.html',
         'search.html',
         'order.html',
+        '404.html',
         'sitemap.xml',
         'robots.txt',
         'rss.xml',
@@ -855,6 +856,14 @@ write_file($publicRoot . DIRECTORY_SEPARATOR . 'order.html', $engine->renderFile
     'seo' => [
         'title' => '订单查询 - ' . ($site['name'] ?? ''),
         'description' => '查询' . ($site['name'] ?? '') . '商城订单的支付、发货和物流状态。',
+        'keywords' => $site['keywords'] ?? '',
+    ],
+]));
+
+write_file($publicRoot . DIRECTORY_SEPARATOR . '404.html', $engine->renderFile('pages/404.html', base_context($site, $categories, $productCategories, $articles, $products) + [
+    'seo' => [
+        'title' => '页面不存在 - ' . ($site['name'] ?? ''),
+        'description' => '你访问的页面不存在或已经移动。',
         'keywords' => $site['keywords'] ?? '',
     ],
 ]));

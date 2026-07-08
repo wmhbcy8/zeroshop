@@ -64,6 +64,13 @@ if (!str_starts_with($requestPath, '/api')) {
             readfile($siteTargetPath);
             exit;
         }
+        $site404Path = realpath($siteStaticRoot . DIRECTORY_SEPARATOR . '404.html');
+        if ($site404Path && $siteStaticBase && str_starts_with($site404Path, $siteStaticBase) && is_file($site404Path)) {
+            http_response_code(404);
+            header('Content-Type: text/html; charset=utf-8');
+            readfile($site404Path);
+            exit;
+        }
     }
 
     $staticRoot = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'sites' . DIRECTORY_SEPARATOR . 'site_10001' . DIRECTORY_SEPARATOR . 'public';
@@ -88,6 +95,13 @@ if (!str_starts_with($requestPath, '/api')) {
         ];
         header('Content-Type: ' . ($types[$ext] ?? 'application/octet-stream'));
         readfile($targetPath);
+        exit;
+    }
+    $static404Path = realpath($staticRoot . DIRECTORY_SEPARATOR . '404.html');
+    if ($static404Path && $staticBase && str_starts_with($static404Path, $staticBase) && is_file($static404Path)) {
+        http_response_code(404);
+        header('Content-Type: text/html; charset=utf-8');
+        readfile($static404Path);
         exit;
     }
 }
