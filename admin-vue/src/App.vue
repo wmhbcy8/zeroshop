@@ -774,17 +774,17 @@
               <MetricCard title="最近执行" :value="batchTaskOverview.last_finished_at || '-'" note="最近完成时间" icon="Clock" />
             </div>
             <div class="task-toolbar">
-              <el-select v-model="taskFilters.action" clearable placeholder="任务类型" @change="loadBatchTasks">
+              <el-select v-model="taskFilters.action" clearable placeholder="任务类型" @change="applyTaskFilters">
                 <el-option label="生成静态站" value="generate" />
                 <el-option label="部署检查" value="deploy-check" />
                 <el-option label="生成发布包" value="package" />
               </el-select>
-              <el-select v-model="taskFilters.status" clearable placeholder="任务状态" @change="loadBatchTasks">
+              <el-select v-model="taskFilters.status" clearable placeholder="任务状态" @change="applyTaskFilters">
                 <el-option label="成功" value="success" />
                 <el-option label="部分成功" value="partial" />
                 <el-option label="失败" value="failed" />
               </el-select>
-              <el-date-picker v-model="taskFilters.date" type="date" value-format="YYYY-MM-DD" placeholder="执行日期" @change="loadBatchTasks" />
+              <el-date-picker v-model="taskFilters.date" type="date" value-format="YYYY-MM-DD" placeholder="执行日期" @change="applyTaskFilters" />
               <el-button @click="resetTaskFilters">重置</el-button>
             </div>
             <el-table :data="batchTasks">
@@ -806,6 +806,16 @@
                 </template>
               </el-table-column>
             </el-table>
+            <el-pagination
+              class="table-pager"
+              layout="sizes, prev, pager, next, total"
+              :current-page="taskPager.page"
+              :page-size="taskPager.page_size"
+              :page-sizes="[10, 20, 50]"
+              :total="taskPager.total"
+              @current-change="changeTaskPage"
+              @size-change="changeTaskPageSize"
+            />
           </el-card>
           <el-drawer v-model="batchTaskDrawerVisible" size="560px" title="任务详情">
             <el-descriptions :column="1" border>
@@ -916,6 +926,7 @@ const orderPager = reactive({ page: 1, page_size: 10, total: 0 })
 const servicePager = reactive({ page: 1, page_size: 10, total: 0 })
 const mediaPager = reactive({ page: 1, page_size: 12, total: 0 })
 const formPager = reactive({ page: 1, page_size: 10, total: 0 })
+const taskPager = reactive({ page: 1, page_size: 10, total: 0 })
 const aiDrafts = ref<any[]>([])
 const pagePlan = ref<any>(null)
 const aiLoading = ref(false)
@@ -1673,16 +1684,36 @@ async function loadVersions() {
 
 async function loadBatchTasks() {
   const query = new URLSearchParams()
+  query.set('page', String(taskPager.page))
+  query.set('page_size', String(taskPager.page_size))
   Object.entries(taskFilters).forEach(([key, value]) => {
     if (value) query.set(key, String(value))
   })
   const data = await request(`/api/batch/tasks${query.toString() ? `?${query.toString()}` : ''}`)
   batchTasks.value = data.items || data || []
   batchTaskOverview.value = data.overview || {}
+  taskPager.total = data.pagination?.total || batchTasks.value.length
+}
+
+function applyTaskFilters() {
+  taskPager.page = 1
+  loadBatchTasks()
 }
 
 function resetTaskFilters() {
   Object.assign(taskFilters, { action: '', status: '', date: '' })
+  taskPager.page = 1
+  loadBatchTasks()
+}
+
+function changeTaskPage(page: number) {
+  taskPager.page = page
+  loadBatchTasks()
+}
+
+function changeTaskPageSize(size: number) {
+  taskPager.page_size = size
+  taskPager.page = 1
   loadBatchTasks()
 }
 
