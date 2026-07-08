@@ -119,6 +119,7 @@
             :page="articlePager.page"
             :page-size="articlePager.page_size"
             :total="articlePager.total"
+            :media="imageMedia"
             @new="newArticle"
             @edit="editArticle"
             @save="saveArticle"
@@ -136,6 +137,7 @@
             :page="productPager.page"
             :page-size="productPager.page_size"
             :total="productPager.total"
+            :media="imageMedia"
             @new="newProduct"
             @edit="editProduct"
             @save="saveProduct"
@@ -217,18 +219,31 @@
 
         <section v-if="view === 'media'">
           <el-card class="panel" shadow="never">
-            <template #header><strong>媒体库</strong></template>
+            <template #header>
+              <div class="card-head">
+                <strong>媒体库</strong>
+                <el-button @click="loadMedia">刷新</el-button>
+              </div>
+            </template>
             <el-upload drag action="/api/media/upload" :headers="authHeaders" name="file" :on-success="loadMedia">
               <el-icon class="upload-icon"><UploadFilled /></el-icon>
               <div>拖拽文件到这里，或点击上传</div>
             </el-upload>
+            <el-form :inline="true" class="toolbar media-toolbar" @submit.prevent="applyMediaFilters">
+              <el-form-item><el-input v-model="mediaFilters.keyword" placeholder="搜索文件名/路径" clearable /></el-form-item>
+              <el-form-item><el-select v-model="mediaFilters.file_type" placeholder="类型" clearable><el-option label="图片" value="image" /><el-option label="文件" value="file" /></el-select></el-form-item>
+              <el-button type="primary" @click="applyMediaFilters">筛选</el-button>
+            </el-form>
             <div class="media-grid">
               <article v-for="item in media" :key="item.id" class="media-card">
                 <img v-if="item.file_type === 'image'" :src="`/${item.file_path}`" />
+                <div v-else class="file-tile">FILE</div>
                 <strong>{{ item.file_name }}</strong>
                 <small>/{{ item.file_path }}</small>
+                <el-button size="small" @click="copyMediaPath(item.file_path)">复制路径</el-button>
               </article>
             </div>
+            <el-pagination class="table-pager" layout="prev, pager, next, total" :current-page="mediaPager.page" :page-size="mediaPager.page_size" :total="mediaPager.total" @current-change="changeMediaPage" />
           </el-card>
         </section>
 
@@ -251,13 +266,31 @@
               <div class="card-head"><strong>发布中心</strong><el-button type="primary" :loading="generating" @click="generateSite">生成静态站</el-button></div>
             </template>
             <el-alert title="新版后台复用原 PHP 发布接口，不影响旧 admin.html。" type="info" show-icon class="mb16" />
+            <el-result v-if="publishResult" class="publish-result" icon="success" title="本次生成完成" :sub-title="publishResult.version_no || publishResult.message || '静态站已生成'">
+              <template #extra>
+                <el-button type="primary" @click="previewSite">预览站点</el-button>
+                <el-button @click="publishResult = null">收起</el-button>
+              </template>
+            </el-result>
             <el-table :data="versions">
               <el-table-column prop="version_no" label="版本号" min-width="160" />
               <el-table-column prop="publish_type" label="类型" width="120" />
-              <el-table-column prop="status" label="状态" width="120" />
+              <el-table-column prop="status" label="状态" width="120">
+                <template #default="{ row }"><el-tag :type="row.status === 'success' ? 'success' : 'info'">{{ row.status }}</el-tag></template>
+              </el-table-column>
               <el-table-column prop="created_at" label="时间" width="180" />
+              <el-table-column label="操作" width="100"><template #default="{ row }"><el-button link type="primary" @click="openPublishVersion(row)">详情</el-button></template></el-table-column>
             </el-table>
           </el-card>
+          <el-drawer v-model="publishDrawerVisible" size="520px" title="发布版本详情">
+            <el-descriptions :column="1" border>
+              <el-descriptions-item label="版本号">{{ publishDetail.version_no || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="类型">{{ publishDetail.publish_type || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="状态">{{ publishDetail.status || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="时间">{{ publishDetail.created_at || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="说明">{{ publishDetail.message || publishDetail.remark || '-' }}</el-descriptions-item>
+            </el-descriptions>
+          </el-drawer>
         </section>
       </el-main>
     </el-container>
@@ -289,16 +322,21 @@ const versions = ref<any[]>([])
 const servicePending = ref(0)
 const selectedServiceIds = ref<string[]>([])
 const orderDrawerVisible = ref(false)
+const publishDrawerVisible = ref(false)
+const publishResult = ref<any>(null)
 
 const orderFilters = reactive({ keyword: '', payment_status: '', fulfillment_status: '' })
 const serviceFilters = reactive({ keyword: '', status: '', type: '' })
+const mediaFilters = reactive({ keyword: '', file_type: '' })
 const orderDetail = reactive<any>({})
+const publishDetail = reactive<any>({})
 const articleForm = reactive<any>({})
 const productForm = reactive<any>({})
 const articlePager = reactive({ page: 1, page_size: 10, total: 0 })
 const productPager = reactive({ page: 1, page_size: 10, total: 0 })
 const orderPager = reactive({ page: 1, page_size: 10, total: 0 })
 const servicePager = reactive({ page: 1, page_size: 10, total: 0 })
+const mediaPager = reactive({ page: 1, page_size: 12, total: 0 })
 const formPager = reactive({ page: 1, page_size: 10, total: 0 })
 
 const navItems = [
@@ -314,6 +352,7 @@ const navItems = [
 ]
 const currentNav = computed(() => navItems.find((item) => item.key === view.value))
 const authHeaders = computed(() => ({ Authorization: `Bearer ${token.value}` }))
+const imageMedia = computed(() => media.value.filter((item) => item.file_type === 'image'))
 
 async function request(path: string, options: any = {}) {
   const response = await axios({
@@ -355,7 +394,9 @@ function setView(key: string) {
   if (key === 'products') loadProducts()
   if (key === 'orders') loadOrders()
   if (key === 'service') loadServices()
+  if (key === 'media') loadMedia()
   if (key === 'forms') loadForms()
+  if (key === 'publish') loadVersions()
 }
 
 function refreshCurrentView() {
@@ -545,8 +586,30 @@ async function resolveSelectedServices() {
 }
 
 async function loadMedia() {
-  const data = await request('/api/media?page_size=50')
+  const params = new URLSearchParams()
+  params.set('page', String(mediaPager.page))
+  params.set('page_size', String(mediaPager.page_size))
+  Object.entries(mediaFilters).forEach(([key, value]) => value && params.set(key, value))
+  const data = await request(`/api/media?${params.toString()}`)
   media.value = data.items || []
+  mediaPager.total = data.pagination?.total || media.value.length
+}
+function applyMediaFilters() {
+  mediaPager.page = 1
+  loadMedia()
+}
+function changeMediaPage(page: number) {
+  mediaPager.page = page
+  loadMedia()
+}
+async function copyMediaPath(path: string) {
+  const value = `/${path}`
+  try {
+    await navigator.clipboard.writeText(value)
+    ElMessage.success('路径已复制')
+  } catch {
+    ElMessage.info(value)
+  }
 }
 async function loadForms() {
   const data = await request(`/api/forms/submissions?page=${formPager.page}&page_size=${formPager.page_size}`)
@@ -564,12 +627,17 @@ async function loadVersions() {
 async function generateSite() {
   generating.value = true
   try {
-    await request('/api/site/generate', { method: 'POST' })
+    const data = await request('/api/site/generate', { method: 'POST' })
+    publishResult.value = data || { message: '静态站已生成' }
     ElMessage.success('静态站已生成')
     await loadVersions()
   } finally {
     generating.value = false
   }
+}
+function openPublishVersion(row: any) {
+  Object.assign(publishDetail, row)
+  publishDrawerVisible.value = true
 }
 function previewSite() {
   window.open('/', '_blank')
@@ -609,10 +677,10 @@ export default defineComponent({
       `
     },
     ContentEditor: {
-      props: ['type', 'items', 'form', 'page', 'pageSize', 'total'],
+      props: ['type', 'items', 'form', 'page', 'pageSize', 'total', 'media'],
       emits: ['new', 'edit', 'save', 'delete', 'ai', 'page-change'],
       data() {
-        return { prompt: '', drawerVisible: false }
+        return { prompt: '', drawerVisible: false, mediaDrawerVisible: false }
       },
       computed: {
         title() { return this.type === 'article' ? '文章' : '商品' },
@@ -629,6 +697,10 @@ export default defineComponent({
         },
         saveForm() {
           this.$emit('save')
+        },
+        selectCover(item: any) {
+          this.form.cover = item.file_path
+          this.mediaDrawerVisible = false
         }
       },
       template: `
@@ -661,7 +733,13 @@ export default defineComponent({
                 <el-form-item label="标题"><el-input v-model="form.title" /></el-form-item>
                 <el-form-item label="Slug"><el-input v-model="form.slug" /></el-form-item>
                 <el-form-item v-if="type === 'product'" label="SKU"><el-input v-model="form.sku" /></el-form-item>
-                <el-form-item label="封面"><el-input v-model="form.cover" /></el-form-item>
+                <el-form-item label="封面">
+                  <div class="cover-field">
+                    <el-input v-model="form.cover" placeholder="选择或输入图片路径" />
+                    <el-button @click="mediaDrawerVisible = true">选择图片</el-button>
+                  </div>
+                  <img v-if="form.cover" class="cover-preview" :src="form.cover.startsWith('/') ? form.cover : '/' + form.cover" />
+                </el-form-item>
                 <el-form-item label="摘要"><el-input v-model="form.summary" type="textarea" :rows="3" /></el-form-item>
                 <el-form-item :label="type === 'article' ? '正文' : '描述'"><el-input v-model="form[bodyField]" type="textarea" :rows="7" /></el-form-item>
                 <el-row v-if="type === 'product'" :gutter="12">
@@ -671,6 +749,15 @@ export default defineComponent({
                 <el-form-item label="状态"><el-select v-model="form.status"><el-option label="草稿" value="draft" /><el-option label="发布" value="published" /></el-select></el-form-item>
                 <el-button type="primary" @click="saveForm">保存{{ title }}</el-button>
               </el-form>
+          </el-drawer>
+          <el-drawer v-model="mediaDrawerVisible" title="选择封面图片" size="520px">
+            <div class="picker-grid">
+              <button v-for="item in media" :key="item.id" type="button" class="picker-card" @click="selectCover(item)">
+                <img :src="'/' + item.file_path" />
+                <span>{{ item.file_name }}</span>
+              </button>
+            </div>
+            <el-empty v-if="!media || !media.length" description="媒体库暂无图片" />
           </el-drawer>
         </div>
       `
