@@ -426,6 +426,57 @@ body {
   border-radius: 12px;
   background: #f8fbff;
 }
+.deploy-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.deploy-plan-summary {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--hj-line);
+  border-radius: 8px;
+  background: #f8fbff;
+}
+.deploy-plan-summary span,
+.deploy-plan-summary small,
+.deploy-step-list small {
+  color: var(--hj-muted);
+  line-height: 1.55;
+}
+.deploy-plan-summary strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 16px;
+}
+.deploy-check-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.deploy-step-list {
+  display: grid;
+  gap: 10px;
+}
+.deploy-step-list article {
+  display: grid;
+  grid-template-columns: 82px 1fr;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid var(--hj-line);
+  border-radius: 8px;
+  background: #fff;
+}
+.deploy-step-list strong {
+  display: block;
+  margin-bottom: 4px;
+}
 .head-actions {
   display: flex;
   flex-wrap: wrap;

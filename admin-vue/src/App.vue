@@ -1676,6 +1676,46 @@
               <el-form-item label="部署备注"><el-input v-model="site.deploy.note" type="textarea" :rows="2" placeholder="记录服务器、站点、证书和备份策略" /></el-form-item>
             </el-form>
           </el-card>
+          <el-card class="panel mb16" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>部署执行计划</strong>
+                <el-button @click="loadDeployPlan">刷新计划</el-button>
+              </div>
+            </template>
+            <div v-if="deployPlan" class="deploy-plan-grid">
+              <article class="deploy-plan-summary">
+                <span>部署模式</span>
+                <strong>{{ deployPlan.mode || 'manual' }}</strong>
+                <small>{{ deployPlan.configured ? '关键参数已填写' : '仍有参数待补充' }}</small>
+              </article>
+              <article class="deploy-plan-summary">
+                <span>目标目录</span>
+                <strong>{{ deployPlan.site_path || '未填写' }}</strong>
+                <small>{{ deployPlan.panel_url || deployPlan.node?.name || '本机/人工模式' }}</small>
+              </article>
+              <article class="deploy-plan-summary">
+                <span>发布包命名</span>
+                <strong>{{ deployPlan.package_name_hint || '-' }}</strong>
+                <small>{{ deployPlan.domain || '域名未绑定' }}</small>
+              </article>
+            </div>
+            <div v-if="deployPlan" class="deploy-check-list">
+              <el-tag v-for="item in deployPlan.checks || []" :key="item.label" :type="item.ok ? 'success' : 'warning'" effect="plain">
+                {{ item.label }}：{{ item.value }}
+              </el-tag>
+            </div>
+            <div v-if="deployPlan" class="deploy-step-list">
+              <article v-for="item in deployPlan.steps || []" :key="item.key">
+                <el-tag :type="deployStepTag(item.status)">{{ item.status }}</el-tag>
+                <div>
+                  <strong>{{ item.title }}</strong>
+                  <small>{{ item.description }}</small>
+                </div>
+              </article>
+            </div>
+            <el-empty v-else description="暂无部署计划，请刷新计划或保存部署配置" />
+          </el-card>
           <el-card class="panel" shadow="never">
             <template #header>
               <div class="card-head">
@@ -1972,6 +2012,7 @@ const seoAudit = ref<any>({})
 const versions = ref<any[]>([])
 const batchTasks = ref<any[]>([])
 const deployTasks = ref<any[]>([])
+const deployPlan = ref<any>(null)
 const siteBackups = ref<any[]>([])
 const operationLogs = ref<any[]>([])
 const batchTaskOverview = ref<any>({})
@@ -2283,7 +2324,7 @@ function setView(key: string) {
   if (key === 'forms') loadForms()
   if (key === 'collector') loadCollector()
   if (key === 'seo') loadSeoAudit()
-  if (key === 'publish') Promise.all([loadSettings(), loadVersions(), loadDeployTasks(), loadSiteBackups()])
+  if (key === 'publish') Promise.all([loadSettings(), loadVersions(), loadDeployTasks(), loadSiteBackups(), loadDeployPlan()])
 }
 
 function refreshCurrentView() {
@@ -2310,7 +2351,7 @@ function refreshCurrentView() {
     forms: loadForms,
     collector: loadCollector,
     seo: loadSeoAudit,
-    publish: async () => { await Promise.all([loadSettings(), loadVersions(), loadDeployTasks(), loadSiteBackups()]) }
+    publish: async () => { await Promise.all([loadSettings(), loadVersions(), loadDeployTasks(), loadSiteBackups(), loadDeployPlan()]) }
   }
   loaders[view.value]?.().then(() => ElMessage.success('当前页面已刷新'))
 }
@@ -3869,6 +3910,10 @@ async function loadDeployTasks() {
   deployTasks.value = data.items || []
 }
 
+async function loadDeployPlan() {
+  deployPlan.value = await request('/api/site/deploy-plan')
+}
+
 async function loadSiteBackups() {
   const data = await request('/api/site/backups?page_size=20')
   siteBackups.value = data.items || []
@@ -3956,6 +4001,10 @@ function logMethodTag(method: string) {
 
 function deployTaskTag(status: string) {
   return status === 'success' ? 'success' : (status === 'failed' ? 'danger' : (status === 'pending' ? 'warning' : 'info'))
+}
+
+function deployStepTag(status: string) {
+  return status === 'ready' ? 'success' : (status === 'blocked' ? 'danger' : (status === 'pending' ? 'warning' : 'info'))
 }
 
 function compactSummary(value: string) {

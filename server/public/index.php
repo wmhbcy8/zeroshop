@@ -2788,10 +2788,71 @@ function deploy_config_status(array $site, array $settings): array
     return [$deploy, $configured];
 }
 
+function build_deploy_plan(PDO $main, array $site, array $deploy, bool $configured): array
+{
+    ensure_center_tables($main);
+    $mode = (string)($deploy['mode'] ?? 'manual');
+    $node = [];
+    if (!empty($site['deploy_node_id'])) {
+        $node = fetch_one($main, 'deploy_nodes', (int)$site['deploy_node_id']) ?: [];
+    }
+    $siteKey = (string)($site['site_key'] ?? ('site_' . (int)($site['id'] ?? 10001)));
+    $sitePath = trim((string)($deploy['site_path'] ?? ''));
+    $panelUrl = trim((string)($deploy['bt_panel_url'] ?? ($node['panel_url'] ?? '')));
+    $rootPath = trim((string)($node['root_path'] ?? ''));
+    $domain = trim((string)($site['domain'] ?? $site['subdomain'] ?? ''));
+    $steps = [
+        ['key' => 'generate', 'title' => '生成静态站', 'status' => 'ready', 'description' => '从当前站点内容、模板、模块配置生成 HTML/CSS/JS、sitemap 和 search.json。'],
+        ['key' => 'snapshot', 'title' => '创建发布版本', 'status' => 'ready', 'description' => '记录发布包、文件数量、发布模式和任务摘要，便于回滚与审计。'],
+    ];
+    if ($mode === 'local-copy') {
+        $steps[] = ['key' => 'backup-target', 'title' => '备份目标目录', 'status' => $sitePath ? 'ready' : 'pending', 'description' => '同步前自动备份 storage/deploy_targets 下的旧静态文件。'];
+        $steps[] = ['key' => 'sync-files', 'title' => '复制静态文件', 'status' => $sitePath ? 'ready' : 'pending', 'description' => '把当前 public 静态站复制到本机部署目标目录。'];
+    } elseif ($mode === 'bt-api') {
+        $steps[] = ['key' => 'bt-connect', 'title' => '连接宝塔面板', 'status' => $panelUrl ? 'ready' : 'pending', 'description' => '使用面板地址和 API Key 连接部署节点。'];
+        $steps[] = ['key' => 'bt-site', 'title' => '确认站点目录', 'status' => $sitePath ? 'ready' : 'pending', 'description' => '确认宝塔站点目录存在，后续上传静态文件到该目录。'];
+        $steps[] = ['key' => 'bt-upload', 'title' => '上传发布包并解压', 'status' => 'pending', 'description' => '当前版本先生成发布包并记录任务，下一步接入宝塔文件接口自动上传解压。'];
+        $steps[] = ['key' => 'bt-ssl', 'title' => 'SSL 与域名检查', 'status' => $domain ? 'pending' : 'blocked', 'description' => '域名绑定后可接入宝塔 SSL 申请与续期接口。'];
+    } elseif ($mode === 'ftp') {
+        $steps[] = ['key' => 'ftp-package', 'title' => '生成上传包', 'status' => 'ready', 'description' => '生成 tar.gz 发布包，供 FTP/SFTP 执行器上传。'];
+        $steps[] = ['key' => 'ftp-sync', 'title' => '执行远程同步', 'status' => 'pending', 'description' => '当前版本记录待执行任务，后续接入 SFTP/Agent 后自动同步。'];
+    } else {
+        $steps[] = ['key' => 'download', 'title' => '下载发布包', 'status' => 'ready', 'description' => '生成发布包后可人工上传到宝塔、Nginx 或对象存储。'];
+        $steps[] = ['key' => 'manual-deploy', 'title' => '人工解压部署', 'status' => $sitePath ? 'ready' : 'pending', 'description' => '在目标站点目录解压发布包并确认首页可访问。'];
+    }
+    $checks = [
+        ['label' => '部署模式', 'ok' => $mode !== '', 'value' => $mode ?: 'manual'],
+        ['label' => '站点目录', 'ok' => $sitePath !== '', 'value' => $sitePath ?: '未填写'],
+        ['label' => '面板地址', 'ok' => $mode !== 'bt-api' || $panelUrl !== '', 'value' => $panelUrl ?: '未填写'],
+        ['label' => '部署节点', 'ok' => empty($site['deploy_node_id']) || !empty($node), 'value' => $node['name'] ?? '未绑定平台节点'],
+        ['label' => '根目录', 'ok' => $mode !== 'bt-api' || $rootPath !== '' || $sitePath !== '', 'value' => $rootPath ?: '可由站点目录指定'],
+        ['label' => '域名', 'ok' => $domain !== '', 'value' => $domain ?: '未绑定'],
+    ];
+    return [
+        'mode' => $mode,
+        'configured' => $configured,
+        'site_path' => $sitePath,
+        'panel_url' => $panelUrl,
+        'domain' => $domain,
+        'node' => $node ? [
+            'id' => (int)$node['id'],
+            'name' => (string)$node['name'],
+            'node_type' => (string)$node['node_type'],
+            'server_ip' => (string)($node['server_ip'] ?? ''),
+            'root_path' => (string)($node['root_path'] ?? ''),
+            'status' => (string)$node['status'],
+        ] : null,
+        'package_name_hint' => $siteKey . '_package_YYYYMMDD_HHMMSS.tar.gz',
+        'checks' => $checks,
+        'steps' => $steps,
+    ];
+}
+
 function execute_site_deploy(PDO $main, PDO $pdo, array $site): array
 {
     $settings = site_settings($pdo);
     [$deploy, $configured] = deploy_config_status($site, $settings);
+    $plan = build_deploy_plan($main, $site, $deploy, $configured);
     $package = create_static_package($site);
     $mode = (string)($deploy['mode'] ?? 'manual');
     $deployResult = [];
@@ -2819,6 +2880,7 @@ function execute_site_deploy(PDO $main, PDO $pdo, array $site): array
         'site_path' => $deploy['site_path'] ?? '',
         'after_action' => $deploy['after_action'] ?? '',
         'message' => $message,
+        'plan' => $plan,
     ] + $deployResult;
     ensure_publish_versions_site_column($pdo);
     $stmt = $pdo->prepare("INSERT INTO publish_versions (site_id, version_no, publish_type, file_path, status, summary, created_at)
@@ -7190,6 +7252,7 @@ try {
         $currentSite = current_site($main, $pdo);
         $site = site_settings($pdo);
         [$deploy, $configured] = deploy_config_status($currentSite, $site);
+        $plan = build_deploy_plan($main, $currentSite, $deploy, $configured);
         $status = $configured ? 'ready' : 'pending';
         $mode = (string)($deploy['mode'] ?? 'manual');
         $message = '请先填写站点目录。';
@@ -7211,6 +7274,7 @@ try {
             'site_path' => $deploy['site_path'] ?? '',
             'mode' => $mode,
             'message' => $message,
+            'plan' => $plan,
         ];
         save_deploy_task($main, $currentSite, 'deploy-check', $status, $summary);
         ensure_publish_versions_site_column($pdo);
@@ -7225,6 +7289,14 @@ try {
             'created_at' => now(),
         ]);
         ok($summary, '部署配置检查完成');
+    }
+
+    if ($method === 'GET' && $path === '/site/deploy-plan') {
+        $main = main_pdo();
+        $currentSite = current_site($main, $pdo);
+        $site = site_settings($pdo);
+        [$deploy, $configured] = deploy_config_status($currentSite, $site);
+        ok(build_deploy_plan($main, $currentSite, $deploy, $configured), '部署计划已生成');
     }
 
     if ($method === 'POST' && $path === '/site/package') {

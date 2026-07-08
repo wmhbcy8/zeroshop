@@ -7,21 +7,34 @@
           <el-button type="primary" @click="openNew">新建{{ title }}</el-button>
         </div>
       </template>
+
       <div class="content-distribution-bar">
         <div>
           <strong>发布范围</strong>
-          <small>内容只入库一份，发布范围决定它会同步到哪些前台静态站。</small>
+          <small>内容在中台只保存一份，发布范围决定它同步到哪些前台静态站。</small>
         </div>
         <el-radio-group v-model="bulkForm.site_scope" size="small" @change="syncBulkScope">
           <el-radio-button label="current">当前站点</el-radio-button>
           <el-radio-button label="all">全部站点</el-radio-button>
           <el-radio-button label="selected">指定站点</el-radio-button>
         </el-radio-group>
-        <el-select v-if="bulkForm.site_scope === 'selected'" v-model="bulkForm.site_ids" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择站点" class="bulk-site-select">
+        <el-select
+          v-if="bulkForm.site_scope === 'selected'"
+          v-model="bulkForm.site_ids"
+          multiple
+          filterable
+          collapse-tags
+          collapse-tags-tooltip
+          placeholder="选择站点"
+          class="bulk-site-select"
+        >
           <el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id" />
         </el-select>
-        <el-button type="primary" :disabled="!selectedRows.length" @click="applyBulkDistribution">应用到 {{ selectedRows.length }} 条</el-button>
+        <el-button type="primary" :disabled="!selectedRows.length" @click="applyBulkDistribution">
+          应用到 {{ selectedRows.length }} 条
+        </el-button>
       </div>
+
       <el-table :data="items" height="650" @selection-change="selectedRows = $event">
         <el-table-column type="selection" width="46" />
         <el-table-column prop="title" label="标题" min-width="260">
@@ -45,6 +58,7 @@
           </template>
         </el-table-column>
       </el-table>
+
       <el-pagination
         class="table-pager"
         layout="prev, pager, next, total"
@@ -57,7 +71,13 @@
 
     <el-drawer v-model="drawerVisible" :title="(form.id ? '编辑' : '新建') + title" size="620px">
       <el-form :model="form" label-width="90px">
-        <el-alert type="info" show-icon :closable="false" class="mb16" :title="`这是一份中台内容，保存后会同步到：${siteNames(form)}。AI 生成草稿也会沿用这个发布范围。`" />
+        <el-alert
+          type="info"
+          show-icon
+          :closable="false"
+          class="mb16"
+          :title="`这是一份中台内容，保存后会同步到：${siteNames(form)}。AI 生成草稿也沿用这个发布范围。`"
+        />
         <el-form-item label="发布范围">
           <el-radio-group v-model="form.site_scope" @change="syncScope">
             <el-radio-button label="current">当前站点</el-radio-button>
@@ -70,6 +90,7 @@
             <el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id" />
           </el-select>
         </el-form-item>
+
         <el-form-item label="AI 要求"><el-input v-model="prompt" placeholder="输入生成要求" /></el-form-item>
         <el-form-item><el-button @click="generateDraft">AI 生成草稿</el-button></el-form-item>
         <el-form-item label="标题"><el-input v-model="form.title" /></el-form-item>
@@ -205,7 +226,7 @@ function applyBulkDistribution() {
 }
 
 function siteNames(row: any) {
-  const ids = (row.site_ids || []).map((id: any) => Number(id))
+  const ids = (row.site_ids || []).map((id: any) => Number(id)).filter((id: number) => id > 0)
   const allIds = allSiteIds()
   if (allIds.length && ids.length === allIds.length && allIds.every((id) => ids.includes(id))) return '全部站点'
   const names = (props.sites || []).filter((site: any) => ids.includes(Number(site.id))).map((site: any) => site.name)
@@ -226,10 +247,7 @@ function syncScope() {
     props.form.site_ids = siteIdsForScope('selected', props.form.site_ids)
     return
   }
-  if (props.form.site_scope === 'current' || !props.form.site_scope) {
-    props.form.site_scope = 'current'
-    props.form.site_ids = [Number(props.currentSiteId || 10001)]
-  }
+  props.form.site_scope = 'current'
+  props.form.site_ids = currentSiteIds()
 }
 </script>
-
