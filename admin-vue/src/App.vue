@@ -363,6 +363,110 @@
           </el-card>
         </section>
 
+        <section v-if="view === 'operations'">
+          <div class="metric-grid">
+            <MetricCard title="运营站点" :value="operationStats.sites" note="当前客户中台可管理" icon="Grid" />
+            <MetricCard title="待处理订单" :value="operationStats.pendingOrders" :note="`全部订单 ${operationStats.orders}`" icon="ShoppingCart" />
+            <MetricCard title="待处理询盘" :value="operationStats.pendingForms" :note="`全部留言 ${operationStats.forms}`" icon="ChatLineRound" />
+            <MetricCard title="可分发内容" :value="operationStats.content" :note="`${operationStats.articles} 篇文章 / ${operationStats.products} 个商品`" icon="Document" />
+          </div>
+
+          <el-row :gutter="16" class="mb16">
+            <el-col :span="15">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>跨站运营工作台</strong>
+                    <div class="head-actions">
+                      <el-select v-model="operationSiteScope" placeholder="站点范围" style="width: 180px" @change="applyOperationSiteScope">
+                        <el-option label="全部站点" value="all" />
+                        <el-option v-for="item in sites" :key="item.id" :label="item.name" :value="String(item.id)" />
+                      </el-select>
+                      <el-button @click="refreshOperations">刷新运营数据</el-button>
+                    </div>
+                  </div>
+                </template>
+                <div class="operation-command-grid">
+                  <button type="button" @click="setView('orders')">
+                    <strong>统一处理订单</strong>
+                    <small>按全部站点或单站点筛选支付、发货和跟进。</small>
+                  </button>
+                  <button type="button" @click="setView('forms')">
+                    <strong>统一处理询盘</strong>
+                    <small>集中查看留言线索，避免多站点后台来回切换。</small>
+                  </button>
+                  <button type="button" @click="setView('articles')">
+                    <strong>分发文章</strong>
+                    <small>文章库保存一份，可发布给全部站点或指定站点。</small>
+                  </button>
+                  <button type="button" @click="setView('products')">
+                    <strong>分发商品</strong>
+                    <small>商品库统一维护，再按站点范围上架展示。</small>
+                  </button>
+                  <button type="button" @click="setView('ai')">
+                    <strong>AI 批量生成</strong>
+                    <small>生成文章或商品，直接绑定到当前发布范围。</small>
+                  </button>
+                  <button type="button" @click="setView('collector')">
+                    <strong>采集新闻动态</strong>
+                    <small>把外部内容沉淀为 SEO 草稿，再人工发布。</small>
+                  </button>
+                </div>
+              </el-card>
+            </el-col>
+            <el-col :span="9">
+              <el-card class="panel" shadow="never">
+                <template #header><strong>一键发布动作</strong></template>
+                <div class="publish-action-list">
+                  <el-alert type="info" show-icon :closable="false" :title="`当前站点范围：${operationScopeLabel}`" />
+                  <el-button type="primary" :loading="siteBatchRunning" @click="runAllActiveSiteBatch('generate')">生成全部启用站点</el-button>
+                  <el-button :loading="siteBatchRunning" @click="runAllActiveSiteBatch('deploy-check')">检查全部部署配置</el-button>
+                  <el-button :loading="siteBatchRunning" @click="runAllActiveSiteBatch('package')">生成全部发布包</el-button>
+                  <el-button @click="setView('publish')">进入部署管理</el-button>
+                </div>
+              </el-card>
+            </el-col>
+          </el-row>
+
+          <el-card class="panel" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>站点运营清单</strong>
+                <el-button type="primary" plain @click="setView('sites')">进入站点管理</el-button>
+              </div>
+            </template>
+            <el-table :data="operationSites" height="420" row-key="id">
+              <el-table-column label="站点" min-width="220">
+                <template #default="{ row }">
+                  <strong>{{ row.name }}</strong><br />
+                  <small>{{ row.domain || row.subdomain || row.site_key }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column label="内容" min-width="180">
+                <template #default="{ row }">文章 {{ row.stats?.articles || 0 }} / 商品 {{ row.stats?.products || 0 }}</template>
+              </el-table-column>
+              <el-table-column label="订单" min-width="180">
+                <template #default="{ row }">全部 {{ row.stats?.orders || 0 }} / 待处理 {{ row.stats?.pending_orders || 0 }}</template>
+              </el-table-column>
+              <el-table-column label="询盘" width="110"><template #default="{ row }">{{ row.stats?.forms || 0 }}</template></el-table-column>
+              <el-table-column label="发布状态" min-width="230">
+                <template #default="{ row }">
+                  <span>{{ row.publish?.generated ? '已生成静态站' : '待生成静态站' }}</span><br />
+                  <small>{{ row.publish?.last_created_at || row.publish?.public_path || '-' }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="260">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="openSite(row)">进入</el-button>
+                  <el-button link type="primary" @click="previewSite(row)">预览</el-button>
+                  <el-button link type="success" @click="generateSiteFor(row)">生成</el-button>
+                  <el-button link @click="editSite(row)">编辑</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+        </section>
+
         <section v-if="view === 'sites'">
           <el-row :gutter="16">
             <el-col :span="16">
@@ -2264,6 +2368,7 @@ const collectorRunningId = ref<number | string>('')
 const navItems = [
   { key: 'platform', label: '平台', hint: '运营方后台：管理客户、套餐、站点和部署节点。', icon: 'Monitor' },
   { key: 'dashboard', label: '概览', hint: '查看运营指标、内容数量和站点状态。', icon: 'Odometer' },
+  { key: 'operations', label: '运营', hint: '统一处理跨站订单、询盘、内容分发、AI 生成和批量发布。', icon: 'Operation' },
   { key: 'sites', label: '站点', hint: '管理客户名下所有前台站点。', icon: 'Grid' },
   { key: 'domains', label: '域名', hint: '绑定主域名、别名域名并检查 DNS/SSL 状态。', icon: 'Link' },
   { key: 'settings', label: '设置', hint: '维护当前站点基础信息、SEO、导航和全站页面结构。', icon: 'Setting' },
@@ -2340,6 +2445,30 @@ const allVisibleSitesSelected = computed({
   get: () => visibleSiteIds.value.length > 0 && selectedVisibleSiteCount.value === visibleSiteIds.value.length,
   set: (checked: boolean) => {
     selectedSiteIds.value = checked ? [...visibleSiteIds.value] : []
+  }
+})
+const operationSites = computed(() => {
+  if (operationSiteScope.value === 'all') return sites.value
+  return sites.value.filter((item: any) => String(item.id) === String(operationSiteScope.value))
+})
+const operationScopeLabel = computed(() => {
+  if (operationSiteScope.value === 'all') return '全部站点'
+  return operationSites.value[0]?.name || '当前站点'
+})
+const operationStats = computed(() => {
+  const rows = operationSites.value
+  const sum = (key: string) => rows.reduce((total: number, item: any) => total + Number(item.stats?.[key] || 0), 0)
+  const articlesCount = sum('articles')
+  const productsCount = sum('products')
+  return {
+    sites: rows.length,
+    orders: sum('orders'),
+    pendingOrders: sum('pending_orders'),
+    forms: sum('forms'),
+    pendingForms: rows.reduce((total: number, item: any) => total + Number(item.stats?.pending_forms || 0), 0),
+    articles: articlesCount,
+    products: productsCount,
+    content: articlesCount + productsCount
   }
 })
 const siteBatchSummary = computed(() => {
@@ -2428,6 +2557,7 @@ function setView(key: string) {
   view.value = key
   if (key === 'platform') loadPlatform()
   if (key === 'dashboard') loadDashboard()
+  if (key === 'operations') refreshOperations()
   if (key === 'sites') loadSites()
   if (key === 'domains') loadDomains()
   if (key === 'templates') Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry()])
@@ -2453,6 +2583,7 @@ function setView(key: string) {
 function refreshCurrentView() {
   const loaders: Record<string, () => Promise<void>> = {
     dashboard: loadDashboard,
+    operations: refreshOperations,
     platform: loadPlatform,
     sites: loadSites,
     domains: loadDomains,
@@ -3901,6 +4032,11 @@ function applyOperationSiteScope() {
   if (view.value === 'orders') loadOrders()
   if (view.value === 'service') loadServices()
   if (view.value === 'forms') loadForms()
+  if (view.value === 'operations') refreshOperations()
+}
+
+async function refreshOperations() {
+  await Promise.all([loadSites(), loadDashboard(), loadOrders(), loadServices(), loadForms(), loadAiTasks(), loadBatchTasks()])
 }
 function selectOrder(row: any) {
   Object.assign(orderDetail, row, { followup_note: '' })
@@ -4368,6 +4504,16 @@ async function generateSiteFor(item: any) {
 
 function selectAllActiveSites() {
   selectedSiteIds.value = sites.value.filter((item: any) => item.status === 'active').map((item: any) => item.id)
+}
+
+async function runAllActiveSiteBatch(action: 'generate' | 'deploy-check' | 'package') {
+  const targets = sites.value.filter((item: any) => item.status === 'active')
+  selectedSiteIds.value = targets.map((item: any) => item.id)
+  if (!targets.length) {
+    ElMessage.warning('当前没有启用站点')
+    return
+  }
+  await executeSiteBatch(action, targets, `运营中心：${batchActionLabel(action)}`)
 }
 
 async function runSiteBatch(action: 'generate' | 'deploy-check' | 'package') {

@@ -239,6 +239,40 @@ body {
   color: var(--hj-muted);
   line-height: 1.5;
 }
+.operation-command-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.operation-command-grid button {
+  display: grid;
+  gap: 6px;
+  min-height: 92px;
+  padding: 14px 16px;
+  text-align: left;
+  color: var(--hj-text);
+  background: #fff;
+  border: 1px solid var(--hj-line);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+}
+.operation-command-grid button:hover {
+  border-color: var(--hj-primary);
+  box-shadow: 0 12px 28px rgba(22, 119, 255, .12);
+  transform: translateY(-1px);
+}
+.operation-command-grid strong {
+  font-size: 15px;
+}
+.operation-command-grid small {
+  color: var(--hj-muted);
+  line-height: 1.55;
+}
+.publish-action-list {
+  display: grid;
+  gap: 12px;
+}
 .wide-form { max-width: 1040px; }
 .nav-page-select {
   width: 100%;
