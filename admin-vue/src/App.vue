@@ -602,6 +602,81 @@
           </el-card>
         </section>
 
+        <section v-if="view === 'modules'">
+          <div class="metric-grid">
+            <article class="module-stat-card">
+              <span>模块总数</span>
+              <strong>{{ moduleRegistry.modules?.length || 0 }}</strong>
+              <small>标准模块注册表</small>
+            </article>
+            <article class="module-stat-card">
+              <span>全站模块</span>
+              <strong>{{ moduleScopeCount('global') }}</strong>
+              <small>导航、搜索、客服、内链</small>
+            </article>
+            <article class="module-stat-card">
+              <span>首页模块</span>
+              <strong>{{ moduleScopeCount('home') }}</strong>
+              <small>AI 搭积木核心模块</small>
+            </article>
+            <article class="module-stat-card">
+              <span>详情页模块</span>
+              <strong>{{ moduleScopeCount('detail') }}</strong>
+              <small>文章和商品详情增强</small>
+            </article>
+          </div>
+          <el-row :gutter="16">
+            <el-col :span="8">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>模块规范</strong>
+                    <el-button @click="loadModuleRegistry">刷新</el-button>
+                  </div>
+                </template>
+                <div class="module-spec-list">
+                  <article v-for="scope in moduleRegistry.scopes || []" :key="scope.key" :class="{ active: moduleScopeFilter === scope.key }" @click="moduleScopeFilter = scope.key">
+                    <strong>{{ scope.title }}</strong>
+                    <small>{{ scope.description }}</small>
+                    <el-tag size="small" effect="plain">{{ moduleScopeCount(scope.key) }} 个模块</el-tag>
+                  </article>
+                </div>
+                <el-alert class="mt16" type="info" show-icon :closable="false" title="模块注册表是后台、中台和前台模板共用的字典。AI 生成页面草案时只应从这里选择模块，静态生成器按配置路径读取内容。" />
+              </el-card>
+            </el-col>
+            <el-col :span="16">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>模块字典</strong>
+                    <el-radio-group v-model="moduleScopeFilter" size="small">
+                      <el-radio-button label="all">全部</el-radio-button>
+                      <el-radio-button v-for="scope in moduleRegistry.scopes || []" :key="scope.key" :label="scope.key">{{ scope.title }}</el-radio-button>
+                    </el-radio-group>
+                  </div>
+                </template>
+                <el-table :data="filteredModuleRegistry" height="560" row-key="key">
+                  <el-table-column label="模块" min-width="220">
+                    <template #default="{ row }">
+                      <strong>{{ row.title }}</strong><br />
+                      <small>{{ row.key }}</small>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="范围" width="120">
+                    <template #default="{ row }"><el-tag>{{ moduleScopeTitle(row.scope) }}</el-tag></template>
+                  </el-table-column>
+                  <el-table-column prop="config_path" label="配置路径" min-width="210" />
+                  <el-table-column prop="render_slot" label="渲染插槽" min-width="210" />
+                  <el-table-column label="默认启用" width="110">
+                    <template #default="{ row }"><el-tag :type="row.enabled_by_default ? 'success' : 'info'">{{ row.enabled_by_default ? '是' : '否' }}</el-tag></template>
+                  </el-table-column>
+                  <el-table-column prop="description" label="说明" min-width="260" />
+                </el-table>
+              </el-card>
+            </el-col>
+          </el-row>
+        </section>
+
         <section v-if="view === 'templates'">
           <el-row :gutter="16">
             <el-col :span="9">
@@ -1923,6 +1998,7 @@ const customerAdminForm = reactive<any>({})
 const deployNodeForm = reactive<any>({})
 const aiProviderForm = reactive<any>({})
 const selectedAiProviderId = ref<number | string>('')
+const moduleScopeFilter = ref('all')
 const publishSummary = computed(() => parseSummary(publishDetail.summary))
 const publishResultTitle = computed(() => {
   if (!publishResult.value) return ''
@@ -2003,6 +2079,7 @@ const navItems = [
   { key: 'domains', label: '域名', hint: '绑定主域名、别名域名并检查 DNS/SSL 状态。', icon: 'Link' },
   { key: 'settings', label: '设置', hint: '维护当前站点基础信息、SEO、导航和全站页面结构。', icon: 'Setting' },
   { key: 'templates', label: '模板', hint: '选择主题模板，启用首页与全站模块。', icon: 'Grid' },
+  { key: 'modules', label: '模块', hint: '查看全站、首页和详情页模块规范，作为 AI 搭积木和模板渲染字典。', icon: 'Operation' },
   { key: 'pages', label: '页面', hint: '管理关于我们、服务介绍、专题落地页等普通静态页面。', icon: 'Files' },
   { key: 'ai', label: 'AI', hint: '批量生成文章、商品文案和封面素材。', icon: 'MagicStick' },
   { key: 'ai-settings', label: 'AI配置', hint: '配置当前站点的大模型接口、图片模型和视频模型。', icon: 'Cpu' },
@@ -2062,6 +2139,11 @@ const authHeaders = computed(() => ({ Authorization: `Bearer ${token.value}` }))
 const imageMedia = computed(() => media.value.filter((item) => item.file_type === 'image'))
 const homeModuleItems = computed(() => (moduleRegistry.value.modules || []).filter((item: any) => item.scope === 'home'))
 const globalModuleItems = computed(() => (moduleRegistry.value.modules || []).filter((item: any) => item.scope === 'global'))
+const filteredModuleRegistry = computed(() => {
+  const items = moduleRegistry.value.modules || []
+  if (moduleScopeFilter.value === 'all') return items
+  return items.filter((item: any) => item.scope === moduleScopeFilter.value)
+})
 const visibleSiteIds = computed(() => sites.value.map((item: any) => item.id))
 const selectedVisibleSiteCount = computed(() => visibleSiteIds.value.filter((id: any) => selectedSiteIds.value.some((selected) => String(selected) === String(id))).length)
 const someVisibleSitesSelected = computed(() => selectedVisibleSiteCount.value > 0 && selectedVisibleSiteCount.value < visibleSiteIds.value.length)
@@ -2145,6 +2227,7 @@ function setView(key: string) {
   if (key === 'sites') loadSites()
   if (key === 'domains') loadDomains()
   if (key === 'templates') Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry()])
+  if (key === 'modules') loadModuleRegistry()
   if (key === 'pages') loadPages()
   if (key === 'ai') Promise.all([loadAiTasks(), loadSites()])
   if (key === 'ai-settings') Promise.all([loadSettings(), isPlatformAdmin.value ? loadPlatform() : Promise.resolve()])
@@ -2171,6 +2254,7 @@ function refreshCurrentView() {
     domains: loadDomains,
     settings: async () => { await Promise.all([loadSettings(), loadStaticPages()]) },
     templates: async () => { await Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry(), loadSettings(), loadStaticPages()]) },
+    modules: loadModuleRegistry,
     ai: async () => { await Promise.all([loadAiTasks(), loadSites()]) },
     'ai-settings': async () => { await Promise.all([loadSettings(), isPlatformAdmin.value ? loadPlatform() : Promise.resolve()]) },
     pages: loadPages,
@@ -2853,6 +2937,14 @@ function moduleTitle(key: string) {
 
 function moduleDescription(key: string) {
   return moduleMeta(key).description || '-'
+}
+
+function moduleScopeCount(scope: string) {
+  return (moduleRegistry.value.modules || []).filter((item: any) => item.scope === scope).length
+}
+
+function moduleScopeTitle(scope: string) {
+  return (moduleRegistry.value.scopes || []).find((item: any) => item.key === scope)?.title || scope || '-'
 }
 
 function resetHomeModules() {

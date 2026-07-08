@@ -554,6 +554,47 @@ body {
   border-radius: 10px;
   background: #fff;
 }
+.module-stat-card {
+  display: grid;
+  gap: 6px;
+  min-height: 116px;
+  padding: 18px;
+  border: 1px solid var(--hj-line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: var(--hj-shadow);
+}
+.module-stat-card span,
+.module-stat-card small {
+  color: var(--hj-muted);
+}
+.module-stat-card strong {
+  font-size: 30px;
+  line-height: 1;
+  color: var(--hj-text);
+}
+.module-spec-list {
+  display: grid;
+  gap: 10px;
+}
+.module-spec-list article {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--hj-line);
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+}
+.module-spec-list article.active,
+.module-spec-list article:hover {
+  border-color: var(--hj-primary);
+  background: #f3f8ff;
+}
+.module-spec-list small {
+  color: var(--hj-muted);
+  line-height: 1.6;
+}
 .builder-box {
   display: grid;
   gap: 14px;
