@@ -1106,6 +1106,7 @@ function ensure_center_tables(PDO $main): void
         plan_key VARCHAR(60) NOT NULL DEFAULT 'starter',
         max_sites INT UNSIGNED NOT NULL DEFAULT 10,
         ai_quota INT UNSIGNED NOT NULL DEFAULT 1000,
+        ai_used INT UNSIGNED NOT NULL DEFAULT 0,
         storage_quota_mb INT UNSIGNED NOT NULL DEFAULT 1024,
         expires_at DATE,
         status VARCHAR(30) NOT NULL DEFAULT 'active',
@@ -1115,6 +1116,7 @@ function ensure_center_tables(PDO $main): void
     ensure_column($main, 'customers', 'plan_key', "VARCHAR(60) NOT NULL DEFAULT 'starter'");
     ensure_column($main, 'customers', 'max_sites', 'INT UNSIGNED NOT NULL DEFAULT 10');
     ensure_column($main, 'customers', 'ai_quota', 'INT UNSIGNED NOT NULL DEFAULT 1000');
+    ensure_column($main, 'customers', 'ai_used', 'INT UNSIGNED NOT NULL DEFAULT 0');
     ensure_column($main, 'customers', 'storage_quota_mb', 'INT UNSIGNED NOT NULL DEFAULT 1024');
     ensure_column($main, 'customers', 'expires_at', 'DATE');
     $main->exec("CREATE TABLE IF NOT EXISTS sites (
@@ -1555,6 +1557,151 @@ function current_customer_id_for_create(?array $user = null, array $data = []): 
         return $customerId;
     }
     return max(1, (int)($data['customer_id'] ?? 1));
+}
+
+function current_customer(PDO $main, ?array $user = null, ?int $customerId = null): ?array
+{
+    ensure_center_tables($main);
+    if ($customerId === null) {
+        $user = $user ?: auth_user();
+        $customerId = is_platform_admin($user) ? 0 : (int)($user['customer_id'] ?? 0);
+    }
+    if ($customerId <= 0) {
+        return null;
+    }
+    $customer = fetch_one($main, 'customers', $customerId);
+    return $customer ?: null;
+}
+
+function customer_site_count(PDO $main, int $customerId): int
+{
+    ensure_center_tables($main);
+    $stmt = $main->prepare("SELECT COUNT(*) FROM sites WHERE customer_id = ? AND status <> 'archived'");
+    $stmt->execute([$customerId]);
+    return (int)$stmt->fetchColumn();
+}
+
+function customer_storage_used_bytes(PDO $sitePdo, PDO $main, int $customerId): int
+{
+    $allowedSiteIds = allowed_site_ids_for_user($main, ['role' => 'customer_admin', 'customer_id' => $customerId]);
+    if (!$allowedSiteIds) {
+        return 0;
+    }
+    ensure_media_site_column($sitePdo);
+    $placeholders = implode(',', array_fill(0, count($allowedSiteIds), '?'));
+    $stmt = $sitePdo->prepare("SELECT COALESCE(SUM(file_size), 0) FROM media WHERE site_id IN ({$placeholders})");
+    $stmt->execute($allowedSiteIds);
+    return (int)$stmt->fetchColumn();
+}
+
+function customer_quota_summary(PDO $sitePdo, PDO $main, ?array $user = null): array
+{
+    $customer = current_customer($main, $user);
+    if (!$customer) {
+        return [
+            'is_platform_admin' => true,
+            'sites_used' => (int)$main->query("SELECT COUNT(*) FROM sites WHERE status <> 'archived'")->fetchColumn(),
+            'sites_limit' => 0,
+            'ai_used' => 0,
+            'ai_quota' => 0,
+            'storage_used_bytes' => 0,
+            'storage_quota_mb' => 0,
+            'storage_used_mb' => 0,
+            'status' => 'unlimited',
+            'expires_at' => null,
+        ];
+    }
+    $storageBytes = customer_storage_used_bytes($sitePdo, $main, (int)$customer['id']);
+    return [
+        'is_platform_admin' => false,
+        'customer_id' => (int)$customer['id'],
+        'customer_name' => (string)$customer['name'],
+        'plan_key' => (string)($customer['plan_key'] ?? 'starter'),
+        'sites_used' => customer_site_count($main, (int)$customer['id']),
+        'sites_limit' => (int)($customer['max_sites'] ?? 0),
+        'ai_used' => (int)($customer['ai_used'] ?? 0),
+        'ai_quota' => (int)($customer['ai_quota'] ?? 0),
+        'storage_used_bytes' => $storageBytes,
+        'storage_used_mb' => round($storageBytes / 1024 / 1024, 2),
+        'storage_quota_mb' => (int)($customer['storage_quota_mb'] ?? 0),
+        'status' => (string)($customer['status'] ?? 'active'),
+        'expires_at' => $customer['expires_at'] ?? null,
+    ];
+}
+
+function assert_customer_plan_active(array $customer): void
+{
+    if (($customer['status'] ?? '') !== 'active') {
+        fail('客户套餐未启用，请联系平台管理员', 'CUSTOMER_PLAN_INACTIVE', 403);
+    }
+    $expiresAt = trim((string)($customer['expires_at'] ?? ''));
+    if ($expiresAt !== '' && $expiresAt < date('Y-m-d')) {
+        fail('客户套餐已过期，请联系平台管理员', 'CUSTOMER_PLAN_EXPIRED', 403);
+    }
+}
+
+function assert_site_quota(PDO $main, int $customerId): void
+{
+    $customer = current_customer($main, null, $customerId);
+    if (!$customer) {
+        fail('客户不存在', 'CUSTOMER_NOT_FOUND', 404);
+    }
+    assert_customer_plan_active($customer);
+    $limit = (int)($customer['max_sites'] ?? 0);
+    if ($limit > 0 && customer_site_count($main, $customerId) >= $limit) {
+        fail('站点数量已达到套餐上限，请升级套餐或停用旧站点', 'SITE_QUOTA_EXCEEDED', 403, [
+            'sites_used' => customer_site_count($main, $customerId),
+            'sites_limit' => $limit,
+        ]);
+    }
+}
+
+function consume_ai_quota(PDO $main, ?array $user, int $units = 1): void
+{
+    if (!$user || is_platform_admin($user)) {
+        return;
+    }
+    $customer = current_customer($main, $user);
+    if (!$customer) {
+        fail('客户账号未绑定客户资料，无法使用 AI', 'CUSTOMER_NOT_BOUND', 403);
+    }
+    assert_customer_plan_active($customer);
+    $quota = (int)($customer['ai_quota'] ?? 0);
+    $used = (int)($customer['ai_used'] ?? 0);
+    if ($quota > 0 && $used + $units > $quota) {
+        fail('AI 额度不足，请联系平台管理员增加额度', 'AI_QUOTA_EXCEEDED', 403, [
+            'ai_used' => $used,
+            'ai_quota' => $quota,
+            'required' => $units,
+        ]);
+    }
+    $stmt = $main->prepare('UPDATE customers SET ai_used = ai_used + :units, updated_at = :updated_at WHERE id = :id');
+    $stmt->execute(['units' => $units, 'updated_at' => now(), 'id' => (int)$customer['id']]);
+}
+
+function assert_storage_quota(PDO $sitePdo, PDO $main, ?array $user, int $incomingBytes): void
+{
+    if (!$user || is_platform_admin($user)) {
+        return;
+    }
+    $customer = current_customer($main, $user);
+    if (!$customer) {
+        fail('客户账号未绑定客户资料，无法上传文件', 'CUSTOMER_NOT_BOUND', 403);
+    }
+    assert_customer_plan_active($customer);
+    $quotaMb = (int)($customer['storage_quota_mb'] ?? 0);
+    if ($quotaMb <= 0) {
+        return;
+    }
+    $used = customer_storage_used_bytes($sitePdo, $main, (int)$customer['id']);
+    $limit = $quotaMb * 1024 * 1024;
+    if ($used + $incomingBytes > $limit) {
+        fail('媒体库容量已达到套餐上限，请删除旧文件或升级套餐', 'STORAGE_QUOTA_EXCEEDED', 403, [
+            'storage_used_mb' => round($used / 1024 / 1024, 2),
+            'storage_quota_mb' => $quotaMb,
+            'incoming_mb' => round($incomingBytes / 1024 / 1024, 2),
+        ]);
+    }
 }
 
 function list_batch_tasks(PDO $main): array
@@ -3264,6 +3411,11 @@ function ensure_publish_versions_site_column(PDO $pdo): void
     ensure_column($pdo, 'publish_versions', 'site_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 10001');
 }
 
+function ensure_media_site_column(PDO $pdo): void
+{
+    ensure_column($pdo, 'media', 'site_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 10001');
+}
+
 function list_publish_versions(PDO $pdo, int $siteId): array
 {
     ensure_publish_versions_site_column($pdo);
@@ -4797,6 +4949,7 @@ function create_ai_task(PDO $pdo, array $data): array
     require_fields($data, ['type', 'prompt']);
     $type = in_array(($data['type'] ?? 'article'), ['article', 'product'], true) ? (string)$data['type'] : 'article';
     $count = min(20, max(1, (int)($data['count'] ?? 3)));
+    consume_ai_quota(main_pdo(), auth_user(), $count);
     $site = site_settings($pdo);
     $siteIds = normalize_site_ids($data);
     $items = [];
@@ -4912,10 +5065,12 @@ function svg_lines(string $value, int $length = 18): array
 
 function insert_media(PDO $pdo, array $data): int
 {
-    $stmt = $pdo->prepare("INSERT INTO media (file_name, file_path, file_type, mime_type, file_size, width, height, alt_text, source_type, created_at, updated_at)
-        VALUES (:file_name, :file_path, :file_type, :mime_type, :file_size, :width, :height, :alt_text, :source_type, :created_at, :updated_at)");
+    ensure_media_site_column($pdo);
+    $stmt = $pdo->prepare("INSERT INTO media (site_id, file_name, file_path, file_type, mime_type, file_size, width, height, alt_text, source_type, created_at, updated_at)
+        VALUES (:site_id, :file_name, :file_path, :file_type, :mime_type, :file_size, :width, :height, :alt_text, :source_type, :created_at, :updated_at)");
     $time = now();
     $stmt->execute([
+        'site_id' => (int)($data['site_id'] ?? requested_site_id()),
         'file_name' => $data['file_name'],
         'file_path' => $data['file_path'],
         'file_type' => $data['file_type'] ?? 'image',
@@ -4965,6 +5120,7 @@ function generate_cover_svg(PDO $pdo, string $type, string $title, string $promp
   <rect x="92" y="560" width="160" height="8" rx="4" fill="{$colors[3]}"/>
 </svg>
 SVG;
+    assert_storage_quota($pdo, main_pdo(), auth_user(), strlen($svg));
 
     $relativeDir = 'assets/images';
     $targetDir = public_root() . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativeDir);
@@ -5895,6 +6051,7 @@ try {
         ok([
             'items' => $items,
             'overview' => center_overview($items),
+            'quota' => customer_quota_summary($pdo, $main, $user),
             'current_site_id' => $currentSiteId,
         ]);
     }
@@ -5906,6 +6063,7 @@ try {
         ensure_center_tables($main);
         $payload = normalize_center_site_payload($data);
         $customerId = current_customer_id_for_create($user, $data);
+        assert_site_quota($main, $customerId);
         $now = now();
         $stmt = $main->prepare("INSERT INTO sites (customer_id, name, site_key, deploy_node_id, domain, subdomain, language, template_key, database_name, public_path, deploy_config_json, status, created_at, updated_at)
             VALUES (:customer_id, :name, '', :deploy_node_id, :domain, :subdomain, :language, :template_key, :database_name, '', :deploy_config_json, :status, :created_at, :updated_at)");
@@ -6159,6 +6317,7 @@ try {
             fail('生成类型不支持', 'VALIDATION_ERROR', 422);
         }
         $prompt = trim((string)$data['prompt']);
+        consume_ai_quota(main_pdo(), $user, 1);
         $site = site_settings($pdo);
         $fallback = local_ai_draft($type, $prompt, $site);
         $remote = remote_ai_draft($type, $prompt, $site);
@@ -6181,6 +6340,7 @@ try {
         require_fields($data, ['prompt']);
         $prompt = trim((string)$data['prompt']);
         $count = min(20, max(1, (int)($data['count'] ?? 5)));
+        consume_ai_quota(main_pdo(), $user, $count);
         $status = in_array(($data['status'] ?? 'draft'), ['draft', 'published'], true) ? $data['status'] : 'draft';
         $site = site_settings($pdo);
         $created = [];
@@ -6208,6 +6368,7 @@ try {
         require_fields($data, ['prompt']);
         $prompt = trim((string)$data['prompt']);
         $count = min(20, max(1, (int)($data['count'] ?? 5)));
+        consume_ai_quota(main_pdo(), $user, $count);
         $status = in_array(($data['status'] ?? 'draft'), ['draft', 'published'], true) ? $data['status'] : 'draft';
         $site = site_settings($pdo);
         $created = [];
@@ -6234,6 +6395,7 @@ try {
     if ($method === 'POST' && $path === '/ai/generate-image') {
         $data = body_json();
         require_fields($data, ['type', 'prompt']);
+        consume_ai_quota(main_pdo(), $user, 1);
         $type = in_array(($data['type'] ?? 'article'), ['article', 'product'], true) ? $data['type'] : 'article';
         $prompt = trim((string)$data['prompt']);
         $title = trim((string)($data['title'] ?? ''));
@@ -6593,9 +6755,10 @@ try {
     }
 
     if ($method === 'GET' && $path === '/media') {
+        ensure_media_site_column($pdo);
         $fileType = trim((string)($_GET['file_type'] ?? ''));
-        $where = [];
-        $params = [];
+        $where = ['site_id = :site_id'];
+        $params = ['site_id' => requested_site_id()];
         if ($fileType !== '') {
             $where[] = 'file_type = :file_type';
             $params['file_type'] = $fileType;
@@ -6631,6 +6794,7 @@ try {
         if ($file['size'] > 10 * 1024 * 1024) {
             fail('文件不能超过 10MB', 'FILE_TOO_LARGE', 422);
         }
+        assert_storage_quota($pdo, main_pdo(), $user, (int)$file['size']);
         $originalName = basename((string)$file['name']);
         $ext = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
         $allowed = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg', 'pdf', 'doc', 'docx', 'xls', 'xlsx'];
@@ -6658,10 +6822,12 @@ try {
                 $height = $size[1];
             }
         }
-        $stmt = $pdo->prepare("INSERT INTO media (file_name, file_path, file_type, mime_type, file_size, width, height, alt_text, source_type, created_at, updated_at)
-            VALUES (:file_name, :file_path, :file_type, :mime_type, :file_size, :width, :height, :alt_text, 'upload', :created_at, :updated_at)");
+        ensure_media_site_column($pdo);
+        $stmt = $pdo->prepare("INSERT INTO media (site_id, file_name, file_path, file_type, mime_type, file_size, width, height, alt_text, source_type, created_at, updated_at)
+            VALUES (:site_id, :file_name, :file_path, :file_type, :mime_type, :file_size, :width, :height, :alt_text, 'upload', :created_at, :updated_at)");
         $time = now();
         $stmt->execute([
+            'site_id' => requested_site_id(),
             'file_name' => $originalName,
             'file_path' => $relativePath,
             'file_type' => $fileType,
@@ -6678,6 +6844,11 @@ try {
 
     if ($params = route_param('/media/{id}', $path)) {
         $id = (int)$params['id'];
+        ensure_media_site_column($pdo);
+        $item = fetch_one($pdo, 'media', $id);
+        if ($item) {
+            assert_site_access((int)($item['site_id'] ?? 10001), main_pdo());
+        }
         if ($method === 'PUT') {
             $data = body_json();
             $stmt = $pdo->prepare("UPDATE media SET alt_text=:alt_text, updated_at=:updated_at WHERE id=:id");
@@ -6689,7 +6860,6 @@ try {
             ok(fetch_one($pdo, 'media', $id), '保存成功');
         }
         if ($method === 'DELETE') {
-            $item = fetch_one($pdo, 'media', $id);
             if ($item) {
                 $filePath = public_root() . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $item['file_path']);
                 if (is_file($filePath)) {

@@ -87,7 +87,7 @@
                     <template #default="{ row }">{{ row.plan_key }} / {{ row.max_sites }} 站</template>
                   </el-table-column>
                   <el-table-column label="配额" width="170">
-                    <template #default="{ row }">AI {{ row.ai_quota }} / {{ row.storage_quota_mb }}MB</template>
+                    <template #default="{ row }">AI {{ row.ai_used || 0 }}/{{ row.ai_quota }} / {{ row.storage_quota_mb }}MB</template>
                   </el-table-column>
                   <el-table-column label="站点" width="100">
                     <template #default="{ row }">{{ row.site_count || 0 }}</template>
@@ -280,6 +280,8 @@
             <MetricCard title="待处理询盘" :value="centerOverview.pending_forms || 0" :note="`全部留言 ${centerOverview.forms || totals.forms || 0}`" icon="ChatLineRound" />
             <MetricCard title="内容库文章" :value="centerOverview.articles || totals.articles" note="可分发到多个站点" icon="Document" />
             <MetricCard title="商品库商品" :value="centerOverview.products || totals.products" note="可发布到多个前台" icon="Goods" />
+            <MetricCard title="AI额度" :value="quotaText('ai')" :note="quotaNote('ai')" icon="Cpu" />
+            <MetricCard title="存储容量" :value="quotaText('storage')" :note="quotaNote('storage')" icon="FolderOpened" />
           </div>
           <el-card class="panel" shadow="never">
             <template #header><strong>全局任务池</strong></template>
@@ -1815,6 +1817,7 @@ const deployTasks = ref<any[]>([])
 const siteBackups = ref<any[]>([])
 const operationLogs = ref<any[]>([])
 const batchTaskOverview = ref<any>({})
+const quota = ref<any>({})
 const sites = ref<any[]>([])
 const centerOverview = ref<any>({})
 const platformOverview = ref<any>({})
@@ -1986,6 +1989,18 @@ const siteBatchSummary = computed(() => {
 
 function batchActionLabel(action: string) {
   return ({ generate: '生成静态站', 'deploy-check': '部署检查', package: '生成发布包' } as any)[action] || action || '-'
+}
+
+function quotaText(type: 'ai' | 'storage') {
+  if (quota.value?.is_platform_admin) return '不限'
+  if (type === 'ai') return `${quota.value?.ai_used || 0}/${quota.value?.ai_quota || 0}`
+  return `${quota.value?.storage_used_mb || 0}/${quota.value?.storage_quota_mb || 0}MB`
+}
+
+function quotaNote(type: 'ai' | 'storage') {
+  if (quota.value?.is_platform_admin) return '平台管理员不受客户套餐限制'
+  if (type === 'ai') return `套餐 ${quota.value?.plan_key || '-'}，生成内容会消耗额度`
+  return `媒体库已用 ${quota.value?.storage_used_mb || 0}MB`
 }
 
 async function request(path: string, options: any = {}) {
@@ -2160,6 +2175,7 @@ async function loadDashboard() {
   metrics.value = metricData
   sites.value = siteData.items || []
   centerOverview.value = siteData.overview || {}
+  quota.value = siteData.quota || {}
   if (!currentSiteId.value) currentSiteId.value = siteData.current_site_id || sites.value[0]?.id || 10001
 }
 
@@ -2167,6 +2183,7 @@ async function loadSites() {
   const data = await request('/api/sites')
   sites.value = data.items || []
   centerOverview.value = data.overview || {}
+  quota.value = data.quota || {}
   if (!currentSiteId.value) currentSiteId.value = data.current_site_id || sites.value[0]?.id || 10001
 }
 
