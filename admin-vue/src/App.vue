@@ -537,15 +537,42 @@
               <el-form-item><el-select v-model="formFilters.status" placeholder="状态" clearable><el-option label="新线索" value="new" /><el-option label="待处理" value="pending" /><el-option label="已处理" value="handled" /></el-select></el-form-item>
               <el-button type="primary" @click="applyFormFilters">筛选</el-button>
             </el-form>
-            <el-table :data="forms" height="650">
+            <el-table :data="forms" height="650" row-key="id" highlight-current-row @row-click="openFormSubmission">
               <el-table-column prop="site_name" label="站点" width="150" />
               <el-table-column prop="form_key" label="来源" width="140" />
               <el-table-column label="内容" min-width="340"><template #default="{ row }"><pre>{{ pretty(row.data) }}</pre></template></el-table-column>
               <el-table-column prop="status" label="状态" width="120" />
               <el-table-column prop="created_at" label="时间" width="170" />
+              <el-table-column label="Action" width="110"><template #default="{ row }"><el-button link type="primary" @click.stop="openFormSubmission(row)">Handle</el-button></template></el-table-column>
             </el-table>
             <el-pagination class="table-pager" layout="prev, pager, next, total" :current-page="formPager.page" :page-size="formPager.page_size" :total="formPager.total" @current-change="changeFormPage" />
           </el-card>
+          <el-drawer v-model="formDrawerVisible" size="560px" title="Inquiry Detail">
+            <el-empty v-if="!formDetail.id" description="Select one inquiry" />
+            <el-form v-else :model="formDetail" label-width="92px">
+              <el-descriptions :column="1" border class="mb16">
+                <el-descriptions-item label="Site">{{ formDetail.site_name || '-' }}</el-descriptions-item>
+                <el-descriptions-item label="Source">{{ formDetail.form_key || '-' }}</el-descriptions-item>
+                <el-descriptions-item label="Page">{{ formDetail.source_url || '-' }}</el-descriptions-item>
+                <el-descriptions-item label="Time">{{ formDetail.created_at || '-' }}</el-descriptions-item>
+              </el-descriptions>
+              <el-form-item label="Content"><pre class="form-detail-json">{{ pretty(formDetail.data) }}</pre></el-form-item>
+              <el-form-item label="Status">
+                <el-select v-model="formDetail.status">
+                  <el-option label="New" value="new" />
+                  <el-option label="Pending" value="pending" />
+                  <el-option label="Contacted" value="contacted" />
+                  <el-option label="Handled" value="handled" />
+                  <el-option label="Invalid" value="invalid" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="Remark"><el-input v-model="formDetail.remark" type="textarea" :rows="4" placeholder="Record follow-up notes, quote status, customer needs" /></el-form-item>
+              <div class="drawer-actions">
+                <el-button type="primary" @click="saveFormSubmission">Save</el-button>
+                <el-button type="danger" plain @click="deleteFormSubmission">Delete</el-button>
+              </div>
+            </el-form>
+          </el-drawer>
         </section>
 
         <section v-if="view === 'payments'">
@@ -699,6 +726,7 @@ const servicePending = ref(0)
 const selectedServiceIds = ref<string[]>([])
 const orderDrawerVisible = ref(false)
 const paymentDrawerVisible = ref(false)
+const formDrawerVisible = ref(false)
 const publishDrawerVisible = ref(false)
 const siteDrawerVisible = ref(false)
 const publishResult = ref<any>(null)
@@ -710,6 +738,7 @@ const serviceFilters = reactive({ keyword: '', status: '', type: '' })
 const formFilters = reactive({ keyword: '', status: '' })
 const mediaFilters = reactive({ keyword: '', file_type: '' })
 const orderDetail = reactive<any>({})
+const formDetail = reactive<any>({})
 const paymentForm = reactive<any>({})
 const paymentConfigText = ref('')
 const publishDetail = reactive<any>({})
@@ -1388,6 +1417,29 @@ async function loadForms() {
   const data = await request(`/api/forms/submissions?${params.toString()}`)
   forms.value = data.items || []
   formPager.total = data.pagination?.total || forms.value.length
+}
+function openFormSubmission(row: any) {
+  Object.assign(formDetail, row)
+  formDrawerVisible.value = true
+}
+async function saveFormSubmission() {
+  await request(`/api/forms/submissions/${formDetail.id}`, {
+    method: 'PUT',
+    data: {
+      status: formDetail.status || 'new',
+      remark: formDetail.remark || ''
+    }
+  })
+  ElMessage.success('Inquiry saved')
+  formDrawerVisible.value = false
+  await Promise.all([loadForms(), loadDashboard(), loadSites()])
+}
+async function deleteFormSubmission() {
+  await ElMessageBox.confirm('Delete this inquiry?')
+  await request(`/api/forms/submissions/${formDetail.id}`, { method: 'DELETE' })
+  ElMessage.success('Inquiry deleted')
+  formDrawerVisible.value = false
+  await Promise.all([loadForms(), loadDashboard(), loadSites()])
 }
 function applyFormFilters() {
   formPager.page = 1
