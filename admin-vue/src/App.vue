@@ -804,6 +804,128 @@
           </el-drawer>
         </section>
 
+        <section v-if="view === 'collector'">
+          <el-row :gutter="16">
+            <el-col :span="10">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>采集源</strong>
+                    <el-button type="primary" @click="newCollectorSource">新增采集源</el-button>
+                  </div>
+                </template>
+                <el-form :inline="true" class="toolbar" @submit.prevent="loadCollectorSources">
+                  <el-form-item>
+                    <el-select v-model="operationSiteScope" placeholder="站点范围" style="width: 180px" @change="loadCollector">
+                      <el-option label="全部站点" value="all" />
+                      <el-option v-for="item in sites" :key="item.id" :label="item.name" :value="String(item.id)" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item><el-input v-model="collectorFilters.keyword" placeholder="搜索采集源" clearable /></el-form-item>
+                  <el-button type="primary" @click="loadCollectorSources">筛选</el-button>
+                </el-form>
+                <el-table :data="collectorSources" height="620" row-key="id">
+                  <el-table-column label="采集源" min-width="220">
+                    <template #default="{ row }">
+                      <strong>{{ row.name }}</strong><br />
+                      <small>{{ row.source_type?.toUpperCase() }} / {{ row.site_name || row.site_id }}</small>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="last_result" label="最近结果" min-width="160" />
+                  <el-table-column label="状态" width="90">
+                    <template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status }}</el-tag></template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="210">
+                    <template #default="{ row }">
+                      <el-button link type="primary" :loading="collectorRunningId === row.id" @click="runCollectorSource(row)">采集</el-button>
+                      <el-button link type="primary" @click="editCollectorSource(row)">编辑</el-button>
+                      <el-button link type="danger" @click="deleteCollectorSource(row)">删除</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <el-pagination class="table-pager" layout="prev, pager, next, total" :current-page="collectorSourcePager.page" :page-size="collectorSourcePager.page_size" :total="collectorSourcePager.total" @current-change="changeCollectorSourcePage" />
+              </el-card>
+            </el-col>
+            <el-col :span="14">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>采集记录</strong>
+                    <el-button @click="loadCollectorRecords">刷新记录</el-button>
+                  </div>
+                </template>
+                <el-form :inline="true" class="toolbar" @submit.prevent="loadCollectorRecords">
+                  <el-form-item><el-input v-model="collectorFilters.keyword" placeholder="搜索标题/摘要" clearable /></el-form-item>
+                  <el-form-item>
+                    <el-select v-model="collectorFilters.status" placeholder="状态" clearable>
+                      <el-option label="草稿" value="draft" />
+                      <el-option label="已转文章" value="converted" />
+                    </el-select>
+                  </el-form-item>
+                  <el-button type="primary" @click="loadCollectorRecords">筛选</el-button>
+                </el-form>
+                <el-table :data="collectorRecords" height="620" row-key="id">
+                  <el-table-column label="标题" min-width="260">
+                    <template #default="{ row }">
+                      <strong>{{ row.title }}</strong><br />
+                      <small>{{ row.source_url }}</small>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="site_name" label="站点" width="130" />
+                  <el-table-column prop="status" label="状态" width="100" />
+                  <el-table-column prop="collected_at" label="采集时间" width="170" />
+                  <el-table-column label="操作" width="220">
+                    <template #default="{ row }">
+                      <el-button link type="primary" :disabled="!!row.article_id" @click="publishCollectorRecord(row, 'draft')">转草稿</el-button>
+                      <el-button link type="success" :disabled="!!row.article_id" @click="publishCollectorRecord(row, 'published')">发布</el-button>
+                      <el-button link type="danger" @click="deleteCollectorRecord(row)">删除</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <el-pagination class="table-pager" layout="prev, pager, next, total" :current-page="collectorRecordPager.page" :page-size="collectorRecordPager.page_size" :total="collectorRecordPager.total" @current-change="changeCollectorRecordPage" />
+              </el-card>
+            </el-col>
+          </el-row>
+          <el-drawer v-model="collectorDrawerVisible" size="560px" title="采集源配置">
+            <el-form :model="collectorForm" label-width="96px">
+              <el-form-item label="采集源名称"><el-input v-model="collectorForm.name" placeholder="例如：行业协会 RSS" /></el-form-item>
+              <el-form-item label="所属站点">
+                <el-select v-model="collectorForm.site_id" filterable>
+                  <el-option v-for="item in sites" :key="item.id" :label="item.name" :value="item.id" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="采集类型">
+                <el-radio-group v-model="collectorForm.source_type">
+                  <el-radio-button label="rss">RSS</el-radio-button>
+                  <el-radio-button label="url">指定 URL</el-radio-button>
+                </el-radio-group>
+              </el-form-item>
+              <el-form-item label="采集地址"><el-input v-model="collectorForm.url" placeholder="https://example.com/feed.xml" /></el-form-item>
+              <el-form-item label="文章分类">
+                <el-select v-model="collectorForm.category_id" clearable filterable placeholder="可选">
+                  <el-option v-for="item in categories" :key="item.id" :label="item.name" :value="item.id" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="入库方式">
+                <el-radio-group v-model="collectorForm.rewrite_mode">
+                  <el-radio-button label="draft">转草稿</el-radio-button>
+                  <el-radio-button label="published">直接发布</el-radio-button>
+                </el-radio-group>
+              </el-form-item>
+              <el-form-item label="状态">
+                <el-select v-model="collectorForm.status">
+                  <el-option label="启用" value="active" />
+                  <el-option label="停用" value="disabled" />
+                </el-select>
+              </el-form-item>
+              <div class="drawer-actions">
+                <el-button @click="collectorDrawerVisible = false">取消</el-button>
+                <el-button type="primary" @click="saveCollectorSource">保存采集源</el-button>
+              </div>
+            </el-form>
+          </el-drawer>
+        </section>
+
         <section v-if="view === 'payments'">
           <el-card class="panel mb16" shadow="never">
             <template #header>
@@ -1102,6 +1224,8 @@ const orders = ref<any[]>([])
 const services = ref<any[]>([])
 const media = ref<any[]>([])
 const forms = ref<any[]>([])
+const collectorSources = ref<any[]>([])
+const collectorRecords = ref<any[]>([])
 const paymentChannels = ref<any[]>([])
 const versions = ref<any[]>([])
 const batchTasks = ref<any[]>([])
@@ -1118,6 +1242,7 @@ const selectedServiceIds = ref<string[]>([])
 const orderDrawerVisible = ref(false)
 const paymentDrawerVisible = ref(false)
 const formDrawerVisible = ref(false)
+const collectorDrawerVisible = ref(false)
 const publishDrawerVisible = ref(false)
 const siteDrawerVisible = ref(false)
 const batchTaskDrawerVisible = ref(false)
@@ -1133,10 +1258,12 @@ const batchTaskResultFilter = ref('all')
 const orderFilters = reactive({ keyword: '', payment_status: '', fulfillment_status: '' })
 const serviceFilters = reactive({ keyword: '', status: '', type: '' })
 const formFilters = reactive({ keyword: '', status: '' })
+const collectorFilters = reactive({ keyword: '', status: '' })
 const mediaFilters = reactive({ keyword: '', file_type: '' })
 const taskFilters = reactive({ action: '', status: '', date: '' })
 const orderDetail = reactive<any>({})
 const formDetail = reactive<any>({})
+const collectorForm = reactive<any>({})
 const paymentForm = reactive<any>({})
 const paymentConfigText = ref('')
 const publishDetail = reactive<any>({})
@@ -1169,6 +1296,8 @@ const orderPager = reactive({ page: 1, page_size: 10, total: 0 })
 const servicePager = reactive({ page: 1, page_size: 10, total: 0 })
 const mediaPager = reactive({ page: 1, page_size: 12, total: 0 })
 const formPager = reactive({ page: 1, page_size: 10, total: 0 })
+const collectorSourcePager = reactive({ page: 1, page_size: 10, total: 0 })
+const collectorRecordPager = reactive({ page: 1, page_size: 10, total: 0 })
 const taskPager = reactive({ page: 1, page_size: 10, total: 0 })
 const aiDrafts = ref<any[]>([])
 const pagePlan = ref<any>(null)
@@ -1179,6 +1308,7 @@ const pagePlanLoading = ref(false)
 const pagePlanSaving = ref(false)
 const pagePlanPublishing = ref(false)
 const siteCreating = ref(false)
+const collectorRunningId = ref<number | string>('')
 
 const navItems = [
   { key: 'dashboard', label: '概览', hint: '查看运营指标、内容数量和站点状态。', icon: 'Odometer' },
@@ -1196,6 +1326,7 @@ const navItems = [
   { key: 'tasks', label: '任务', hint: '查看批量生成、发布和部署检查的执行记录。', icon: 'List' },
   { key: 'media', label: '媒体库', hint: '上传并复用图片和文件素材。', icon: 'Picture' },
   { key: 'forms', label: '留言', hint: '处理询盘线索和联系表单。', icon: 'ChatLineRound' },
+  { key: 'collector', label: '采集', hint: '管理 RSS 和指定 URL 采集，沉淀 SEO 文章草稿。', icon: 'Connection' },
   { key: 'publish', label: '发布', hint: '生成静态站并查看发布记录。', icon: 'Upload' }
 ]
 const currentNav = computed(() => navItems.find((item) => item.key === view.value))
@@ -1290,6 +1421,7 @@ function setView(key: string) {
   if (key === 'tasks') loadBatchTasks()
   if (key === 'media') loadMedia()
   if (key === 'forms') loadForms()
+  if (key === 'collector') loadCollector()
   if (key === 'publish') loadVersions()
 }
 
@@ -1310,6 +1442,7 @@ function refreshCurrentView() {
     tasks: loadBatchTasks,
     media: loadMedia,
     forms: loadForms,
+    collector: loadCollector,
     publish: loadVersions
   }
   loaders[view.value]?.().then(() => ElMessage.success('当前页面已刷新'))
@@ -1320,7 +1453,7 @@ function openLegacyAdmin() {
 }
 
 async function loadAll() {
-  await Promise.all([loadSites(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadVersions()])
+  await Promise.all([loadSites(), loadDashboard(), loadSettings(), loadStaticPages(), loadTemplates(), loadModuleRegistry(), loadCategories(), loadPages(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadPaymentChannels(), loadBatchTasks(), loadMedia(), loadForms(), loadCollector(), loadVersions()])
 }
 
 async function loadDashboard() {
@@ -2158,6 +2291,108 @@ function changeFormPage(page: number) {
   formPager.page = page
   loadForms()
 }
+
+async function loadCollector() {
+  await Promise.all([loadCollectorSources(), loadCollectorRecords(), loadCategories()])
+}
+
+async function loadCollectorSources() {
+  const params = new URLSearchParams()
+  params.set('page', String(collectorSourcePager.page))
+  params.set('page_size', String(collectorSourcePager.page_size))
+  params.set('site_id', operationSiteScope.value)
+  if (collectorFilters.keyword) params.set('keyword', collectorFilters.keyword)
+  const data = await request(`/api/collector/sources?${params.toString()}`)
+  collectorSources.value = data.items || []
+  collectorSourcePager.total = data.pagination?.total || collectorSources.value.length
+}
+
+async function loadCollectorRecords() {
+  const params = new URLSearchParams()
+  params.set('page', String(collectorRecordPager.page))
+  params.set('page_size', String(collectorRecordPager.page_size))
+  params.set('site_id', operationSiteScope.value)
+  if (collectorFilters.keyword) params.set('keyword', collectorFilters.keyword)
+  if (collectorFilters.status) params.set('status', collectorFilters.status)
+  const data = await request(`/api/collector/records?${params.toString()}`)
+  collectorRecords.value = data.items || []
+  collectorRecordPager.total = data.pagination?.total || collectorRecords.value.length
+}
+
+function resetCollectorForm() {
+  Object.assign(collectorForm, {
+    id: '',
+    site_id: Number(currentSiteId.value || 10001),
+    name: '',
+    source_type: 'rss',
+    url: '',
+    category_id: '',
+    rewrite_mode: 'draft',
+    status: 'active'
+  })
+}
+
+function newCollectorSource() {
+  resetCollectorForm()
+  collectorDrawerVisible.value = true
+}
+
+function editCollectorSource(row: any) {
+  resetCollectorForm()
+  Object.assign(collectorForm, { ...row, category_id: row.category_id || '' })
+  collectorDrawerVisible.value = true
+}
+
+async function saveCollectorSource() {
+  const method = collectorForm.id ? 'PUT' : 'POST'
+  const path = collectorForm.id ? `/api/collector/sources/${collectorForm.id}` : '/api/collector/sources'
+  await request(path, { method, data: { ...collectorForm, site_id: Number(collectorForm.site_id || currentSiteId.value || 10001) } })
+  collectorDrawerVisible.value = false
+  ElMessage.success('采集源已保存')
+  await loadCollectorSources()
+}
+
+async function deleteCollectorSource(row: any) {
+  await ElMessageBox.confirm(`确定删除采集源「${row.name}」？`)
+  await request(`/api/collector/sources/${row.id}`, { method: 'DELETE' })
+  ElMessage.success('采集源已删除')
+  await loadCollectorSources()
+}
+
+async function runCollectorSource(row: any) {
+  collectorRunningId.value = row.id
+  try {
+    const data = await request(`/api/collector/sources/${row.id}/run`, { method: 'POST' })
+    ElMessage.success(data.message || '采集完成')
+    await Promise.all([loadCollectorSources(), loadCollectorRecords()])
+  } finally {
+    collectorRunningId.value = ''
+  }
+}
+
+async function publishCollectorRecord(row: any, status: 'draft' | 'published') {
+  await request(`/api/collector/records/${row.id}/publish`, { method: 'POST', data: { status } })
+  ElMessage.success(status === 'published' ? '已转为发布文章' : '已转为文章草稿')
+  await Promise.all([loadCollectorRecords(), loadArticles(), loadDashboard()])
+}
+
+async function deleteCollectorRecord(row: any) {
+  await ElMessageBox.confirm(`确定删除采集记录「${row.title}」？`)
+  await request(`/api/collector/records/${row.id}`, { method: 'DELETE' })
+  ElMessage.success('采集记录已删除')
+  await loadCollectorRecords()
+}
+
+function changeCollectorSourcePage(page: number) {
+  collectorSourcePager.page = page
+  loadCollectorSources()
+}
+
+function changeCollectorRecordPage(page: number) {
+  collectorRecordPager.page = page
+  loadCollectorRecords()
+}
+
 async function loadVersions() {
   const data = await request('/api/site/publish-versions')
   versions.value = data.items || data || []

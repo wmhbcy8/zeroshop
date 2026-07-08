@@ -2355,6 +2355,260 @@ function insert_page(PDO $pdo, array $data): int
     return (int)$pdo->lastInsertId();
 }
 
+function ensure_collector_tables(PDO $pdo): void
+{
+    $pdo->exec("CREATE TABLE IF NOT EXISTS collector_sources (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        site_id BIGINT UNSIGNED NOT NULL DEFAULT 10001,
+        name VARCHAR(160) NOT NULL,
+        source_type VARCHAR(30) NOT NULL DEFAULT 'rss',
+        url VARCHAR(500) NOT NULL,
+        category_id BIGINT UNSIGNED,
+        rewrite_mode VARCHAR(30) NOT NULL DEFAULT 'draft',
+        status VARCHAR(30) NOT NULL DEFAULT 'active',
+        last_run_at DATETIME,
+        last_result VARCHAR(255),
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_site_id (site_id),
+        INDEX idx_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    $pdo->exec("CREATE TABLE IF NOT EXISTS collector_records (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        site_id BIGINT UNSIGNED NOT NULL DEFAULT 10001,
+        source_id BIGINT UNSIGNED,
+        source_type VARCHAR(30) NOT NULL DEFAULT 'rss',
+        source_url VARCHAR(500) NOT NULL,
+        title VARCHAR(255) NOT NULL,
+        summary TEXT,
+        content MEDIUMTEXT,
+        article_id BIGINT UNSIGNED,
+        status VARCHAR(30) NOT NULL DEFAULT 'draft',
+        error_message TEXT,
+        collected_at DATETIME NOT NULL,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        UNIQUE KEY uk_site_source_url (site_id, source_url(120)),
+        INDEX idx_site_id (site_id),
+        INDEX idx_source_id (source_id),
+        INDEX idx_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+
+function is_private_host(string $host): bool
+{
+    $host = strtolower(trim($host));
+    if ($host === '' || in_array($host, ['localhost', '127.0.0.1', '::1'], true)) {
+        return true;
+    }
+    $ip = gethostbyname($host);
+    if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+        return false;
+    }
+    return !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
+}
+
+function assert_collect_url(string $url): void
+{
+    $parts = parse_url($url);
+    $scheme = strtolower((string)($parts['scheme'] ?? ''));
+    $host = (string)($parts['host'] ?? '');
+    if (!in_array($scheme, ['http', 'https'], true) || $host === '') {
+        fail('采集地址必须是 http 或 https URL', 'VALIDATION_ERROR', 422);
+    }
+    if (is_private_host($host)) {
+        fail('采集地址不能指向本机或内网地址', 'VALIDATION_ERROR', 422);
+    }
+}
+
+function fetch_collect_url(string $url): string
+{
+    assert_collect_url($url);
+    if (!function_exists('curl_init')) {
+        $context = stream_context_create(['http' => ['timeout' => 12, 'user_agent' => 'HuajianCollector/0.1']]);
+        $body = @file_get_contents($url, false, $context);
+        if (!is_string($body) || $body === '') {
+            fail('采集源读取失败', 'COLLECT_FETCH_FAILED', 422);
+        }
+        return $body;
+    }
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 3,
+        CURLOPT_TIMEOUT => 15,
+        CURLOPT_USERAGENT => 'HuajianCollector/0.1',
+    ]);
+    if (env_value('HJ_COLLECTOR_INSECURE_SSL', '0') === '1') {
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+    }
+    $body = curl_exec($ch);
+    $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = curl_error($ch);
+    curl_close($ch);
+    if (!is_string($body) || $body === '' || $status < 200 || $status >= 400) {
+        fail('采集源读取失败', 'COLLECT_FETCH_FAILED', 422, ['status' => $status, 'curl_error' => $error]);
+    }
+    return $body;
+}
+
+function text_excerpt(string $value, int $length = 180): string
+{
+    $value = trim(preg_replace('/\s+/', ' ', strip_tags($value)));
+    return text_limit($value, $length);
+}
+
+function collect_html_text(string $html): string
+{
+    $html = preg_replace('#<(script|style|noscript)[^>]*>.*?</\1>#is', '', $html) ?? $html;
+    if (preg_match('#<article[^>]*>(.*?)</article>#is', $html, $match)) {
+        $html = $match[1];
+    } elseif (preg_match('#<body[^>]*>(.*?)</body>#is', $html, $match)) {
+        $html = $match[1];
+    }
+    return trim(preg_replace('/\s+/', ' ', html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8')));
+}
+
+function parse_collected_items(string $type, string $url, string $body): array
+{
+    $items = [];
+    if ($type === 'rss') {
+        libxml_use_internal_errors(true);
+        $xml = simplexml_load_string($body);
+        if ($xml) {
+            $nodes = $xml->channel->item ?? $xml->entry ?? [];
+            foreach ($nodes as $node) {
+                $link = (string)($node->link ?? '');
+                if ($link === '' && isset($node->link['href'])) {
+                    $link = (string)$node->link['href'];
+                }
+                $description = (string)($node->description ?? $node->summary ?? $node->content ?? '');
+                $items[] = [
+                    'title' => text_limit(trim((string)($node->title ?? '')), 180),
+                    'source_url' => $link ?: $url,
+                    'summary' => text_excerpt($description),
+                    'content' => '<p>' . htmlspecialchars(text_excerpt($description, 1200), ENT_QUOTES, 'UTF-8') . '</p>',
+                ];
+            }
+        }
+    } else {
+        preg_match('#<title[^>]*>(.*?)</title>#is', $body, $titleMatch);
+        $title = html_entity_decode(trim(strip_tags($titleMatch[1] ?? '采集页面')), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text = collect_html_text($body);
+        $items[] = [
+            'title' => text_limit($title, 180),
+            'source_url' => $url,
+            'summary' => text_excerpt($text),
+            'content' => '<p>' . htmlspecialchars(text_excerpt($text, 1800), ENT_QUOTES, 'UTF-8') . '</p>',
+        ];
+    }
+    return array_values(array_filter($items, fn($item) => trim((string)($item['title'] ?? '')) !== ''));
+}
+
+function normalize_collector_source(array $data, array $current = []): array
+{
+    $type = in_array(($data['source_type'] ?? $current['source_type'] ?? 'rss'), ['rss', 'url'], true) ? ($data['source_type'] ?? $current['source_type'] ?? 'rss') : 'rss';
+    $url = trim((string)($data['url'] ?? ($current['url'] ?? '')));
+    assert_collect_url($url);
+    return [
+        'site_id' => (int)($data['site_id'] ?? $current['site_id'] ?? requested_site_id()),
+        'name' => mb_substr(trim((string)($data['name'] ?? ($current['name'] ?? ''))), 0, 160, 'UTF-8'),
+        'source_type' => $type,
+        'url' => mb_substr($url, 0, 500, 'UTF-8'),
+        'category_id' => (int)($data['category_id'] ?? $current['category_id'] ?? 0) ?: null,
+        'rewrite_mode' => in_array(($data['rewrite_mode'] ?? $current['rewrite_mode'] ?? 'draft'), ['draft', 'published'], true) ? ($data['rewrite_mode'] ?? $current['rewrite_mode'] ?? 'draft') : 'draft',
+        'status' => in_array(($data['status'] ?? $current['status'] ?? 'active'), ['active', 'disabled'], true) ? ($data['status'] ?? $current['status'] ?? 'active') : 'active',
+    ];
+}
+
+function list_collector_sources(PDO $pdo, ?PDO $main = null): array
+{
+    ensure_collector_tables($pdo);
+    $siteId = requested_site_filter();
+    $where = $siteId ? ['site_id = ' . (int)$siteId] : [];
+    $result = paginate($pdo, 'collector_sources', $where, 'id DESC', 'name');
+    $result['items'] = attach_site_names($result['items'], $main);
+    return $result;
+}
+
+function list_collector_records(PDO $pdo, ?PDO $main = null): array
+{
+    ensure_collector_tables($pdo);
+    $siteId = requested_site_filter();
+    $where = $siteId ? ['site_id = ' . (int)$siteId] : [];
+    $result = paginate($pdo, 'collector_records', $where, 'id DESC', 'title');
+    $result['items'] = attach_site_names($result['items'], $main);
+    return $result;
+}
+
+function run_collector_source(PDO $pdo, int $sourceId): array
+{
+    ensure_collector_tables($pdo);
+    $source = fetch_one($pdo, 'collector_sources', $sourceId);
+    if (!$source || ($source['status'] ?? '') !== 'active') {
+        fail('采集源不存在或已停用', 'NOT_FOUND', 404);
+    }
+    $body = fetch_collect_url((string)$source['url']);
+    $items = array_slice(parse_collected_items((string)$source['source_type'], (string)$source['url'], $body), 0, 10);
+    $created = [];
+    $time = now();
+    $stmt = $pdo->prepare("INSERT IGNORE INTO collector_records (site_id, source_id, source_type, source_url, title, summary, content, status, collected_at, created_at, updated_at)
+        VALUES (:site_id, :source_id, :source_type, :source_url, :title, :summary, :content, 'draft', :collected_at, :created_at, :updated_at)");
+    foreach ($items as $item) {
+        $stmt->execute([
+            'site_id' => (int)$source['site_id'],
+            'source_id' => (int)$source['id'],
+            'source_type' => $source['source_type'],
+            'source_url' => mb_substr((string)$item['source_url'], 0, 500, 'UTF-8'),
+            'title' => mb_substr((string)$item['title'], 0, 255, 'UTF-8'),
+            'summary' => $item['summary'] ?? '',
+            'content' => $item['content'] ?? '',
+            'collected_at' => $time,
+            'created_at' => $time,
+            'updated_at' => $time,
+        ]);
+        if ($pdo->lastInsertId()) {
+            $created[] = fetch_one($pdo, 'collector_records', (int)$pdo->lastInsertId());
+        }
+    }
+    $result = '采集到 ' . count($items) . ' 条，新增 ' . count($created) . ' 条';
+    $update = $pdo->prepare('UPDATE collector_sources SET last_run_at = :last_run_at, last_result = :last_result, updated_at = :updated_at WHERE id = :id');
+    $update->execute(['id' => $sourceId, 'last_run_at' => $time, 'last_result' => $result, 'updated_at' => $time]);
+    return ['source' => fetch_one($pdo, 'collector_sources', $sourceId), 'items' => $created, 'message' => $result];
+}
+
+function publish_collector_record(PDO $pdo, int $recordId, string $status = 'draft'): array
+{
+    ensure_collector_tables($pdo);
+    $record = fetch_one($pdo, 'collector_records', $recordId);
+    if (!$record) {
+        fail('采集记录不存在', 'NOT_FOUND', 404);
+    }
+    if (!empty($record['article_id'])) {
+        return ['article' => fetch_one($pdo, 'articles', (int)$record['article_id']), 'record' => $record];
+    }
+    $slug = draft_slug((string)$record['title'], 'collected') . '-' . (int)$record['id'];
+    $source = !empty($record['source_id']) ? fetch_one($pdo, 'collector_sources', (int)$record['source_id']) : null;
+    $articleId = insert_article($pdo, [
+        'category_id' => $source['category_id'] ?? null,
+        'title' => $record['title'],
+        'slug' => $slug,
+        'summary' => $record['summary'] ?? '',
+        'content' => ($record['content'] ?? '') . '<p>来源：' . htmlspecialchars((string)$record['source_url'], ENT_QUOTES, 'UTF-8') . '</p>',
+        'seo_title' => $record['title'],
+        'seo_description' => $record['summary'] ?? '',
+        'status' => in_array($status, ['draft', 'published'], true) ? $status : 'draft',
+        'published_at' => $status === 'published' ? now() : null,
+    ]);
+    sync_content_distribution($pdo, 'article', $articleId, [(int)$record['site_id']]);
+    $update = $pdo->prepare("UPDATE collector_records SET article_id = :article_id, status = 'converted', updated_at = :updated_at WHERE id = :id");
+    $update->execute(['id' => $recordId, 'article_id' => $articleId, 'updated_at' => now()]);
+    return ['article' => attach_distribution($pdo, 'article', [fetch_one($pdo, 'articles', $articleId)])[0], 'record' => fetch_one($pdo, 'collector_records', $recordId)];
+}
+
 function svg_text(string $value): string
 {
     return htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
@@ -2614,6 +2868,8 @@ function ensure_auth_tables(PDO $pdo): void
         INDEX idx_visitor_key (visitor_key)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     ensure_column($pdo, 'site_visits', 'site_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 10001');
+
+    ensure_collector_tables($pdo);
 
     $exists = (int)$pdo->query('SELECT COUNT(*) FROM admin_users')->fetchColumn();
     if ($exists === 0) {
@@ -3639,6 +3895,66 @@ try {
         if ($method === 'DELETE') {
             $pdo->prepare('DELETE FROM form_submissions WHERE id = ?')->execute([$id]);
             ok([], '删除成功');
+        }
+    }
+
+    if ($method === 'GET' && $path === '/collector/sources') {
+        ok(list_collector_sources($pdo, main_pdo()));
+    }
+
+    if ($method === 'POST' && $path === '/collector/sources') {
+        ensure_collector_tables($pdo);
+        $data = body_json();
+        require_fields($data, ['name', 'url']);
+        $payload = normalize_collector_source($data);
+        $stmt = $pdo->prepare("INSERT INTO collector_sources (site_id, name, source_type, url, category_id, rewrite_mode, status, created_at, updated_at)
+            VALUES (:site_id, :name, :source_type, :url, :category_id, :rewrite_mode, :status, :created_at, :updated_at)");
+        $time = now();
+        $stmt->execute($payload + ['created_at' => $time, 'updated_at' => $time]);
+        ok(fetch_one($pdo, 'collector_sources', (int)$pdo->lastInsertId()), '采集源已创建');
+    }
+
+    if ($params = route_param('/collector/sources/{id}', $path)) {
+        ensure_collector_tables($pdo);
+        $id = (int)$params['id'];
+        if ($method === 'PUT') {
+            $current = fetch_one($pdo, 'collector_sources', $id);
+            if (!$current) {
+                fail('采集源不存在', 'NOT_FOUND', 404);
+            }
+            $payload = normalize_collector_source(body_json(), $current);
+            $stmt = $pdo->prepare("UPDATE collector_sources SET site_id=:site_id, name=:name, source_type=:source_type, url=:url, category_id=:category_id, rewrite_mode=:rewrite_mode, status=:status, updated_at=:updated_at WHERE id=:id");
+            $stmt->execute($payload + ['id' => $id, 'updated_at' => now()]);
+            ok(fetch_one($pdo, 'collector_sources', $id), '采集源已保存');
+        }
+        if ($method === 'DELETE') {
+            $pdo->prepare('DELETE FROM collector_sources WHERE id = ?')->execute([$id]);
+            ok([], '采集源已删除');
+        }
+    }
+
+    if ($params = route_param('/collector/sources/{id}/run', $path)) {
+        if ($method === 'POST') {
+            ok(run_collector_source($pdo, (int)$params['id']), '采集完成');
+        }
+    }
+
+    if ($method === 'GET' && $path === '/collector/records') {
+        ok(list_collector_records($pdo, main_pdo()));
+    }
+
+    if ($params = route_param('/collector/records/{id}', $path)) {
+        if ($method === 'DELETE') {
+            ensure_collector_tables($pdo);
+            $pdo->prepare('DELETE FROM collector_records WHERE id = ?')->execute([(int)$params['id']]);
+            ok([], '采集记录已删除');
+        }
+    }
+
+    if ($params = route_param('/collector/records/{id}/publish', $path)) {
+        if ($method === 'POST') {
+            $data = body_json();
+            ok(publish_collector_record($pdo, (int)$params['id'], (string)($data['status'] ?? 'draft')), '已转为文章');
         }
     }
 
