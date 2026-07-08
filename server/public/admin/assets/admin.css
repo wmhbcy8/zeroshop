@@ -296,6 +296,32 @@ tr.selected-row td { background: #f0f7ff; }
   color: var(--text);
   word-break: break-word;
 }
+.shipment-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.shipment-summary div {
+  border: 1px solid #b9f2cf;
+  border-radius: 8px;
+  background: #f6fff9;
+  padding: 10px 12px;
+}
+.shipment-summary small {
+  display: block;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.shipment-summary strong {
+  display: block;
+  color: var(--text);
+  word-break: break-word;
+}
+.shipment-summary .text-btn {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
 .quick-note-row {
   margin-top: -4px;
 }

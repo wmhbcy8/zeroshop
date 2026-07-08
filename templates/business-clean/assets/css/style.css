@@ -309,6 +309,21 @@ p { color: var(--muted); margin: 0 0 12px; }
 .payment-guide p {
   margin: 0;
 }
+.shipment-card {
+  display: grid;
+  gap: 8px;
+  border-color: #a7e3c2;
+  background: #f6fff9;
+}
+.shipment-card h2 {
+  margin: 0;
+}
+.shipment-card strong {
+  color: #15803d;
+}
+.shipment-card p {
+  margin: 0;
+}
 .search-result {
   display: block;
   border: 1px solid var(--line);

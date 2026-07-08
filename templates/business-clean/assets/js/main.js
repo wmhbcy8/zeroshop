@@ -279,6 +279,33 @@ function renderPaymentProofForm(order, phone) {
   ].join('');
 }
 
+function renderShipmentCard(order) {
+  const tracking = [order.tracking_company, order.tracking_no].filter(Boolean).join(' / ') || '';
+  let title = '等待付款确认';
+  let text = '客服会在核对付款后安排备货。';
+  if (order.payment_status === 'paid' && !['shipped', 'finished'].includes(order.fulfillment_status)) {
+    title = '已收款，等待发货';
+    text = '订单已进入备货流程，发货后会显示物流信息。';
+  }
+  if (order.fulfillment_status === 'shipped') {
+    title = '订单已发货';
+    text = tracking || '订单已发货，物流单号稍后同步。';
+  }
+  if (order.fulfillment_status === 'finished') {
+    title = '订单已完成';
+    text = tracking || '订单已完成。';
+  }
+  return [
+    '<div class="shipment-card order-lookup-block">',
+    '<h2>配送进度</h2>',
+    '<strong>' + escapeHtml(title) + '</strong>',
+    '<p>' + escapeHtml(text) + '</p>',
+    '<p>支付时间：' + escapeHtml(order.paid_at || '-') + '</p>',
+    '<p>发货时间：' + escapeHtml(order.shipped_at || '-') + '</p>',
+    '</div>'
+  ].join('');
+}
+
 function renderOrderLookup(order) {
   const items = Array.isArray(order.items) ? order.items : [];
   const tracking = [order.tracking_company, order.tracking_no].filter(Boolean).join(' / ') || '暂无物流信息';
@@ -303,6 +330,7 @@ function renderOrderLookup(order) {
     '<p>支付时间：' + escapeHtml(order.paid_at || '-') + '</p>',
     '<p>发货时间：' + escapeHtml(order.shipped_at || '-') + '</p>',
     '</div>',
+    renderShipmentCard(order),
     guideHtml,
     proofHtml,
     '<form class="customer-note-form order-lookup-block" data-api="/api/orders/customer-note">',

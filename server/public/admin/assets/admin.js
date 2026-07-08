@@ -1121,6 +1121,15 @@ function renderOrderItems(items) {
   `).join('');
 }
 
+function shipmentNoticeText(item) {
+  const tracking = [item.tracking_company, item.tracking_no].filter(Boolean).join(' / ') || '物流信息待补充';
+  return [
+    `您好，您的订单 ${item.order_no || '-'} 已安排发货。`,
+    `物流信息：${tracking}。`,
+    item.tracking_no ? '您可以复制物流单号到对应物流官网查询进度。' : '物流单号补充后，我们会继续同步。'
+  ].join('\n');
+}
+
 function fillOrderDetail(item) {
   const form = $('#orderDetailForm');
   const detailBox = $('#orderDetailBox');
@@ -1159,8 +1168,26 @@ function fillOrderDetail(item) {
       `).join('')}
     </div>
   `;
+  const shipmentSummary = [
+    ['履约状态', fulfillmentStatusLabel(item.fulfillment_status)],
+    ['物流公司', item.tracking_company || '-'],
+    ['物流单号', item.tracking_no || '-'],
+    ['发货通知', item.fulfillment_status === 'shipped' ? '可复制发送客户' : '发货后可复制']
+  ];
+  const shipmentSummaryHtml = `
+    <div class="shipment-summary">
+      ${shipmentSummary.map(([label, value]) => `
+        <div>
+          <small>${escapeHtml(label)}</small>
+          <strong>${escapeHtml(value)}</strong>
+        </div>
+      `).join('')}
+      <button type="button" class="text-btn" data-copy-value="${escapeHtml(shipmentNoticeText(item))}" data-copy-label="发货通知">复制发货通知</button>
+    </div>
+  `;
   detailBox.innerHTML = `
     ${paymentSummaryHtml}
+    ${shipmentSummaryHtml}
     <div class="form-detail-meta">
       <div><strong>${escapeHtml(item.order_no)}</strong><br><small>${escapeHtml(item.customer_name)} / ${escapeHtml(item.phone)}</small></div>
       <span>${escapeHtml(item.created_at || '')}</span>
@@ -1251,7 +1278,7 @@ function orderQuickFilterItems() {
     { label: '全部订单', keyword: '', payment_status: '', fulfillment_status: '' },
     { label: '待支付', keyword: '', payment_status: 'pending', fulfillment_status: '' },
     { label: '待核款', keyword: '付款凭证', payment_status: 'pending', fulfillment_status: '' },
-    { label: '已支付待发货', keyword: '', payment_status: 'paid', fulfillment_status: 'confirmed' },
+    { label: '待发货', keyword: '', payment_status: 'paid', fulfillment_status: 'confirmed' },
     { label: '待处理', keyword: '', payment_status: '', fulfillment_status: 'new' },
     { label: '已发货', keyword: '', payment_status: '', fulfillment_status: 'shipped' },
     { label: '已完成', keyword: '', payment_status: '', fulfillment_status: 'finished' }
