@@ -917,6 +917,7 @@ function record_site_visit(PDO $pdo): array
     if ($path === '') {
         $path = '/';
     }
+    assert_public_rate_limit($pdo, $siteId, 'analytics.visit', [$path, $sessionId], 120, 60);
     $ip = substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 80);
     $userAgent = substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255);
     $visitorSeed = $sessionId !== '' ? $sessionId : $ip . '|' . $userAgent;
@@ -3226,6 +3227,52 @@ function public_order_view(array $order): array
     ];
 }
 
+function rate_limit_key(int $siteId, string $action, array $parts = []): string
+{
+    $ip = client_ip();
+    $ua = substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 120);
+    $payload = json_encode([$siteId, $action, $ip, $ua, $parts], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    return hash('sha256', (string)$payload);
+}
+
+function assert_public_rate_limit(PDO $pdo, int $siteId, string $action, array $parts = [], int $limit = 10, int $windowSeconds = 60): void
+{
+    $key = rate_limit_key($siteId, $action, $parts);
+    $nowTs = time();
+    $windowStartTs = $nowTs - $windowSeconds;
+    $now = date('Y-m-d H:i:s', $nowTs);
+    $pdo->prepare('DELETE FROM api_rate_limits WHERE updated_at < ?')->execute([date('Y-m-d H:i:s', $nowTs - 86400)]);
+    $stmt = $pdo->prepare('SELECT * FROM api_rate_limits WHERE rate_key = ? LIMIT 1');
+    $stmt->execute([$key]);
+    $row = $stmt->fetch();
+    if (!$row) {
+        $insert = $pdo->prepare("INSERT INTO api_rate_limits (rate_key, site_id, action, counter, window_started_at, updated_at)
+            VALUES (:rate_key, :site_id, :action, 1, :window_started_at, :updated_at)");
+        $insert->execute([
+            'rate_key' => $key,
+            'site_id' => $siteId,
+            'action' => $action,
+            'window_started_at' => $now,
+            'updated_at' => $now,
+        ]);
+        return;
+    }
+    $started = strtotime((string)($row['window_started_at'] ?? '')) ?: 0;
+    $counter = (int)($row['counter'] ?? 0);
+    if ($started < $windowStartTs) {
+        $update = $pdo->prepare('UPDATE api_rate_limits SET counter = 1, window_started_at = :window_started_at, updated_at = :updated_at WHERE rate_key = :rate_key');
+        $update->execute(['rate_key' => $key, 'window_started_at' => $now, 'updated_at' => $now]);
+        return;
+    }
+    if ($counter >= $limit) {
+        $retryAfter = max(1, $windowSeconds - max(0, $nowTs - $started));
+        header('Retry-After: ' . $retryAfter);
+        fail('操作过于频繁，请稍后再试', 'RATE_LIMITED', 429, ['retry_after' => $retryAfter]);
+    }
+    $update = $pdo->prepare('UPDATE api_rate_limits SET counter = counter + 1, updated_at = :updated_at WHERE rate_key = :rate_key');
+    $update->execute(['rate_key' => $key, 'updated_at' => $now]);
+}
+
 function list_orders(PDO $pdo, ?PDO $main = null): array
 {
     $page = max(1, (int)($_GET['page'] ?? 1));
@@ -4782,6 +4829,18 @@ function ensure_auth_tables(PDO $pdo): void
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     ensure_column($pdo, 'site_visits', 'site_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 10001');
 
+    $pdo->exec("CREATE TABLE IF NOT EXISTS api_rate_limits (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        rate_key CHAR(64) NOT NULL UNIQUE,
+        site_id BIGINT UNSIGNED NOT NULL DEFAULT 10001,
+        action VARCHAR(80) NOT NULL,
+        counter INT UNSIGNED NOT NULL DEFAULT 0,
+        window_started_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_site_action (site_id, action),
+        INDEX idx_updated_at (updated_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
     ensure_collector_tables($pdo);
     ensure_ai_task_tables($pdo);
 
@@ -5022,6 +5081,7 @@ try {
         if (!is_array($data['data'])) {
             fail('表单数据格式错误', 'VALIDATION_ERROR', 422);
         }
+        assert_public_rate_limit($pdo, $siteId, 'forms.submit', [(string)$data['form_key']], 5, 300);
         $stmt = $pdo->prepare("INSERT INTO form_submissions (site_id, form_key, source_url, data, ip_address, user_agent, status, created_at, updated_at)
             VALUES (:site_id, :form_key, :source_url, :data, :ip_address, :user_agent, 'new', :created_at, :updated_at)");
         $time = now();
@@ -5045,6 +5105,7 @@ try {
         if (!is_array($data['items'])) {
             fail('订单商品格式错误', 'VALIDATION_ERROR', 422);
         }
+        assert_public_rate_limit($pdo, $siteId, 'orders.create', [trim((string)$data['phone'])], 3, 300);
         $items = normalize_order_items($data['items']);
         if (!$items) {
             fail('订单至少需要一个商品', 'VALIDATION_ERROR', 422);
@@ -5076,7 +5137,9 @@ try {
 
     if ($method === 'POST' && $path === '/orders/lookup') {
         $data = body_json();
+        $siteId = resolve_request_site_id($data);
         require_fields($data, ['order_no', 'phone']);
+        assert_public_rate_limit($pdo, $siteId, 'orders.lookup', [trim((string)$data['phone'])], 20, 60);
         $stmt = $pdo->prepare('SELECT * FROM orders WHERE order_no = :order_no AND phone = :phone LIMIT 1');
         $stmt->execute([
             'order_no' => trim((string)$data['order_no']),
@@ -5088,7 +5151,9 @@ try {
 
     if ($method === 'POST' && $path === '/orders/customer-note') {
         $data = body_json();
+        $siteId = resolve_request_site_id($data);
         require_fields($data, ['order_no', 'phone', 'note']);
+        assert_public_rate_limit($pdo, $siteId, 'orders.customer_note.lookup', [trim((string)$data['phone'])], 20, 60);
         $stmt = $pdo->prepare('SELECT * FROM orders WHERE order_no = :order_no AND phone = :phone LIMIT 1');
         $stmt->execute([
             'order_no' => trim((string)$data['order_no']),
@@ -5098,6 +5163,7 @@ try {
         if (!$order) {
             fail('未找到匹配订单，请检查订单号和手机号', 'NOT_FOUND', 404);
         }
+        assert_public_rate_limit($pdo, (int)($order['site_id'] ?? $siteId), 'orders.customer_note', [trim((string)$data['order_no']), trim((string)$data['phone'])], 5, 300);
         $type = trim((string)($data['type'] ?? '补充说明'));
         $allowedTypes = ['付款说明', '开票需求', '售后说明', '补充说明'];
         if (!in_array($type, $allowedTypes, true)) {
@@ -5122,7 +5188,9 @@ try {
 
     if ($method === 'POST' && $path === '/orders/payment-proof') {
         $data = body_json();
+        $siteId = resolve_request_site_id($data);
         require_fields($data, ['order_no', 'phone', 'amount', 'reference']);
+        assert_public_rate_limit($pdo, $siteId, 'orders.payment_proof.lookup', [trim((string)$data['phone'])], 20, 60);
         $stmt = $pdo->prepare('SELECT * FROM orders WHERE order_no = :order_no AND phone = :phone LIMIT 1');
         $stmt->execute([
             'order_no' => trim((string)$data['order_no']),
@@ -5132,6 +5200,7 @@ try {
         if (!$order) {
             fail('未找到匹配订单，请检查订单号和手机号', 'NOT_FOUND', 404);
         }
+        assert_public_rate_limit($pdo, (int)($order['site_id'] ?? $siteId), 'orders.payment_proof', [trim((string)$data['order_no']), trim((string)$data['phone'])], 5, 300);
         $amount = trim((string)$data['amount']);
         $reference = trim((string)$data['reference']);
         $note = trim((string)($data['note'] ?? ''));
@@ -5160,7 +5229,9 @@ try {
 
     if ($method === 'POST' && $path === '/orders/service-request') {
         $data = body_json();
+        $siteId = resolve_request_site_id($data);
         require_fields($data, ['order_no', 'phone', 'type', 'message']);
+        assert_public_rate_limit($pdo, $siteId, 'orders.service_request.lookup', [trim((string)$data['phone'])], 20, 60);
         $stmt = $pdo->prepare('SELECT * FROM orders WHERE order_no = :order_no AND phone = :phone LIMIT 1');
         $stmt->execute([
             'order_no' => trim((string)$data['order_no']),
@@ -5170,6 +5241,7 @@ try {
         if (!$order) {
             fail('未找到匹配订单，请检查订单号和手机号', 'NOT_FOUND', 404);
         }
+        assert_public_rate_limit($pdo, (int)($order['site_id'] ?? $siteId), 'orders.service_request', [trim((string)$data['order_no']), trim((string)$data['phone'])], 5, 300);
         $type = trim((string)$data['type']);
         $allowedTypes = ['催发货', '修改收货信息', '售后问题', '其他服务'];
         if (!in_array($type, $allowedTypes, true)) {
