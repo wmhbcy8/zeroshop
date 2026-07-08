@@ -152,6 +152,7 @@
                       <el-button type="primary" :loading="pagePlanLoading" @click="generatePagePlan">AI 生成页面草案</el-button>
                       <el-button :disabled="!pagePlan" @click="applyPagePlan">应用草案</el-button>
                       <el-button :disabled="!pagePlan" :loading="pagePlanSaving" @click="applyPagePlanAndSave">应用并保存</el-button>
+                      <el-button :disabled="!pagePlan" :loading="pagePlanPublishing" @click="applyPagePlanSaveGeneratePreview">保存并生成预览</el-button>
                     </div>
                   </div>
                   <div v-if="pagePlan" class="page-plan-preview">
@@ -171,6 +172,21 @@
                         <b>{{ pagePlan.home_content?.advantages?.length || 0 }} 个优势 / {{ pagePlan.home_content?.cases?.length || 0 }} 个案例</b>
                         <small>{{ pagePlan.home_content?.faqs?.length || 0 }} 个 FAQ</small>
                       </article>
+                    </div>
+                    <div class="builder-screen">
+                      <div class="builder-screen-hero">
+                        <span>{{ site.brand || 'ZeroShop' }}</span>
+                        <h3>{{ pagePlan.hero?.title || site.hero?.title || '品牌独立站首页' }}</h3>
+                        <p>{{ pagePlan.hero?.subtitle || site.hero?.subtitle || pagePlan.summary }}</p>
+                      </div>
+                      <div class="builder-screen-modules">
+                        <article v-for="item in (pagePlan.home_modules || []).filter((module: any) => module.enabled !== false).slice(0, 5)" :key="item.key">
+                          <span>{{ item.title || moduleTitle(item.key) }}</span>
+                        </article>
+                      </div>
+                      <div class="builder-screen-content">
+                        <small v-for="item in (pagePlan.home_content?.advantages || []).slice(0, 3)" :key="item.title || item">{{ item.title || item }}</small>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -514,6 +530,7 @@ const aiBatchLoading = ref(false)
 const aiCoverLoading = ref('')
 const pagePlanLoading = ref(false)
 const pagePlanSaving = ref(false)
+const pagePlanPublishing = ref(false)
 
 const navItems = [
   { key: 'dashboard', label: '概览', hint: '查看运营指标、内容数量和站点状态。', icon: 'Odometer' },
@@ -770,6 +787,18 @@ async function applyPagePlanAndSave() {
   }
 }
 
+async function applyPagePlanSaveGeneratePreview() {
+  pagePlanPublishing.value = true
+  try {
+    applyPagePlan()
+    await saveTemplateSettings()
+    await generateSite()
+    previewSite()
+  } finally {
+    pagePlanPublishing.value = false
+  }
+}
+
 async function loadArticles() {
   const data = await request(`/api/articles?page=${articlePager.page}&page_size=${articlePager.page_size}`)
   articles.value = data.items || []
@@ -1021,6 +1050,7 @@ async function generateSite() {
     publishResult.value = data || { message: '静态站已生成' }
     ElMessage.success('静态站已生成')
     await loadVersions()
+    return data
   } finally {
     generating.value = false
   }
