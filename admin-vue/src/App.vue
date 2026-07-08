@@ -228,12 +228,21 @@
                 <strong>站点设置</strong>
                 <div class="head-actions">
                   <el-button @click="loadStaticPages">刷新页面列表</el-button>
-                  <el-button @click="saveSettings">保存设置</el-button>
+                  <el-button @click="saveSettingsAsDefault">保存为公共默认</el-button>
+                  <el-button @click="applySettingsToAll">应用到全部站点</el-button>
+                  <el-button @click="saveSettings">保存当前站点</el-button>
                   <el-button type="primary" :loading="generating" @click="saveSettingsAndGenerate">保存并生成静态站</el-button>
                 </div>
               </div>
             </template>
             <el-form :model="site" label-width="120px" class="wide-form">
+              <el-alert
+                class="mb16"
+                type="info"
+                show-icon
+                :closable="false"
+                :title="`当前编辑：${currentSite?.name || site.name || '默认站点'}，${settingsScopeText}。普通保存只影响当前站点；需要统一菜单时再使用“应用到全部站点”。`"
+              />
               <el-divider content-position="left">基础信息</el-divider>
               <el-row :gutter="16">
                 <el-col :span="12"><el-form-item label="站点名称"><el-input v-model="site.name" /></el-form-item></el-col>
@@ -1024,6 +1033,10 @@ const navItems = [
 ]
 const currentNav = computed(() => navItems.find((item) => item.key === view.value))
 const currentSite = computed(() => sites.value.find((item: any) => String(item.id) === String(currentSiteId.value)))
+const settingsScopeText = computed(() => {
+  if (String(currentSiteId.value) === '10001') return '正在编辑公共默认配置'
+  return site.has_site_override ? '当前站点已有独立配置' : '当前站点正在继承公共默认配置'
+})
 const staticPageGroups = computed(() => {
   const labels: any = { system: '系统页面', article: '文章页面', product: '商品页面', custom: '自定义页面' }
   return ['system', 'article', 'product', 'custom']
@@ -1313,7 +1326,22 @@ async function saveSettings() {
   site.nav = cleanNavItems(site.nav)
   const data = await request('/api/site/settings', { method: 'PUT', data: site })
   Object.assign(site, normalizeSite(data))
-  ElMessage.success('站点设置已保存，生成静态站后前台生效')
+  ElMessage.success('当前站点设置已保存，生成静态站后前台生效')
+}
+
+async function saveSettingsAsDefault() {
+  site.nav = cleanNavItems(site.nav)
+  const data = await request('/api/site/settings-default', { method: 'PUT', data: site })
+  Object.assign(site, normalizeSite(data))
+  ElMessage.success('公共默认设置已保存，新站点会优先继承这套配置')
+}
+
+async function applySettingsToAll() {
+  await ElMessageBox.confirm('确定把当前站点设置应用到全部站点吗？已有独立菜单、SEO、AI、支付等设置会被覆盖。')
+  site.nav = cleanNavItems(site.nav)
+  const data = await request('/api/site/settings/apply-all', { method: 'POST', data: site })
+  ElMessage.success(`已应用到 ${data.count || 0} 个站点`)
+  await Promise.all([loadSites(), loadSettings()])
 }
 
 async function saveSettingsAndGenerate() {

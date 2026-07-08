@@ -850,7 +850,7 @@ function center_site_items(PDO $main, PDO $sitePdo): array
 {
     ensure_center_tables($main);
     ensure_content_distribution_table($sitePdo);
-    $settings = site_settings($sitePdo);
+    $settings = site_settings($sitePdo, 10001);
     $now = now();
     $stmt = $main->prepare("INSERT INTO sites (id, customer_id, name, site_key, domain, subdomain, language, template_key, database_name, public_path, status, created_at, updated_at)
         VALUES (10001, 1, :name, 'site_10001', :domain, 'site10001.huajian.local', :language, :template_key, :database_name, 'sites/site_10001/public', 'active', :created_at, :updated_at)
@@ -1026,14 +1026,13 @@ function update_center_site(PDO $main, int $id, array $data, ?PDO $sitePdo = nul
         'updated_at' => now(),
     ]);
     if ($sitePdo && $id === 10001) {
-        $settings = site_settings($sitePdo);
+        $settings = site_settings($sitePdo, 10001);
         foreach (['name', 'domain', 'language', 'template_key'] as $field) {
             $settings[$field] = $payload[$field];
         }
         $settings['deploy'] = $payload['deploy'];
         $settings['updated_at'] = now();
-        $settingsStmt = $sitePdo->prepare("REPLACE INTO site_settings (setting_key, setting_value, updated_at) VALUES ('site', :value, :updated_at)");
-        $settingsStmt->execute(['value' => json_encode($settings, JSON_UNESCAPED_UNICODE), 'updated_at' => $settings['updated_at']]);
+        save_site_settings($sitePdo, $settings, 10001);
     }
     return fetch_one($main, 'sites', $id) ?: ($current + $payload);
 }
@@ -1412,12 +1411,7 @@ function apply_payment_channel_to_site(PDO $main, PDO $sitePdo, int $channelId):
         'channel_name' => $channel['name'],
         'provider' => $channel['provider'],
     ]);
-    $stmt = $sitePdo->prepare("REPLACE INTO site_settings (setting_key, setting_value, updated_at) VALUES ('site', :value, :updated_at)");
-    $stmt->execute([
-        'value' => json_encode($site, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-        'updated_at' => now(),
-    ]);
-    return ['channel' => $channel, 'site' => $site];
+    return ['channel' => $channel, 'site' => save_site_settings($sitePdo, $site)];
 }
 
 function ensure_content_distribution_table(PDO $pdo): void
@@ -1783,14 +1777,66 @@ function export_orders_csv(PDO $pdo): void
     exit;
 }
 
-function site_settings(PDO $pdo): array
+function read_site_settings_key(PDO $pdo, string $key): array
 {
-    $value = $pdo->query("SELECT setting_value FROM site_settings WHERE setting_key = 'site'")->fetchColumn();
+    $stmt = $pdo->prepare('SELECT setting_value FROM site_settings WHERE setting_key = ? LIMIT 1');
+    $stmt->execute([$key]);
+    $value = $stmt->fetchColumn();
     if (!$value) {
         return [];
     }
     $data = json_decode((string)$value, true);
     return is_array($data) ? $data : [];
+}
+
+function site_settings_key(int $siteId): string
+{
+    return $siteId === 10001 ? 'site' : 'site_' . $siteId;
+}
+
+function site_settings(PDO $pdo, ?int $siteId = null): array
+{
+    $siteId = $siteId ?: requested_site_id();
+    $base = read_site_settings_key($pdo, 'site');
+    $settings = $base;
+    if ($siteId !== 10001) {
+        $override = read_site_settings_key($pdo, site_settings_key($siteId));
+        if ($override) {
+            $settings = array_replace_recursive($base, $override);
+        }
+    }
+    $settings['site_id'] = $siteId;
+    $settings['settings_scope'] = $siteId === 10001 ? 'default' : 'site';
+    $settings['has_site_override'] = $siteId === 10001 ? true : (bool)read_site_settings_key($pdo, site_settings_key($siteId));
+    return $settings;
+}
+
+function save_site_settings(PDO $pdo, array $settings, ?int $siteId = null): array
+{
+    $siteId = $siteId ?: requested_site_id();
+    unset($settings['settings_scope'], $settings['has_site_override']);
+    $settings['site_id'] = $siteId;
+    $settings['updated_at'] = now();
+    $stmt = $pdo->prepare("REPLACE INTO site_settings (setting_key, setting_value, updated_at) VALUES (:key, :value, :updated_at)");
+    $stmt->execute([
+        'key' => site_settings_key($siteId),
+        'value' => json_encode($settings, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'updated_at' => $settings['updated_at'],
+    ]);
+    return site_settings($pdo, $siteId);
+}
+
+function apply_site_settings_to_all(PDO $main, PDO $sitePdo, array $settings): array
+{
+    ensure_center_tables($main);
+    $sites = $main->query('SELECT id FROM sites ORDER BY id ASC')->fetchAll();
+    $count = 0;
+    foreach ($sites as $site) {
+        $siteId = (int)$site['id'];
+        save_site_settings($sitePdo, $settings, $siteId);
+        $count++;
+    }
+    return ['count' => $count, 'site_ids' => array_map(fn($site) => (int)$site['id'], $sites)];
 }
 
 function site_static_pages(PDO $pdo): array
@@ -2776,9 +2822,17 @@ try {
 
     if ($method === 'PUT' && $path === '/site/settings') {
         $data = body_json();
-        $stmt = $pdo->prepare("REPLACE INTO site_settings (setting_key, setting_value, updated_at) VALUES ('site', :value, :updated_at)");
-        $stmt->execute(['value' => json_encode($data, JSON_UNESCAPED_UNICODE), 'updated_at' => now()]);
-        ok($data, '保存成功');
+        ok(save_site_settings($pdo, $data), '保存成功');
+    }
+
+    if ($method === 'PUT' && $path === '/site/settings-default') {
+        $data = body_json();
+        ok(save_site_settings($pdo, $data, 10001), '公共默认设置已保存');
+    }
+
+    if ($method === 'POST' && $path === '/site/settings/apply-all') {
+        $data = body_json();
+        ok(apply_site_settings_to_all(main_pdo(), $pdo, $data), '站点设置已应用到全部站点');
     }
 
     if ($method === 'POST' && $path === '/ai/generate') {
@@ -3304,6 +3358,10 @@ try {
         ensure_dir($publicPath);
         putenv('HJ_SITE_KEY=' . (string)$currentSite['site_key']);
         putenv('HJ_SITE_ID=' . (string)$currentSite['id']);
+        putenv('HJ_SITE_NAME=' . (string)$currentSite['name']);
+        putenv('HJ_SITE_DOMAIN=' . (string)($currentSite['domain'] ?: $currentSite['subdomain']));
+        putenv('HJ_SITE_LANGUAGE=' . (string)($currentSite['language'] ?: 'zh-CN'));
+        putenv('HJ_TEMPLATE_KEY=' . (string)($currentSite['template_key'] ?: 'business-clean'));
         putenv('HJ_PUBLIC_PATH=' . $publicPath);
         $command = '"' . $php . '" "' . $script . '"';
         $output = [];

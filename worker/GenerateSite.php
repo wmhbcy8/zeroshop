@@ -152,18 +152,43 @@ function pdo_site(): ?PDO
 
 function load_data_from_mysql(PDO $pdo): array
 {
+    $siteId = (int)(env_or_null('HJ_SITE_ID') ?: 10001);
     $setting = $pdo->query("SELECT setting_value FROM site_settings WHERE setting_key = 'site'")->fetchColumn();
     if (!$setting) {
         throw new RuntimeException('Missing site setting in database.');
     }
 
     $site = json_decode($setting, true, 512, JSON_THROW_ON_ERROR);
-    $site['id'] = (int)(env_or_null('HJ_SITE_ID') ?: 10001);
+    $hasSiteOverride = false;
+    if ($siteId !== 10001) {
+        $stmt = $pdo->prepare('SELECT setting_value FROM site_settings WHERE setting_key = ? LIMIT 1');
+        $stmt->execute(['site_' . $siteId]);
+        $override = $stmt->fetchColumn();
+        if ($override) {
+            $overrideData = json_decode((string)$override, true, 512, JSON_THROW_ON_ERROR);
+            if (is_array($overrideData)) {
+                $site = array_replace_recursive($site, $overrideData);
+                $hasSiteOverride = true;
+            }
+        }
+    }
+    $site['id'] = $siteId;
+    if (!$hasSiteOverride || empty($site['name'])) {
+        $site['name'] = env_or_null('HJ_SITE_NAME') ?: ($site['name'] ?? '');
+    }
+    if (!$hasSiteOverride || empty($site['domain'])) {
+        $site['domain'] = env_or_null('HJ_SITE_DOMAIN') ?: ($site['domain'] ?? '');
+    }
+    if (!$hasSiteOverride || empty($site['language'])) {
+        $site['language'] = env_or_null('HJ_SITE_LANGUAGE') ?: ($site['language'] ?? 'zh-CN');
+    }
+    if (!$hasSiteOverride || empty($site['template_key'])) {
+        $site['template_key'] = env_or_null('HJ_TEMPLATE_KEY') ?: ($site['template_key'] ?? 'business-clean');
+    }
     $categories = $pdo->query("SELECT id, name, slug, description FROM categories ORDER BY sort_order ASC, id ASC")->fetchAll();
     $productCategories = $pdo->query("SELECT id, name, slug, description FROM product_categories ORDER BY sort_order ASC, id ASC")->fetchAll();
     $articles = $pdo->query("SELECT id, category_id, title, slug, cover, summary, content, seo_title, seo_keywords, seo_description, published_at FROM articles WHERE status = 'published' ORDER BY published_at DESC, id DESC")->fetchAll();
     $products = $pdo->query("SELECT id, category_id, title, slug, sku, cover, summary, description, price, market_price, stock, seo_title, seo_keywords, seo_description FROM products WHERE status = 'published' ORDER BY id DESC")->fetchAll();
-    $siteId = (int)(env_or_null('HJ_SITE_ID') ?: 10001);
     $articles = filter_distributed_content($pdo, 'article', $articles, $siteId);
     $products = filter_distributed_content($pdo, 'product', $products, $siteId);
 
