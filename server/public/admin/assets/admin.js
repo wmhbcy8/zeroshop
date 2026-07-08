@@ -1248,12 +1248,13 @@ async function chooseLatestMediaCover(type) {
 
 function orderQuickFilterItems() {
   return [
-    { label: '全部订单', payment_status: '', fulfillment_status: '' },
-    { label: '待支付', payment_status: 'pending', fulfillment_status: '' },
-    { label: '已支付待发货', payment_status: 'paid', fulfillment_status: 'confirmed' },
-    { label: '待处理', payment_status: '', fulfillment_status: 'new' },
-    { label: '已发货', payment_status: '', fulfillment_status: 'shipped' },
-    { label: '已完成', payment_status: '', fulfillment_status: 'finished' }
+    { label: '全部订单', keyword: '', payment_status: '', fulfillment_status: '' },
+    { label: '待支付', keyword: '', payment_status: 'pending', fulfillment_status: '' },
+    { label: '待核款', keyword: '付款凭证', payment_status: 'pending', fulfillment_status: '' },
+    { label: '已支付待发货', keyword: '', payment_status: 'paid', fulfillment_status: 'confirmed' },
+    { label: '待处理', keyword: '', payment_status: '', fulfillment_status: 'new' },
+    { label: '已发货', keyword: '', payment_status: '', fulfillment_status: 'shipped' },
+    { label: '已完成', keyword: '', payment_status: '', fulfillment_status: 'finished' }
   ];
 }
 
@@ -1265,7 +1266,7 @@ function initOrderOpsTools() {
     row.id = 'orderQuickFilters';
     row.className = 'order-quick-filters';
     row.innerHTML = orderQuickFilterItems().map((item) => `
-      <button type="button" class="ghost-btn" data-order-payment="${escapeHtml(item.payment_status)}" data-order-fulfillment="${escapeHtml(item.fulfillment_status)}">${escapeHtml(item.label)}</button>
+      <button type="button" class="ghost-btn" data-order-keyword="${escapeHtml(item.keyword)}" data-order-payment="${escapeHtml(item.payment_status)}" data-order-fulfillment="${escapeHtml(item.fulfillment_status)}">${escapeHtml(item.label)}</button>
     `).join('');
     stats.after(row);
   }
@@ -1308,7 +1309,8 @@ function renderOrderStats(stats = {}) {
   `).join('');
 }
 
-async function setOrderStatusFilter(paymentStatus = '', fulfillmentStatus = '') {
+async function setOrderStatusFilter(paymentStatus = '', fulfillmentStatus = '', keyword = '') {
+  state.orderFilters.keyword = keyword;
   state.orderFilters.payment_status = paymentStatus;
   state.orderFilters.fulfillment_status = fulfillmentStatus;
   syncOrderFilterForm();
@@ -1779,7 +1781,7 @@ document.addEventListener('click', async (event) => {
 
   const orderStatusFilter = target.closest('[data-order-payment][data-order-fulfillment]');
   if (orderStatusFilter) {
-    await setOrderStatusFilter(orderStatusFilter.dataset.orderPayment || '', orderStatusFilter.dataset.orderFulfillment || '');
+    await setOrderStatusFilter(orderStatusFilter.dataset.orderPayment || '', orderStatusFilter.dataset.orderFulfillment || '', orderStatusFilter.dataset.orderKeyword || '');
   }
 
   if (target.closest('#exportOrdersBtn')) {

@@ -20,6 +20,12 @@ document.addEventListener('submit', function (event) {
     return;
   }
 
+  if (form.matches('.payment-proof-form')) {
+    event.preventDefault();
+    submitPaymentProof(form);
+    return;
+  }
+
   if (!form.matches('.inquiry-form')) return;
   event.preventDefault();
 
@@ -255,12 +261,31 @@ function renderOrderReceipt(form, order, phone) {
   ].join('');
 }
 
+function renderPaymentProofForm(order, phone) {
+  if (order.payment_status !== 'pending') return '';
+  return [
+    '<form class="payment-proof-form order-lookup-block" data-api="/api/orders/payment-proof">',
+    '<h2>提交付款凭证</h2>',
+    '<input type="hidden" name="order_no" value="' + escapeHtml(order.order_no || '') + '">',
+    '<input type="hidden" name="phone" value="' + escapeHtml(phone || '') + '">',
+    '<div class="form-grid compact">',
+    '<input type="number" name="amount" min="0.01" step="0.01" placeholder="实际付款金额" required>',
+    '<input type="text" name="reference" maxlength="120" placeholder="流水号或截图编号" required>',
+    '</div>',
+    '<textarea name="note" maxlength="500" placeholder="补充付款账户、付款时间或其他说明"></textarea>',
+    '<button type="submit">提交付款凭证</button>',
+    '<p class="form-status" data-payment-proof-status></p>',
+    '</form>'
+  ].join('');
+}
+
 function renderOrderLookup(order) {
   const items = Array.isArray(order.items) ? order.items : [];
   const tracking = [order.tracking_company, order.tracking_no].filter(Boolean).join(' / ') || '暂无物流信息';
   const latest = readLatestOrder();
   const phone = latest.phone || new URLSearchParams(location.search).get('phone') || '';
   const guideHtml = order.payment_status === 'pending' ? renderPaymentGuide(readPaymentGuide(document), order) : '';
+  const proofHtml = renderPaymentProofForm(order, phone);
   return [
     '<div class="order-status-grid">',
     '<div><span>订单号</span><strong>' + escapeHtml(order.order_no) + '</strong></div>',
@@ -279,6 +304,7 @@ function renderOrderLookup(order) {
     '<p>发货时间：' + escapeHtml(order.shipped_at || '-') + '</p>',
     '</div>',
     guideHtml,
+    proofHtml,
     '<form class="customer-note-form order-lookup-block" data-api="/api/orders/customer-note">',
     '<h2>补充说明</h2>',
     '<input type="hidden" name="order_no" value="' + escapeHtml(order.order_no || '') + '">',
@@ -332,6 +358,50 @@ function submitCustomerNote(form) {
     })
     .finally(function () {
       form.querySelectorAll('button, textarea, select').forEach(function (item) {
+        item.disabled = false;
+      });
+    });
+}
+
+function submitPaymentProof(form) {
+  const api = form.getAttribute('data-api');
+  const status = form.querySelector('[data-payment-proof-status]');
+  if (!api || location.protocol === 'file:') {
+    if (status) status.textContent = '演示站暂不能提交付款凭证，部署后会同步到后台订单时间线。';
+    return;
+  }
+
+  const formData = new FormData(form);
+  const payload = {
+    order_no: formData.get('order_no') || '',
+    phone: formData.get('phone') || '',
+    amount: formData.get('amount') || '',
+    reference: formData.get('reference') || '',
+    note: formData.get('note') || ''
+  };
+  if (status) status.textContent = '正在提交付款凭证...';
+  form.querySelectorAll('button, input, textarea').forEach(function (item) {
+    item.disabled = true;
+  });
+
+  fetch(api, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(function (response) { return response.json(); })
+    .then(function (result) {
+      if (!result.success) throw new Error(result.message || '付款凭证提交失败');
+      form.amount.value = '';
+      form.reference.value = '';
+      form.note.value = '';
+      if (status) status.textContent = '付款凭证已提交，客服核对后会更新支付状态。';
+    })
+    .catch(function (error) {
+      if (status) status.textContent = error.message || '付款凭证提交失败，请稍后再试。';
+    })
+    .finally(function () {
+      form.querySelectorAll('button, input, textarea').forEach(function (item) {
         item.disabled = false;
       });
     });

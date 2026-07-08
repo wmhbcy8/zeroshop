@@ -1094,6 +1094,44 @@ try {
         ok(public_order_view(fetch_one($pdo, 'orders', (int)$order['id']) ?: $order), '说明已提交');
     }
 
+    if ($method === 'POST' && $path === '/orders/payment-proof') {
+        $data = body_json();
+        require_fields($data, ['order_no', 'phone', 'amount', 'reference']);
+        $stmt = $pdo->prepare('SELECT * FROM orders WHERE order_no = :order_no AND phone = :phone LIMIT 1');
+        $stmt->execute([
+            'order_no' => trim((string)$data['order_no']),
+            'phone' => trim((string)$data['phone']),
+        ]);
+        $order = $stmt->fetch();
+        if (!$order) {
+            fail('未找到匹配订单，请检查订单号和手机号', 'NOT_FOUND', 404);
+        }
+        $amount = trim((string)$data['amount']);
+        $reference = trim((string)$data['reference']);
+        $note = trim((string)($data['note'] ?? ''));
+        if ($amount === '' || !is_numeric($amount) || (float)$amount <= 0) {
+            fail('请填写有效付款金额', 'VALIDATION_ERROR', 422);
+        }
+        if ($reference === '') {
+            fail('请填写付款流水号或截图编号', 'VALIDATION_ERROR', 422);
+        }
+        if (mb_strlen($reference, 'UTF-8') > 120 || mb_strlen($note, 'UTF-8') > 500) {
+            fail('付款凭证内容过长', 'VALIDATION_ERROR', 422);
+        }
+        $proofText = '客户提交付款凭证：金额 ' . number_format((float)$amount, 2, '.', '') . '；流水号/截图编号 ' . $reference;
+        if ($note !== '') {
+            $proofText .= '；说明 ' . $note;
+        }
+        $remark = append_order_note((string)($order['remark'] ?? ''), $proofText);
+        $update = $pdo->prepare('UPDATE orders SET remark = :remark, updated_at = :updated_at WHERE id = :id');
+        $update->execute([
+            'id' => (int)$order['id'],
+            'remark' => $remark,
+            'updated_at' => now(),
+        ]);
+        ok(public_order_view(fetch_one($pdo, 'orders', (int)$order['id']) ?: $order), '付款凭证已提交');
+    }
+
     require_login($pdo);
 
     if ($method === 'GET' && $path === '/site/settings') {
