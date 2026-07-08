@@ -371,6 +371,50 @@ function list_order_service_requests(PDO $pdo): array
     ];
 }
 
+function resolve_order_service_requests(PDO $pdo): array
+{
+    $data = body_json();
+    $ids = $data['ids'] ?? [];
+    if (!is_array($ids) || !$ids) {
+        fail('请选择需要处理的服务请求', 'VALIDATION_ERROR', 422);
+    }
+    $handled = 0;
+    foreach ($ids as $requestId) {
+        $parts = explode('-', (string)$requestId, 2);
+        if (count($parts) !== 2) {
+            continue;
+        }
+        $orderId = (int)$parts[0];
+        $order = fetch_one($pdo, 'orders', $orderId);
+        if (!$order) {
+            continue;
+        }
+        $requests = service_requests_from_order($order);
+        $target = null;
+        foreach ($requests as $request) {
+            if ((string)$request['id'] === (string)$requestId && $request['status'] === 'pending') {
+                $target = $request;
+                break;
+            }
+        }
+        if (!$target) {
+            continue;
+        }
+        $note = '客服已处理服务请求-' . $target['type'] . '：服务中心批量处理';
+        $remark = append_order_note((string)($order['remark'] ?? ''), $note);
+        $stmt = $pdo->prepare('UPDATE orders SET remark = :remark, updated_at = :updated_at WHERE id = :id');
+        $stmt->execute([
+            'id' => $orderId,
+            'remark' => $remark,
+            'updated_at' => now(),
+        ]);
+        $handled++;
+    }
+    return [
+        'handled' => $handled,
+    ];
+}
+
 function public_order_view(array $order): array
 {
     $items = [];
@@ -1602,6 +1646,10 @@ try {
 
     if ($method === 'GET' && $path === '/orders/service-requests') {
         ok(list_order_service_requests($pdo));
+    }
+
+    if ($method === 'POST' && $path === '/orders/service-requests/resolve') {
+        ok(resolve_order_service_requests($pdo), '服务请求已处理');
     }
 
     if ($params = route_param('/orders/{id}', $path)) {

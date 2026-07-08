@@ -1318,12 +1318,27 @@ function renderServiceSummary(data = {}) {
   `).join('');
 }
 
+function updateServiceBadge(count = 0) {
+  const badge = $('#servicePendingBadge');
+  if (!badge) return;
+  badge.textContent = count > 99 ? '99+' : String(count);
+  badge.classList.toggle('hidden', !count);
+}
+
+function selectedServiceRequestIds() {
+  return $all('[data-service-request-check]:checked').map((item) => item.value);
+}
+
 async function loadServiceRequests() {
   const data = await request(`/api/orders/service-requests?${buildServiceQuery()}`);
   state.serviceRequests = data.items || [];
   renderServiceSummary(data);
+  updateServiceBadge(data.pending || 0);
+  const selectAll = $('#selectAllServiceRequests');
+  if (selectAll) selectAll.checked = false;
   $('#serviceRows').innerHTML = state.serviceRequests.length ? state.serviceRequests.map((item) => `
     <tr>
+      <td>${item.status === 'pending' ? `<input type="checkbox" data-service-request-check value="${escapeHtml(item.id)}">` : '-'}</td>
       <td><strong>${escapeHtml(item.type || '服务请求')}</strong><br><small>${escapeHtml(item.message || '-')}</small></td>
       <td>${escapeHtml(item.customer_name || '-')}<br><small>${escapeHtml(item.phone || '-')}</small></td>
       <td><strong>${escapeHtml(item.order_no || '-')}</strong><br><small>${escapeHtml(paymentStatusLabel(item.payment_status))} / ${escapeHtml(fulfillmentStatusLabel(item.fulfillment_status))}</small></td>
@@ -1331,7 +1346,7 @@ async function loadServiceRequests() {
       <td>${escapeHtml(item.time || '-')}</td>
       <td><button class="text-btn" data-open-service-order="${escapeHtml(item.order_id)}">去处理</button></td>
     </tr>
-  `).join('') : '<tr><td colspan="6" class="empty-cell">暂无服务请求</td></tr>';
+  `).join('') : '<tr><td colspan="7" class="empty-cell">暂无服务请求</td></tr>';
 }
 
 async function applyServiceFilters(form) {
@@ -1342,6 +1357,20 @@ async function applyServiceFilters(form) {
     type: data.type || ''
   };
   await loadServiceRequests();
+}
+
+async function resolveSelectedServiceRequests() {
+  const ids = selectedServiceRequestIds();
+  if (!ids.length) {
+    toast('请选择待处理服务请求');
+    return;
+  }
+  const result = await request('/api/orders/service-requests/resolve', {
+    method: 'POST',
+    body: JSON.stringify({ ids })
+  });
+  toast(`已处理 ${result.handled || 0} 条服务请求`);
+  await Promise.all([loadServiceRequests(), loadOrders(), loadDashboard()]);
 }
 
 async function loadMedia() {
@@ -2069,6 +2098,7 @@ document.addEventListener('click', async (event) => {
       return;
     }
     await updateSelectedOrder({ followup_note: note }, '服务请求已标记处理');
+    await loadServiceRequests();
   }
 
   const openServiceOrder = target.closest('[data-open-service-order]');
@@ -2251,6 +2281,12 @@ $('#serviceFilterForm').addEventListener('submit', async (event) => {
   await applyServiceFilters(event.currentTarget);
 });
 $('#reloadServiceBtn').addEventListener('click', () => loadServiceRequests().catch((error) => toast(error.message)));
+$('#selectAllServiceRequests').addEventListener('change', (event) => {
+  $all('[data-service-request-check]').forEach((item) => {
+    item.checked = event.currentTarget.checked;
+  });
+});
+$('#bulkResolveServiceBtn').addEventListener('click', () => resolveSelectedServiceRequests().catch((error) => toast(error.message)));
 $('#mediaForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
