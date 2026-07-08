@@ -9,6 +9,7 @@
 /storage/packages/
 /storage/publish_versions/
 /storage/build/
+/storage/secret.key
 /*.png
 
 config/database.local.php

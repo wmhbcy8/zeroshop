@@ -241,6 +241,129 @@ function ensure_dir(string $dir): void
     }
 }
 
+function app_secret_key(): string
+{
+    $envKey = getenv('HJ_APP_KEY');
+    if (is_string($envKey) && trim($envKey) !== '') {
+        return hash('sha256', trim($envKey), true);
+    }
+    $path = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'secret.key';
+    ensure_dir(dirname($path));
+    if (!is_file($path)) {
+        file_put_contents($path, bin2hex(random_bytes(32)));
+    }
+    return hash('sha256', trim((string)file_get_contents($path)), true);
+}
+
+function encrypt_secret(?string $value): string
+{
+    $plain = (string)$value;
+    if ($plain === '' || str_starts_with($plain, 'hjenc:v1:')) {
+        return $plain;
+    }
+    if (!function_exists('openssl_encrypt')) {
+        fail('当前 PHP 环境缺少 OpenSSL，无法加密敏感配置', 'CRYPTO_UNAVAILABLE', 500);
+    }
+    $iv = random_bytes(16);
+    $cipher = openssl_encrypt($plain, 'AES-256-CBC', app_secret_key(), OPENSSL_RAW_DATA, $iv);
+    if ($cipher === false) {
+        fail('敏感配置加密失败', 'CRYPTO_FAILED', 500);
+    }
+    $mac = hash_hmac('sha256', $iv . $cipher, app_secret_key(), true);
+    return 'hjenc:v1:' . base64_encode($iv . $mac . $cipher);
+}
+
+function decrypt_secret(?string $value): string
+{
+    $value = (string)$value;
+    if ($value === '' || !str_starts_with($value, 'hjenc:v1:')) {
+        return $value;
+    }
+    if (!function_exists('openssl_decrypt')) {
+        return '';
+    }
+    $raw = base64_decode(substr($value, 9), true);
+    if ($raw === false || strlen($raw) < 49) {
+        return '';
+    }
+    $iv = substr($raw, 0, 16);
+    $mac = substr($raw, 16, 32);
+    $cipher = substr($raw, 48);
+    $calc = hash_hmac('sha256', $iv . $cipher, app_secret_key(), true);
+    if (!hash_equals($mac, $calc)) {
+        return '';
+    }
+    $plain = openssl_decrypt($cipher, 'AES-256-CBC', app_secret_key(), OPENSSL_RAW_DATA, $iv);
+    return is_string($plain) ? $plain : '';
+}
+
+function decrypt_secret_array(array $data, array $keys): array
+{
+    foreach ($keys as $key) {
+        if (array_key_exists($key, $data)) {
+            $data[$key] = decrypt_secret((string)$data[$key]);
+        }
+    }
+    return $data;
+}
+
+function encrypt_secret_array(array $data, array $keys): array
+{
+    foreach ($keys as $key) {
+        if (array_key_exists($key, $data) && (string)$data[$key] !== '') {
+            $data[$key] = encrypt_secret((string)$data[$key]);
+        }
+    }
+    return $data;
+}
+
+function sensitive_config_keys(): array
+{
+    return ['api_key', 'secret', 'secret_key', 'client_secret', 'access_token', 'token', 'private_key', 'webhook_secret', 'merchant_key'];
+}
+
+function decrypt_sensitive_config($value)
+{
+    if (is_array($value)) {
+        $result = [];
+        foreach ($value as $key => $item) {
+            $result[$key] = in_array((string)$key, sensitive_config_keys(), true)
+                ? decrypt_secret((string)$item)
+                : decrypt_sensitive_config($item);
+        }
+        return $result;
+    }
+    return $value;
+}
+
+function encrypt_sensitive_config($value)
+{
+    if (is_array($value)) {
+        $result = [];
+        foreach ($value as $key => $item) {
+            $result[$key] = in_array((string)$key, sensitive_config_keys(), true)
+                ? encrypt_secret((string)$item)
+                : encrypt_sensitive_config($item);
+        }
+        return $result;
+    }
+    return $value;
+}
+
+function mask_sensitive_config($value)
+{
+    if (is_array($value)) {
+        $result = [];
+        foreach ($value as $key => $item) {
+            $result[$key] = in_array((string)$key, sensitive_config_keys(), true)
+                ? mask_secret(decrypt_secret((string)$item))
+                : mask_sensitive_config($item);
+        }
+        return $result;
+    }
+    return $value;
+}
+
 function site_public_path(array $site): string
 {
     $siteKey = (string)($site['site_key'] ?? 'site_10001');
@@ -1606,7 +1729,9 @@ function deploy_node_payload(array $data, array $current = []): array
         'node_type' => mb_substr(trim((string)($data['node_type'] ?? ($current['node_type'] ?? 'bt-panel'))) ?: 'bt-panel', 0, 40, 'UTF-8'),
         'server_ip' => mb_substr(trim((string)($data['server_ip'] ?? ($current['server_ip'] ?? ''))), 0, 80, 'UTF-8'),
         'panel_url' => mb_substr(trim((string)($data['panel_url'] ?? ($current['panel_url'] ?? ''))), 0, 255, 'UTF-8'),
-        'api_key' => trim((string)($data['api_key'] ?? ($current['api_key'] ?? ''))),
+        'api_key' => array_key_exists('api_key', $data) && trim((string)$data['api_key']) !== ''
+            ? trim((string)$data['api_key'])
+            : decrypt_secret((string)($current['api_key'] ?? '')),
         'root_path' => mb_substr(trim((string)($data['root_path'] ?? ($current['root_path'] ?? ''))), 0, 255, 'UTF-8'),
         'status' => $status,
     ];
@@ -1618,9 +1743,8 @@ function list_deploy_nodes(PDO $main): array
     $rows = $main->query("SELECT n.*, COUNT(s.id) AS site_count FROM deploy_nodes n LEFT JOIN sites s ON s.deploy_node_id = n.id GROUP BY n.id ORDER BY n.id DESC")->fetchAll();
     return ['items' => array_map(function (array $row) {
         $row['site_count'] = (int)($row['site_count'] ?? 0);
-        if (!empty($row['api_key'])) {
-            $row['api_key_masked'] = str_repeat('*', 8);
-        }
+        $row['api_key_masked'] = mask_secret(decrypt_secret((string)($row['api_key'] ?? '')));
+        unset($row['api_key']);
         return $row;
     }, $rows)];
 }
@@ -1633,6 +1757,7 @@ function save_deploy_node(PDO $main, array $data, ?int $id = null): array
         fail('部署节点不存在', 'NOT_FOUND', 404);
     }
     $payload = deploy_node_payload($data, $current ?: []);
+    $payload['api_key'] = encrypt_secret($payload['api_key']);
     $now = now();
     if ($id) {
         $stmt = $main->prepare('UPDATE deploy_nodes SET name=:name, node_type=:node_type, server_ip=:server_ip, panel_url=:panel_url, api_key=:api_key, root_path=:root_path, status=:status, updated_at=:updated_at WHERE id=:id');
@@ -1643,7 +1768,10 @@ function save_deploy_node(PDO $main, array $data, ?int $id = null): array
         $stmt->execute($payload + ['created_at' => $now, 'updated_at' => $now]);
         $id = (int)$main->lastInsertId();
     }
-    return fetch_one($main, 'deploy_nodes', (int)$id) ?: [];
+    $saved = fetch_one($main, 'deploy_nodes', (int)$id) ?: [];
+    $saved['api_key_masked'] = mask_secret(decrypt_secret((string)($saved['api_key'] ?? '')));
+    unset($saved['api_key']);
+    return $saved;
 }
 
 function test_deploy_node(PDO $main, int $id): array
@@ -1657,7 +1785,10 @@ function test_deploy_node(PDO $main, int $id): array
     $result = $ok ? '配置完整，等待接入宝塔 API 实测' : '请补全面板地址和服务器根目录';
     $main->prepare('UPDATE deploy_nodes SET last_checked_at=:last_checked_at, last_result=:last_result, updated_at=:updated_at WHERE id=:id')
         ->execute(['id' => $id, 'last_checked_at' => now(), 'last_result' => $result, 'updated_at' => now()]);
-    return fetch_one($main, 'deploy_nodes', $id) ?: [];
+    $saved = fetch_one($main, 'deploy_nodes', $id) ?: [];
+    $saved['api_key_masked'] = mask_secret(decrypt_secret((string)($saved['api_key'] ?? '')));
+    unset($saved['api_key']);
+    return $saved;
 }
 
 function mask_secret(?string $value): string
@@ -1686,6 +1817,7 @@ function hydrate_ai_provider(array $row, bool $includeSecret = false): array
 {
     $row['id'] = (int)$row['id'];
     $row['is_default'] = (int)($row['is_default'] ?? 0) === 1;
+    $row['api_key'] = decrypt_secret((string)($row['api_key'] ?? ''));
     $row['api_key_masked'] = mask_secret($row['api_key'] ?? '');
     if (!$includeSecret) {
         unset($row['api_key']);
@@ -1710,7 +1842,7 @@ function ai_provider_payload(array $data, array $current = []): array
     $baseUrl = mb_substr(trim((string)($data['base_url'] ?? ($current['base_url'] ?? ''))), 0, 255, 'UTF-8');
     $apiKey = array_key_exists('api_key', $data) && trim((string)$data['api_key']) !== ''
         ? trim((string)$data['api_key'])
-        : (string)($current['api_key'] ?? '');
+        : decrypt_secret((string)($current['api_key'] ?? ''));
     return [
         'name' => $name,
         'provider' => $provider,
@@ -1732,6 +1864,7 @@ function save_ai_provider(PDO $main, array $data, ?int $id = null): array
         fail('AI 服务不存在', 'NOT_FOUND', 404);
     }
     $payload = ai_provider_payload($data, $current ?: []);
+    $payload['api_key'] = encrypt_secret($payload['api_key']);
     $now = now();
     if (!empty($payload['is_default'])) {
         $main->exec('UPDATE ai_providers SET is_default = 0');
@@ -1756,7 +1889,7 @@ function test_ai_provider(PDO $main, int $id): array
         fail('AI 服务不存在', 'NOT_FOUND', 404);
     }
     $ready = trim((string)($item['base_url'] ?? '')) !== ''
-        && trim((string)($item['api_key'] ?? '')) !== ''
+        && trim(decrypt_secret((string)($item['api_key'] ?? ''))) !== ''
         && trim((string)($item['text_model'] ?? '')) !== '';
     $result = $ready ? '配置完整，可用于 OpenAI 兼容文本生成接口。' : '请补齐 API 地址、API Key 和文本模型。';
     $main->prepare('UPDATE ai_providers SET last_checked_at=:last_checked_at, last_result=:last_result, updated_at=:updated_at WHERE id=:id')
@@ -1780,7 +1913,7 @@ function apply_ai_provider_to_site(PDO $main, PDO $sitePdo, int $providerId): ar
         'provider' => (string)$provider['provider'],
         'name' => (string)$provider['name'],
         'endpoint' => normalize_ai_base_url((string)($provider['base_url'] ?? '')),
-        'api_key' => (string)($provider['api_key'] ?? ''),
+        'api_key' => decrypt_secret((string)($provider['api_key'] ?? '')),
         'model' => (string)($provider['text_model'] ?? ''),
         'image_model' => (string)($provider['image_model'] ?? ''),
         'video_model' => (string)($provider['video_model'] ?? ''),
@@ -2399,7 +2532,7 @@ function decode_payment_config(?string $value): array
         return [];
     }
     $data = json_decode($value, true);
-    return is_array($data) ? $data : [];
+    return is_array($data) ? decrypt_sensitive_config($data) : [];
 }
 
 function payment_channel_site_ids(PDO $main, int $channelId): array
@@ -2413,7 +2546,7 @@ function hydrate_payment_channel(PDO $main, array $row): array
 {
     $row['id'] = (int)$row['id'];
     $row['is_default'] = (int)($row['is_default'] ?? 0) === 1;
-    $row['config'] = decode_payment_config($row['config_json'] ?? '');
+    $row['config'] = mask_sensitive_config(json_decode((string)($row['config_json'] ?? '{}'), true) ?: []);
     unset($row['config_json']);
     $siteIds = payment_channel_site_ids($main, (int)$row['id']);
     $row['site_ids'] = $siteIds;
@@ -2459,6 +2592,30 @@ function normalize_payment_channel_payload(array $data): array
     ];
 }
 
+function preserve_masked_sensitive_config($incoming, $current)
+{
+    if (!is_array($incoming)) {
+        return $incoming;
+    }
+    $result = [];
+    foreach ($incoming as $key => $value) {
+        if (in_array((string)$key, sensitive_config_keys(), true)) {
+            $text = trim((string)$value);
+            if ($text === '' || str_starts_with($text, '****')) {
+                $result[$key] = is_array($current) && array_key_exists($key, $current) ? $current[$key] : '';
+            } else {
+                $result[$key] = $text;
+            }
+            continue;
+        }
+        $nextCurrent = is_array($current) && is_array($current[$key] ?? null) ? $current[$key] : [];
+        $result[$key] = is_array($value)
+            ? preserve_masked_sensitive_config($value, $nextCurrent)
+            : $value;
+    }
+    return $result;
+}
+
 function sync_payment_channel_sites(PDO $main, int $channelId, string $scope, array $siteIds): void
 {
     $main->prepare('DELETE FROM payment_channel_sites WHERE channel_id = ?')->execute([$channelId]);
@@ -2479,6 +2636,9 @@ function save_payment_channel(PDO $main, array $data, ?int $id = null): array
 {
     ensure_center_tables($main);
     $payload = normalize_payment_channel_payload($data);
+    $current = $id ? fetch_one($main, 'payment_channels', $id) : [];
+    $payload['config'] = preserve_masked_sensitive_config($payload['config'], decode_payment_config($current['config_json'] ?? ''));
+    $encryptedConfig = encrypt_sensitive_config($payload['config']);
     $time = now();
     if ($payload['is_default']) {
         $main->exec('UPDATE payment_channels SET is_default = 0');
@@ -2492,7 +2652,7 @@ function save_payment_channel(PDO $main, array $data, ?int $id = null): array
             'currency' => $payload['currency'],
             'account' => $payload['account'],
             'instructions' => $payload['instructions'],
-            'config_json' => json_encode($payload['config'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'config_json' => json_encode($encryptedConfig, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
             'status' => $payload['status'],
             'is_default' => $payload['is_default'],
             'updated_at' => $time,
@@ -2506,7 +2666,7 @@ function save_payment_channel(PDO $main, array $data, ?int $id = null): array
             'currency' => $payload['currency'],
             'account' => $payload['account'],
             'instructions' => $payload['instructions'],
-            'config_json' => json_encode($payload['config'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'config_json' => json_encode($encryptedConfig, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
             'status' => $payload['status'],
             'is_default' => $payload['is_default'],
             'created_at' => $time,
@@ -3045,7 +3205,13 @@ function read_site_settings_key(PDO $pdo, string $key): array
         return [];
     }
     $data = json_decode((string)$value, true);
-    return is_array($data) ? $data : [];
+    if (!is_array($data)) {
+        return [];
+    }
+    if (isset($data['ai']) && is_array($data['ai'])) {
+        $data['ai'] = decrypt_secret_array($data['ai'], ['api_key']);
+    }
+    return $data;
 }
 
 function site_settings_key(int $siteId): string
@@ -3074,6 +3240,18 @@ function save_site_settings(PDO $pdo, array $settings, ?int $siteId = null): arr
 {
     $siteId = $siteId ?: requested_site_id();
     unset($settings['settings_scope'], $settings['has_site_override'], $settings['_preserve_service_configs']);
+    $current = site_settings($pdo, $siteId);
+    if (isset($settings['ai']) && is_array($settings['ai'])) {
+        if (array_key_exists('api_key', $settings['ai'])) {
+            $incomingKey = trim((string)$settings['ai']['api_key']);
+            if ($incomingKey === '' && !empty($current['ai']['api_key'])) {
+                $settings['ai']['api_key'] = (string)$current['ai']['api_key'];
+            }
+        } elseif (!empty($current['ai']['api_key'])) {
+            $settings['ai']['api_key'] = (string)$current['ai']['api_key'];
+        }
+        $settings['ai'] = encrypt_secret_array($settings['ai'], ['api_key']);
+    }
     $settings['site_id'] = $siteId;
     $settings['updated_at'] = now();
     $stmt = $pdo->prepare("REPLACE INTO site_settings (setting_key, setting_value, updated_at) VALUES (:key, :value, :updated_at)");
@@ -3083,6 +3261,15 @@ function save_site_settings(PDO $pdo, array $settings, ?int $siteId = null): arr
         'updated_at' => $settings['updated_at'],
     ]);
     return site_settings($pdo, $siteId);
+}
+
+function sanitize_site_settings_for_response(array $settings): array
+{
+    if (isset($settings['ai']) && is_array($settings['ai'])) {
+        $settings['ai']['api_key_masked'] = mask_secret((string)($settings['ai']['api_key'] ?? ''));
+        unset($settings['ai']['api_key']);
+    }
+    return $settings;
 }
 
 function preserve_service_configs(array $incoming, array $current): array
@@ -4912,7 +5099,11 @@ try {
 
     if ($params = route_param('/platform/ai-providers/{id}/apply', $path)) {
         if ($method === 'POST') {
-            ok(apply_ai_provider_to_site(main_pdo(), $pdo, (int)$params['id']), 'AI 服务已应用到当前站点');
+            $result = apply_ai_provider_to_site(main_pdo(), $pdo, (int)$params['id']);
+            if (isset($result['site']) && is_array($result['site'])) {
+                $result['site'] = sanitize_site_settings_for_response($result['site']);
+            }
+            ok($result, 'AI 服务已应用到当前站点');
         }
     }
 
@@ -5026,7 +5217,7 @@ try {
     }
 
     if ($method === 'GET' && $path === '/site/settings') {
-        ok(site_settings($pdo));
+        ok(sanitize_site_settings_for_response(site_settings($pdo)));
     }
 
     if ($method === 'GET' && $path === '/site/pages') {
@@ -5169,12 +5360,16 @@ try {
         if ($channelId <= 0) {
             fail('请选择支付通道', 'VALIDATION_ERROR', 422);
         }
-        ok(apply_payment_channel_to_site(main_pdo(), $pdo, $channelId), '支付通道已应用到当前站点');
+        $result = apply_payment_channel_to_site(main_pdo(), $pdo, $channelId);
+        if (isset($result['site']) && is_array($result['site'])) {
+            $result['site'] = sanitize_site_settings_for_response($result['site']);
+        }
+        ok($result, '支付通道已应用到当前站点');
     }
 
     if ($method === 'PUT' && $path === '/site/settings') {
         $data = body_json();
-        ok(save_site_settings($pdo, $data), '保存成功');
+        ok(sanitize_site_settings_for_response(save_site_settings($pdo, $data)), '保存成功');
     }
 
     if ($method === 'PUT' && $path === '/site/settings-default') {
@@ -5182,7 +5377,7 @@ try {
         if (!empty($data['_preserve_service_configs'])) {
             $data = preserve_service_configs($data, site_settings($pdo, 10001));
         }
-        ok(save_site_settings($pdo, $data, 10001), '公共默认设置已保存');
+        ok(sanitize_site_settings_for_response(save_site_settings($pdo, $data, 10001)), '公共默认设置已保存');
     }
 
     if ($method === 'POST' && $path === '/site/settings/apply-all') {
