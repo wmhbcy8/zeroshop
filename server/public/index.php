@@ -1039,6 +1039,97 @@ function list_order_service_requests_scoped(PDO $pdo, ?PDO $main = null): array
     ];
 }
 
+function list_support_tickets(PDO $pdo, ?PDO $main = null): array
+{
+    $source = trim((string)($_GET['source'] ?? 'all')) ?: 'all';
+    $status = trim((string)($_GET['status'] ?? ''));
+    $keyword = trim((string)($_GET['keyword'] ?? ''));
+    $items = [];
+
+    if ($source === 'all' || $source === 'order') {
+        $originalGet = $_GET;
+        $_GET['status'] = $status === 'new' ? 'pending' : $status;
+        $_GET['keyword'] = $keyword;
+        $_GET['page'] = 1;
+        $_GET['page_size'] = 1000;
+        $orders = list_order_service_requests_scoped($pdo, $main);
+        $_GET = $originalGet;
+        foreach ($orders['items'] ?? [] as $item) {
+            $items[] = [
+                'id' => 'order-' . (string)($item['id'] ?? ''),
+                'source' => 'order',
+                'source_label' => '订单服务',
+                'site_id' => (int)($item['site_id'] ?? 10001),
+                'site_name' => $item['site_name'] ?? '',
+                'title' => ($item['type'] ?? '服务请求') . ' / ' . ($item['order_no'] ?? ''),
+                'customer_name' => $item['customer_name'] ?? '',
+                'phone' => $item['phone'] ?? '',
+                'message' => $item['message'] ?? '',
+                'status' => ($item['status'] ?? '') === 'handled' ? 'handled' : 'new',
+                'time' => $item['time'] ?? '',
+                'order_id' => (int)($item['order_id'] ?? 0),
+                'order_no' => $item['order_no'] ?? '',
+                'raw_id' => $item['id'] ?? '',
+            ];
+        }
+    }
+
+    if ($source === 'all' || $source === 'form') {
+        $clauses = [];
+        $params = [];
+        append_site_scope_clause($clauses, $params);
+        if ($status !== '') {
+            $formStatus = $status === 'handled' ? 'handled' : ($status === 'pending' ? 'new' : $status);
+            $clauses[] = 'status = :form_status';
+            $params['form_status'] = $formStatus;
+        }
+        if ($keyword !== '') {
+            $clauses[] = '(form_key LIKE :form_keyword OR source_url LIKE :form_keyword OR data LIKE :form_keyword OR remark LIKE :form_keyword)';
+            $params['form_keyword'] = '%' . $keyword . '%';
+        }
+        $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
+        $stmt = $pdo->prepare("SELECT * FROM form_submissions{$whereSql} ORDER BY id DESC LIMIT 1000");
+        $stmt->execute($params);
+        foreach (attach_site_names($stmt->fetchAll(), $main) as $row) {
+            $data = json_decode((string)($row['data'] ?? ''), true);
+            $data = is_array($data) ? $data : [];
+            $items[] = [
+                'id' => 'form-' . (int)($row['id'] ?? 0),
+                'source' => 'form',
+                'source_label' => '表单留言',
+                'site_id' => (int)($row['site_id'] ?? 10001),
+                'site_name' => $row['site_name'] ?? '',
+                'title' => (string)($row['form_key'] ?? 'contact'),
+                'customer_name' => (string)($data['name'] ?? $data['customer_name'] ?? ''),
+                'phone' => (string)($data['phone'] ?? $data['mobile'] ?? ''),
+                'message' => (string)($data['message'] ?? $data['需求'] ?? $data['remark'] ?? $row['remark'] ?? ''),
+                'status' => in_array((string)($row['status'] ?? ''), ['handled', 'done', 'closed'], true) ? 'handled' : 'new',
+                'time' => $row['created_at'] ?? '',
+                'form_id' => (int)($row['id'] ?? 0),
+                'source_url' => $row['source_url'] ?? '',
+                'raw_id' => (int)($row['id'] ?? 0),
+            ];
+        }
+    }
+
+    usort($items, static fn($a, $b) => strcmp((string)($b['time'] ?? ''), (string)($a['time'] ?? '')));
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $total = count($items);
+    $pagedItems = array_slice($items, ($page - 1) * $pageSize, $pageSize);
+    return [
+        'items' => array_values($pagedItems),
+        'pagination' => [
+            'page' => $page,
+            'page_size' => $pageSize,
+            'total' => $total,
+            'total_pages' => (int)ceil($total / $pageSize),
+        ],
+        'pending' => count(array_filter($items, static fn($item) => ($item['status'] ?? '') === 'new')),
+        'handled' => count(array_filter($items, static fn($item) => ($item['status'] ?? '') === 'handled')),
+    ];
+}
+
 function content_distribution_filter_clause(string $type, string $table): array
 {
     $siteId = requested_site_filter();
@@ -7701,6 +7792,10 @@ try {
 
     if ($method === 'GET' && $path === '/orders/service-requests') {
         ok(list_order_service_requests_scoped($pdo, main_pdo()));
+    }
+
+    if ($method === 'GET' && $path === '/support/tickets') {
+        ok(list_support_tickets($pdo, main_pdo()));
     }
 
     if ($method === 'POST' && $path === '/orders/service-requests/resolve') {

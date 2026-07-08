@@ -1538,24 +1538,31 @@
         <section v-if="view === 'service'">
           <el-card class="panel" shadow="never">
             <template #header>
-              <div class="card-head"><strong>服务中心</strong><el-button type="primary" @click="resolveSelectedServices">批量标记已处理</el-button></div>
+              <div class="card-head"><strong>服务中心</strong><el-button type="primary" @click="resolveSelectedServices">批量标记订单服务已处理</el-button></div>
             </template>
             <el-form :inline="true" class="toolbar" @submit.prevent="loadServices">
               <el-form-item><el-select v-model="operationSiteScope" placeholder="站点范围" style="width: 180px" @change="applyOperationSiteScope"><el-option label="全部站点" value="all" /><el-option v-for="item in sites" :key="item.id" :label="item.name" :value="String(item.id)" /></el-select></el-form-item>
               <el-form-item><el-input v-model="serviceFilters.keyword" placeholder="搜索订单/客户/请求内容" clearable /></el-form-item>
-              <el-form-item><el-select v-model="serviceFilters.status" placeholder="状态" clearable><el-option label="待处理" value="pending" /><el-option label="已处理" value="handled" /></el-select></el-form-item>
+              <el-form-item><el-select v-model="serviceFilters.source" placeholder="来源" clearable><el-option label="全部" value="all" /><el-option label="表单留言" value="form" /><el-option label="订单服务" value="order" /></el-select></el-form-item>
+              <el-form-item><el-select v-model="serviceFilters.status" placeholder="状态" clearable><el-option label="待处理" value="new" /><el-option label="已处理" value="handled" /></el-select></el-form-item>
               <el-form-item><el-select v-model="serviceFilters.type" placeholder="类型" clearable><el-option label="催发货" value="催发货" /><el-option label="改地址" value="修改收货信息" /><el-option label="售后" value="售后问题" /><el-option label="其他" value="其他服务" /></el-select></el-form-item>
               <el-button type="primary" @click="loadServices">筛选</el-button>
             </el-form>
             <el-table :data="services" height="600" @selection-change="selectedServiceIds = $event.map((item: any) => item.id)">
-              <el-table-column type="selection" width="48" :selectable="(row: any) => row.status === 'pending'" />
+              <el-table-column type="selection" width="48" :selectable="(row: any) => row.source === 'order' && row.status === 'new'" />
               <el-table-column prop="site_name" label="站点" width="150" />
-              <el-table-column prop="type" label="类型" width="130" />
+              <el-table-column label="来源" width="120"><template #default="{ row }"><el-tag>{{ row.source_label }}</el-tag></template></el-table-column>
+              <el-table-column prop="title" label="类型/标题" width="170" />
               <el-table-column prop="message" label="请求内容" min-width="260" />
               <el-table-column label="客户" width="170"><template #default="{ row }">{{ row.customer_name }}<br /><small>{{ row.phone }}</small></template></el-table-column>
               <el-table-column prop="order_no" label="订单号" width="170" />
               <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 'handled' ? 'success' : 'warning'">{{ row.status === 'handled' ? '已处理' : '待处理' }}</el-tag></template></el-table-column>
-              <el-table-column label="操作" width="110"><template #default="{ row }"><el-button link type="primary" @click="openOrder(row.order_id)">去处理</el-button></template></el-table-column>
+              <el-table-column label="操作" width="130">
+                <template #default="{ row }">
+                  <el-button v-if="row.source === 'order'" link type="primary" @click="openOrder(row.order_id)">去处理</el-button>
+                  <el-button v-else link type="primary" @click="openSupportForm(row.form_id)">看留言</el-button>
+                </template>
+              </el-table-column>
             </el-table>
             <el-pagination class="table-pager" layout="prev, pager, next, total" :current-page="servicePager.page" :page-size="servicePager.page_size" :total="servicePager.total" @current-change="changeServicePage" />
           </el-card>
@@ -2349,6 +2356,7 @@ const productCategories = ref<any[]>([])
 const tags = ref<any[]>([])
 const orders = ref<any[]>([])
 const services = ref<any[]>([])
+const orderServices = ref<any[]>([])
 const media = ref<any[]>([])
 const forms = ref<any[]>([])
 const collectorSources = ref<any[]>([])
@@ -2413,7 +2421,7 @@ const siteBatchResults = ref<any[]>([])
 const batchTaskResultFilter = ref('all')
 
 const orderFilters = reactive({ keyword: '', payment_status: '', fulfillment_status: '' })
-const serviceFilters = reactive({ keyword: '', status: '', type: '' })
+const serviceFilters = reactive({ keyword: '', status: '', type: '', source: 'all' })
 const formFilters = reactive({ keyword: '', status: '' })
 const collectorFilters = reactive({ keyword: '', status: '' })
 const mediaFilters = reactive({ keyword: '', file_type: '' })
@@ -4296,10 +4304,16 @@ async function loadServices() {
   params.set('page_size', String(servicePager.page_size))
   params.set('site_id', operationSiteScope.value)
   Object.entries(serviceFilters).forEach(([key, value]) => value && params.set(key, value))
-  const data = await request(`/api/orders/service-requests?${params.toString()}`)
+  const data = await request(`/api/support/tickets?${params.toString()}`)
   services.value = data.items || []
   servicePager.total = data.pagination?.total || services.value.length
   servicePending.value = data.pending || 0
+  const orderParams = new URLSearchParams()
+  orderParams.set('site_id', operationSiteScope.value)
+  orderParams.set('page_size', '100')
+  orderParams.set('status', 'pending')
+  const orderData = await request(`/api/orders/service-requests?${orderParams.toString()}`)
+  orderServices.value = orderData.items || []
 }
 function changeServicePage(page: number) {
   servicePager.page = page
@@ -4307,9 +4321,21 @@ function changeServicePage(page: number) {
 }
 async function resolveSelectedServices() {
   if (!selectedServiceIds.value.length) return ElMessage.warning('请选择待处理服务请求')
-  const data = await request('/api/orders/service-requests/resolve', { method: 'POST', data: { ids: selectedServiceIds.value } })
+  const ids = selectedServiceIds.value.map((id) => String(id).replace(/^order-/, ''))
+  const data = await request('/api/orders/service-requests/resolve', { method: 'POST', data: { ids } })
   ElMessage.success(`已处理 ${data.handled || 0} 条服务请求`)
   await loadServices()
+}
+
+function openSupportForm(id: number) {
+  const item = forms.value.find((row: any) => Number(row.id) === Number(id))
+  if (item) {
+    Object.assign(formDetail, item)
+    formDrawerVisible.value = true
+    view.value = 'forms'
+    return
+  }
+  setView('forms')
 }
 
 async function loadPaymentChannels() {
