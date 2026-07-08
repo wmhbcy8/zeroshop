@@ -10,7 +10,7 @@
       <div class="content-distribution-bar">
         <div>
           <strong>发布范围</strong>
-          <small>选中{{ title }}后，可统一发布到全部站点或指定站点。</small>
+          <small>内容只入库一份，发布范围决定它会同步到哪些前台静态站。</small>
         </div>
         <el-radio-group v-model="bulkForm.site_scope" size="small" @change="syncBulkScope">
           <el-radio-button label="current">当前站点</el-radio-button>
@@ -84,6 +84,7 @@
             <el-radio-button label="selected">指定站点</el-radio-button>
           </el-radio-group>
         </el-form-item>
+        <el-alert type="info" show-icon :closable="false" class="mb16" :title="`当前会发布到：${siteNames(form)}`" />
         <el-form-item v-if="form.site_scope === 'selected'" label="选择站点">
           <el-select v-model="form.site_ids" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择站点">
             <el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id" />

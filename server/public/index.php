@@ -2469,7 +2469,7 @@ function site_settings(PDO $pdo, ?int $siteId = null): array
 function save_site_settings(PDO $pdo, array $settings, ?int $siteId = null): array
 {
     $siteId = $siteId ?: requested_site_id();
-    unset($settings['settings_scope'], $settings['has_site_override']);
+    unset($settings['settings_scope'], $settings['has_site_override'], $settings['_preserve_service_configs']);
     $settings['site_id'] = $siteId;
     $settings['updated_at'] = now();
     $stmt = $pdo->prepare("REPLACE INTO site_settings (setting_key, setting_value, updated_at) VALUES (:key, :value, :updated_at)");
@@ -2481,14 +2481,30 @@ function save_site_settings(PDO $pdo, array $settings, ?int $siteId = null): arr
     return site_settings($pdo, $siteId);
 }
 
+function preserve_service_configs(array $incoming, array $current): array
+{
+    unset($incoming['_preserve_service_configs']);
+    foreach (['ai', 'payment', 'deploy'] as $key) {
+        if (array_key_exists($key, $current)) {
+            $incoming[$key] = $current[$key];
+        } else {
+            unset($incoming[$key]);
+        }
+    }
+    return $incoming;
+}
+
 function apply_site_settings_to_all(PDO $main, PDO $sitePdo, array $settings): array
 {
     ensure_center_tables($main);
+    $preserveServiceConfigs = !empty($settings['_preserve_service_configs']);
+    unset($settings['_preserve_service_configs']);
     $sites = $main->query('SELECT id FROM sites ORDER BY id ASC')->fetchAll();
     $count = 0;
     foreach ($sites as $site) {
         $siteId = (int)$site['id'];
-        save_site_settings($sitePdo, $settings, $siteId);
+        $payload = $preserveServiceConfigs ? preserve_service_configs($settings, site_settings($sitePdo, $siteId)) : $settings;
+        save_site_settings($sitePdo, $payload, $siteId);
         $count++;
     }
     return ['count' => $count, 'site_ids' => array_map(fn($site) => (int)$site['id'], $sites)];
@@ -3374,10 +3390,45 @@ function list_ai_tasks(PDO $pdo, ?PDO $main = null): array
 {
     ensure_ai_task_tables($pdo);
     $siteId = requested_site_filter();
-    $where = $siteId ? ['site_id = ' . (int)$siteId] : [];
-    $result = paginate($pdo, 'ai_tasks', $where, 'id DESC', 'prompt');
-    $result['items'] = array_map('normalize_ai_task_row', attach_site_names($result['items'], $main));
-    return $result;
+    if (!$siteId) {
+        $result = paginate($pdo, 'ai_tasks', [], 'id DESC', 'prompt');
+        $result['items'] = array_map('normalize_ai_task_row', attach_site_names($result['items'], $main));
+        return $result;
+    }
+
+    $keyword = trim((string)($_GET['keyword'] ?? ''));
+    $status = trim((string)($_GET['status'] ?? ''));
+    $clauses = [];
+    $params = [];
+    if ($keyword !== '') {
+        $clauses[] = 'prompt LIKE :keyword';
+        $params['keyword'] = '%' . $keyword . '%';
+    }
+    if ($status !== '') {
+        $clauses[] = 'status = :status';
+        $params['status'] = $status;
+    }
+    $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
+    $stmt = $pdo->prepare("SELECT * FROM ai_tasks{$whereSql} ORDER BY id DESC");
+    $stmt->execute($params);
+    $rows = array_map('normalize_ai_task_row', $stmt->fetchAll());
+    $rows = array_values(array_filter($rows, static function (array $row) use ($siteId) {
+        $ids = array_values(array_filter(array_map('intval', $row['site_ids'] ?? []), fn($id) => $id > 0));
+        return (int)($row['site_id'] ?? 0) === (int)$siteId || in_array((int)$siteId, $ids, true);
+    }));
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $total = count($rows);
+    $items = array_slice($rows, ($page - 1) * $pageSize, $pageSize);
+    return [
+        'items' => attach_site_names($items, $main),
+        'pagination' => [
+            'page' => $page,
+            'page_size' => $pageSize,
+            'total' => $total,
+            'total_pages' => (int)ceil($total / $pageSize),
+        ],
+    ];
 }
 
 function create_ai_task(PDO $pdo, array $data): array
@@ -4349,6 +4400,9 @@ try {
 
     if ($method === 'PUT' && $path === '/site/settings-default') {
         $data = body_json();
+        if (!empty($data['_preserve_service_configs'])) {
+            $data = preserve_service_configs($data, site_settings($pdo, 10001));
+        }
         ok(save_site_settings($pdo, $data, 10001), '公共默认设置已保存');
     }
 

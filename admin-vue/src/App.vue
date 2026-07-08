@@ -420,8 +420,8 @@
                 <strong>站点设置</strong>
                 <div class="head-actions">
                   <el-button @click="loadStaticPages">刷新页面列表</el-button>
-                  <el-button @click="saveSettingsAsDefault">保存为公共默认</el-button>
-                  <el-button @click="applySettingsToAll">应用到全部站点</el-button>
+                  <el-button @click="saveSiteStructureAsDefault">保存为公共默认</el-button>
+                  <el-button @click="applySiteStructureToAll">应用到全部站点</el-button>
                   <el-button @click="saveSettings">保存当前站点</el-button>
                   <el-button type="primary" :loading="generating" @click="saveSettingsAndGenerate">保存并生成静态站</el-button>
                 </div>
@@ -640,6 +640,13 @@
                       <el-option v-for="item in sites" :key="item.id" :label="item.name" :value="item.id" />
                     </el-select>
                   </el-form-item>
+                  <el-alert
+                    class="mb16"
+                    type="info"
+                    show-icon
+                    :closable="false"
+                    :title="`AI 生成内容会进入中台内容库，并发布到：${contentSiteLabel(siteIdsForScope(aiForm.site_scope, aiForm.site_ids))}`"
+                  />
                   <el-form-item label="内容类型">
                     <el-segmented v-model="aiForm.type" :options="[{ label: '文章', value: 'article' }, { label: '商品', value: 'product' }]" />
                   </el-form-item>
@@ -694,7 +701,8 @@
                       </div>
                       <div class="ai-draft-actions">
                         <el-button size="small" :loading="aiCoverLoading === item.local_id" @click="generateAiCover(item)">生成封面</el-button>
-                        <el-button size="small" type="primary" @click="saveAiDraft(item, index)">保存草稿</el-button>
+                        <el-button size="small" @click="saveAiDraft(item, index, 'draft')">存草稿</el-button>
+                        <el-button size="small" type="primary" @click="saveAiDraft(item, index, 'published')">直接发布</el-button>
                       </div>
                     </div>
                     <img v-if="item.cover" class="ai-cover" :src="item.cover.startsWith('/') ? item.cover : '/' + item.cover" />
@@ -2224,11 +2232,26 @@ async function saveSettingsAsDefault() {
   ElMessage.success('公共默认设置已保存，新站点会优先继承这套配置')
 }
 
+async function saveSiteStructureAsDefault() {
+  site.nav = cleanNavItems(site.nav)
+  const data = await request('/api/site/settings-default', { method: 'PUT', data: { ...site, _preserve_service_configs: true } })
+  Object.assign(site, normalizeSite(data))
+  ElMessage.success('公共默认站点结构已保存，AI、支付和部署配置保持不变')
+}
+
 async function applySettingsToAll() {
   await ElMessageBox.confirm('确定把当前站点设置应用到全部站点吗？已有独立菜单、SEO、AI、支付等设置会被覆盖。')
   site.nav = cleanNavItems(site.nav)
   const data = await request('/api/site/settings/apply-all', { method: 'POST', data: site })
   ElMessage.success(`已应用到 ${data.count || 0} 个站点`)
+  await Promise.all([loadSites(), loadSettings()])
+}
+
+async function applySiteStructureToAll() {
+  await ElMessageBox.confirm('确定把当前站点的基础信息、SEO、导航和页面结构应用到全部站点吗？AI、支付和宝塔部署配置会保持各站点原有设置。')
+  site.nav = cleanNavItems(site.nav)
+  const data = await request('/api/site/settings/apply-all', { method: 'POST', data: { ...site, _preserve_service_configs: true } })
+  ElMessage.success(`站点结构已应用到 ${data.count || 0} 个站点`)
   await Promise.all([loadSites(), loadSettings()])
 }
 
@@ -2711,18 +2734,19 @@ function aiTaskTypeLabel(value: string) {
   return ({ article_generate: '文章生成', product_generate: '商品生成', page_build: '页面搭建' } as any)[value] || value || '-'
 }
 
-async function saveAiDraft(item: any, index: number) {
+async function saveAiDraft(item: any, index: number, status: 'draft' | 'published' = 'draft') {
   const site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
+  const payload = { ...item, status, site_scope: aiForm.site_scope, site_ids }
   if (item.type === 'article') {
-    await request('/api/articles', { method: 'POST', data: { ...item, status: 'draft', site_scope: aiForm.site_scope, site_ids } })
+    await request('/api/articles', { method: 'POST', data: payload })
     await loadArticles()
   } else {
-    await request('/api/products', { method: 'POST', data: { ...item, status: 'draft', site_scope: aiForm.site_scope, site_ids } })
+    await request('/api/products', { method: 'POST', data: payload })
     await loadProducts()
   }
   aiDrafts.value.splice(index, 1)
   await loadDashboard()
-  ElMessage.success('已保存为草稿')
+  ElMessage.success(status === 'published' ? '已发布到选定站点' : '已保存为草稿')
 }
 
 async function batchCreateAiContent() {
