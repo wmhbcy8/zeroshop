@@ -119,6 +119,7 @@ http://127.0.0.1:8000/
 - 后台订单列表支持状态快捷筛选、统计卡筛选和按当前筛选条件导出 CSV
 - 站点支付配置支持收款账户和付款指引，前台下单回执/查单页可展示付款说明，后台订单详情显示收款摘要
 - 客户可在订单查询页提交付款金额、流水号或截图编号，后台可用“待核款”快捷筛选集中核对
+- 支付通道支持通用回调入口，支付平台用 `webhook_secret` 对原始 JSON 请求体做 HMAC-SHA256 签名后，可自动同步订单支付状态
 - 查单页会展示配送进度卡，后台订单详情可复制发货通知并查看物流摘要
 - 客户可在查单页提交催发货、修改收货信息、售后问题等服务请求，后台可用快捷筛选处理
 - 后台订单详情会识别最新服务请求，支持填写客服回复或一键标记已处理，客户查单页可看到服务进度
@@ -221,8 +222,19 @@ POST /api/orders/lookup
 POST /api/orders/customer-note
 POST /api/orders/payment-proof
 POST /api/orders/service-request
+POST /api/payment/webhook
 ```
 这些前台开放接口会按站点、访问 IP、浏览器标识和业务参数写入 `api_rate_limits` 进行频率限制；超过限制时返回 `429 RATE_LIMITED`。
+
+通用支付回调：
+
+```text
+POST /api/payment/webhook?channel_id=通道ID
+Header: X-HJ-Signature: sha256=<hex hmac sha256>
+Body: {"site_id":10001,"channel_id":1,"order_no":"ZS...","status":"paid","amount":19999,"currency":"CNY","transaction_id":"PAY..."}
+```
+
+签名密钥来自支付通道接口参数里的 `webhook_secret`。回调会写入 `payment_webhook_events` 做幂等记录，并同步订单 `payment_status`、`paid_at` 和订单时间线。
 
 ## 安全提醒
 

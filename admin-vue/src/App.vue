@@ -1353,7 +1353,7 @@
                 <el-button type="primary" @click="newPaymentChannel">新建通道</el-button>
               </div>
             </template>
-            <el-alert title="支付通道在客户中台统一维护，可分配给全部站点或指定站点；应用到当前站点后，前台订单页会展示对应付款说明。" type="info" show-icon class="mb16" />
+            <el-alert title="支付通道在客户中台统一维护，可分配给全部站点或指定站点；应用到当前站点后，前台订单页会展示对应付款说明。通用支付回调地址：/api/payment/webhook?channel_id=通道ID，接口参数中需配置 webhook_secret。" type="info" show-icon class="mb16" />
             <el-table :data="paymentChannels" height="620">
               <el-table-column prop="name" label="通道名称" min-width="180">
                 <template #default="{ row }"><strong>{{ row.name }}</strong><br /><small>{{ providerLabel(row.provider) }} / {{ row.currency }}</small></template>
@@ -1399,7 +1399,7 @@
                 </el-select>
               </el-form-item>
               <el-form-item label="接口参数">
-                <el-input v-model="paymentConfigText" type="textarea" :rows="5" placeholder='{"merchant_id":"","api_key":"","webhook_url":""}' />
+                <el-input v-model="paymentConfigText" type="textarea" :rows="5" placeholder='{"merchant_id":"","api_key":"","webhook_secret":"","webhook_url":"/api/payment/webhook?channel_id=通道ID"}' />
               </el-form-item>
               <el-button type="primary" @click="savePaymentChannel">保存通道</el-button>
             </el-form>

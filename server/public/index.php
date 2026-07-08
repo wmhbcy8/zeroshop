@@ -168,7 +168,7 @@ function main_pdo(): PDO
 
 function body_json(): array
 {
-    $raw = file_get_contents('php://input');
+    $raw = request_raw_body();
     if ($raw === '' || $raw === false) {
         return [];
     }
@@ -177,6 +177,16 @@ function body_json(): array
         fail('JSON 格式错误', 'INVALID_JSON', 400);
     }
     return $data;
+}
+
+function request_raw_body(): string
+{
+    static $raw = null;
+    if ($raw === null) {
+        $value = file_get_contents('php://input');
+        $raw = is_string($value) ? $value : '';
+    }
+    return $raw;
 }
 
 function now(): string
@@ -2853,6 +2863,192 @@ function apply_payment_channel_to_site(PDO $main, PDO $sitePdo, int $channelId):
     return ['channel' => $channel, 'site' => save_site_settings($sitePdo, $site)];
 }
 
+function payment_webhook_signature(): string
+{
+    $headers = [
+        $_SERVER['HTTP_X_HJ_SIGNATURE'] ?? '',
+        $_SERVER['HTTP_X_PAYMENT_SIGNATURE'] ?? '',
+        $_SERVER['HTTP_X_WEBHOOK_SIGNATURE'] ?? '',
+    ];
+    foreach ($headers as $header) {
+        $signature = trim((string)$header);
+        if ($signature !== '') {
+            return str_starts_with($signature, 'sha256=') ? substr($signature, 7) : $signature;
+        }
+    }
+    return '';
+}
+
+function assert_payment_webhook_signature(array $channel, array $config, string $rawBody): void
+{
+    $secret = trim((string)($config['webhook_secret'] ?? $config['secret'] ?? ''));
+    if ($secret === '') {
+        fail('支付通道未配置 webhook_secret，无法接收回调', 'WEBHOOK_SECRET_MISSING', 422);
+    }
+    $signature = payment_webhook_signature();
+    if ($signature === '') {
+        fail('缺少支付回调签名', 'WEBHOOK_SIGNATURE_MISSING', 401);
+    }
+    $expected = hash_hmac('sha256', $rawBody, $secret);
+    if (!hash_equals(strtolower($expected), strtolower($signature))) {
+        fail('支付回调签名无效', 'WEBHOOK_SIGNATURE_INVALID', 401);
+    }
+}
+
+function normalize_payment_webhook_status(string $value): string
+{
+    $value = strtolower(trim($value));
+    $map = [
+        'success' => 'paid',
+        'succeeded' => 'paid',
+        'complete' => 'paid',
+        'completed' => 'paid',
+        'paid' => 'paid',
+        'refund' => 'refunded',
+        'refunded' => 'refunded',
+        'fail' => 'failed',
+        'failed' => 'failed',
+        'cancel' => 'failed',
+        'canceled' => 'failed',
+        'pending' => 'pending',
+    ];
+    return $map[$value] ?? 'pending';
+}
+
+function load_payment_webhook_channel(PDO $main, array $data): array
+{
+    ensure_center_tables($main);
+    $channelId = (int)($data['channel_id'] ?? $_GET['channel_id'] ?? 0);
+    if ($channelId <= 0) {
+        fail('请提供支付通道 channel_id', 'VALIDATION_ERROR', 422);
+    }
+    $item = fetch_one($main, 'payment_channels', $channelId);
+    if (!$item || ($item['status'] ?? '') !== 'active') {
+        fail('支付通道不存在或已停用', 'NOT_FOUND', 404);
+    }
+    $config = decode_payment_config((string)($item['config_json'] ?? ''));
+    return [$item, $config];
+}
+
+function payment_webhook_event_key(array $channel, array $data, string $rawBody): string
+{
+    $provider = (string)($channel['provider'] ?? 'manual');
+    $transactionId = trim((string)($data['transaction_id'] ?? $data['trade_no'] ?? $data['reference'] ?? ''));
+    if ($transactionId !== '') {
+        return $provider . ':' . $transactionId;
+    }
+    return $provider . ':' . trim((string)($data['order_no'] ?? '')) . ':' . substr(hash('sha256', $rawBody), 0, 32);
+}
+
+function handle_payment_webhook(PDO $pdo, PDO $main): array
+{
+    $rawBody = request_raw_body();
+    $data = json_decode($rawBody, true);
+    if (!is_array($data)) {
+        fail('JSON 格式错误', 'INVALID_JSON', 400);
+    }
+    [$channel, $config] = load_payment_webhook_channel($main, $data);
+    assert_payment_webhook_signature($channel, $config, $rawBody);
+
+    $siteId = resolve_request_site_id($data);
+    $allowedSiteIds = payment_channel_site_ids($main, (int)$channel['id']);
+    if ($allowedSiteIds && !in_array($siteId, $allowedSiteIds, true)) {
+        fail('该支付通道未分配给当前站点', 'PAYMENT_CHANNEL_SITE_FORBIDDEN', 403);
+    }
+    require_fields($data, ['order_no', 'status']);
+    assert_public_rate_limit($pdo, $siteId, 'payment.webhook', [(string)$channel['id']], 60, 60);
+
+    $orderNo = trim((string)$data['order_no']);
+    $stmt = $pdo->prepare('SELECT * FROM orders WHERE order_no = :order_no AND site_id = :site_id LIMIT 1');
+    $stmt->execute(['order_no' => $orderNo, 'site_id' => $siteId]);
+    $order = $stmt->fetch();
+    if (!$order) {
+        fail('订单不存在', 'ORDER_NOT_FOUND', 404);
+    }
+
+    $status = normalize_payment_webhook_status((string)$data['status']);
+    $amount = isset($data['amount']) && is_numeric($data['amount']) ? (float)$data['amount'] : (float)($order['total_amount'] ?? 0);
+    $currency = strtoupper(trim((string)($data['currency'] ?? ($order['currency'] ?? 'CNY')))) ?: 'CNY';
+    if ($amount < 0) {
+        fail('支付金额不正确', 'VALIDATION_ERROR', 422);
+    }
+    if ($status === 'paid' && $amount > 0 && abs($amount - (float)$order['total_amount']) > 0.01) {
+        fail('支付金额与订单金额不一致', 'PAYMENT_AMOUNT_MISMATCH', 422);
+    }
+    if ($currency !== strtoupper((string)($order['currency'] ?? 'CNY'))) {
+        fail('支付币种与订单币种不一致', 'PAYMENT_CURRENCY_MISMATCH', 422);
+    }
+
+    $transactionId = mb_substr(trim((string)($data['transaction_id'] ?? $data['trade_no'] ?? $data['reference'] ?? '')), 0, 120, 'UTF-8');
+    $eventKey = payment_webhook_event_key($channel, $data, $rawBody);
+    $existing = null;
+    try {
+        $insert = $pdo->prepare("INSERT INTO payment_webhook_events (site_id, channel_id, provider, event_key, order_no, transaction_id, payment_status, amount, currency, payload, created_at)
+            VALUES (:site_id, :channel_id, :provider, :event_key, :order_no, :transaction_id, :payment_status, :amount, :currency, :payload, :created_at)");
+        $insert->execute([
+            'site_id' => $siteId,
+            'channel_id' => (int)$channel['id'],
+            'provider' => (string)$channel['provider'],
+            'event_key' => $eventKey,
+            'order_no' => $orderNo,
+            'transaction_id' => $transactionId,
+            'payment_status' => $status,
+            'amount' => round($amount, 2),
+            'currency' => $currency,
+            'payload' => json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'created_at' => now(),
+        ]);
+        $eventId = (int)$pdo->lastInsertId();
+    } catch (Throwable $error) {
+        $check = $pdo->prepare('SELECT * FROM payment_webhook_events WHERE event_key = ? LIMIT 1');
+        $check->execute([$eventKey]);
+        $existing = $check->fetch();
+        if (!$existing) {
+            throw $error;
+        }
+        return [
+            'duplicate' => true,
+            'event_id' => (int)$existing['id'],
+            'order' => public_order_view($order),
+            'message' => '支付回调已处理，重复事件已忽略',
+        ];
+    }
+
+    $remark = (string)($order['remark'] ?? '');
+    $paidAt = $order['paid_at'] ?? null;
+    if ($status === 'paid') {
+        $paidAt = $paidAt ?: (trim((string)($data['paid_at'] ?? '')) ?: now());
+        $remark = append_order_note($remark, '支付回调确认已支付：' . (string)$channel['name'] . ($transactionId ? '，交易号：' . $transactionId : ''));
+    } elseif ($status === 'refunded') {
+        if ((int)($order['stock_reserved'] ?? 0) === 1 && restore_order_stock($pdo, $order)) {
+            $remark = append_order_note($remark, '支付回调确认退款，系统已回补商品库存');
+            $order['stock_reserved'] = 0;
+        }
+        $remark = append_order_note($remark, '支付回调确认退款：' . (string)$channel['name']);
+    } elseif ($status === 'failed') {
+        $remark = append_order_note($remark, '支付回调确认支付失败：' . (string)$channel['name']);
+    }
+
+    $update = $pdo->prepare('UPDATE orders SET payment_status=:payment_status, paid_at=:paid_at, remark=:remark, stock_reserved=:stock_reserved, updated_at=:updated_at WHERE id=:id');
+    $update->execute([
+        'id' => (int)$order['id'],
+        'payment_status' => $status,
+        'paid_at' => $paidAt ?: null,
+        'remark' => $remark,
+        'stock_reserved' => (int)($order['stock_reserved'] ?? 0),
+        'updated_at' => now(),
+    ]);
+    $pdo->prepare('UPDATE payment_webhook_events SET processed_at = :processed_at WHERE id = :id')
+        ->execute(['id' => $eventId, 'processed_at' => now()]);
+    $updatedOrder = fetch_one($pdo, 'orders', (int)$order['id']) ?: $order;
+    return [
+        'duplicate' => false,
+        'event_id' => $eventId,
+        'order' => public_order_view($updatedOrder),
+        'message' => '支付回调已处理',
+    ];
+}
+
 function ensure_content_distribution_table(PDO $pdo): void
 {
     ensure_pages_table($pdo);
@@ -4922,6 +5118,30 @@ function ensure_auth_tables(PDO $pdo): void
     ensure_column($pdo, 'orders', 'site_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 10001');
     ensure_column($pdo, 'orders', 'stock_reserved', 'TINYINT(1) NOT NULL DEFAULT 0');
 
+    $pdo->exec("CREATE TABLE IF NOT EXISTS payment_webhook_events (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        site_id BIGINT UNSIGNED NOT NULL DEFAULT 10001,
+        channel_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+        provider VARCHAR(40) NOT NULL DEFAULT 'manual',
+        event_key VARCHAR(180) NOT NULL,
+        order_no VARCHAR(40) NOT NULL,
+        transaction_id VARCHAR(120),
+        payment_status VARCHAR(30) NOT NULL,
+        amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        currency VARCHAR(10) NOT NULL DEFAULT 'CNY',
+        payload TEXT,
+        processed_at DATETIME,
+        created_at DATETIME NOT NULL,
+        UNIQUE KEY uk_event_key (event_key),
+        INDEX idx_site_id (site_id),
+        INDEX idx_order_no (order_no),
+        INDEX idx_transaction_id (transaction_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    ensure_column($pdo, 'payment_webhook_events', 'site_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 10001');
+    ensure_column($pdo, 'payment_webhook_events', 'channel_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 0');
+    ensure_column($pdo, 'payment_webhook_events', 'provider', "VARCHAR(40) NOT NULL DEFAULT 'manual'");
+    ensure_column($pdo, 'payment_webhook_events', 'event_key', 'VARCHAR(180) NOT NULL');
+
     $pdo->exec("CREATE TABLE IF NOT EXISTS form_submissions (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
         site_id BIGINT UNSIGNED NOT NULL DEFAULT 10001,
@@ -5511,6 +5731,10 @@ try {
             'updated_at' => now(),
         ]);
         ok(public_order_view(fetch_one($pdo, 'orders', (int)$order['id']) ?: $order), '服务请求已提交');
+    }
+
+    if ($method === 'POST' && $path === '/payment/webhook') {
+        ok(handle_payment_webhook($pdo, main_pdo()), '支付回调已处理');
     }
 
     $user = require_login($pdo);
