@@ -107,6 +107,24 @@
                 <el-col :span="12"><el-form-item label="默认币种"><el-input v-model="site.payment.currency" /></el-form-item></el-col>
               </el-row>
               <el-form-item label="付款说明"><el-input v-model="site.payment.guide" type="textarea" :rows="3" /></el-form-item>
+              <el-divider content-position="left">宝塔部署配置</el-divider>
+              <el-row :gutter="16">
+                <el-col :span="12"><el-form-item label="面板地址"><el-input v-model="site.deploy.bt_panel_url" placeholder="https://server:8888" /></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="站点目录"><el-input v-model="site.deploy.site_path" placeholder="/www/wwwroot/example.com" /></el-form-item></el-col>
+              </el-row>
+              <el-row :gutter="16">
+                <el-col :span="12">
+                  <el-form-item label="部署模式">
+                    <el-select v-model="site.deploy.mode">
+                      <el-option label="手动确认" value="manual" />
+                      <el-option label="宝塔 API" value="bt_api" />
+                      <el-option label="FTP/SFTP" value="ftp" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12"><el-form-item label="发布后动作"><el-input v-model="site.deploy.after_action" placeholder="reload_nginx" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="部署备注"><el-input v-model="site.deploy.note" type="textarea" :rows="2" placeholder="记录服务器、站点、证书和备份策略" /></el-form-item>
             </el-form>
           </el-card>
         </section>
@@ -443,10 +461,16 @@
         <section v-if="view === 'publish'">
           <el-card class="panel" shadow="never">
             <template #header>
-              <div class="card-head"><strong>发布中心</strong><el-button type="primary" :loading="generating" @click="generateSite">生成静态站</el-button></div>
+              <div class="card-head">
+                <strong>发布中心</strong>
+                <div class="head-actions">
+                  <el-button :loading="deployTesting" @click="checkDeployConfig">检查部署配置</el-button>
+                  <el-button type="primary" :loading="generating" @click="generateSite">生成静态站</el-button>
+                </div>
+              </div>
             </template>
             <el-alert title="新版后台复用原 PHP 发布接口，不影响旧 admin.html。" type="info" show-icon class="mb16" />
-            <el-result v-if="publishResult" class="publish-result" icon="success" title="本次生成完成" :sub-title="publishResult.version_no || publishResult.message || '静态站已生成'">
+            <el-result v-if="publishResult" class="publish-result" :icon="publishResult.configured === false ? 'warning' : 'success'" :title="publishResultTitle" :sub-title="publishResultSubtitle">
               <template #extra>
                 <el-button type="primary" @click="previewSite">预览站点</el-button>
                 <el-button @click="publishResult = null">收起</el-button>
@@ -468,8 +492,15 @@
               <el-descriptions-item label="类型">{{ publishDetail.publish_type || '-' }}</el-descriptions-item>
               <el-descriptions-item label="状态">{{ publishDetail.status || '-' }}</el-descriptions-item>
               <el-descriptions-item label="时间">{{ publishDetail.created_at || '-' }}</el-descriptions-item>
-              <el-descriptions-item label="说明">{{ publishDetail.message || publishDetail.remark || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="文件路径">{{ publishDetail.file_path || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="生成文件数">{{ publishSummary.file_count ?? '-' }}</el-descriptions-item>
+              <el-descriptions-item label="面板地址">{{ publishSummary.panel_url || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="站点目录">{{ publishSummary.site_path || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="说明">{{ publishSummary.message || publishDetail.message || publishDetail.remark || '-' }}</el-descriptions-item>
             </el-descriptions>
+            <el-alert v-if="publishSummary.output?.length" class="mt16" type="info" show-icon title="生成输出">
+              <pre class="output-log">{{ publishSummary.output.join('\n') }}</pre>
+            </el-alert>
           </el-drawer>
         </section>
       </el-main>
@@ -507,12 +538,24 @@ const selectedServiceIds = ref<string[]>([])
 const orderDrawerVisible = ref(false)
 const publishDrawerVisible = ref(false)
 const publishResult = ref<any>(null)
+const deployTesting = ref(false)
 
 const orderFilters = reactive({ keyword: '', payment_status: '', fulfillment_status: '' })
 const serviceFilters = reactive({ keyword: '', status: '', type: '' })
 const mediaFilters = reactive({ keyword: '', file_type: '' })
 const orderDetail = reactive<any>({})
 const publishDetail = reactive<any>({})
+const publishSummary = computed(() => parseSummary(publishDetail.summary))
+const publishResultTitle = computed(() => {
+  if (!publishResult.value) return ''
+  if (publishResult.value.configured === false) return '部署配置待完善'
+  if (publishResult.value.configured === true) return '部署配置已就绪'
+  return '本次生成完成'
+})
+const publishResultSubtitle = computed(() => {
+  if (!publishResult.value) return ''
+  return publishResult.value.message || publishResult.value.version_no || (publishResult.value.file_count ? `已生成 ${publishResult.value.file_count} 个文件` : '静态站已生成')
+})
 const articleForm = reactive<any>({})
 const productForm = reactive<any>({})
 const aiForm = reactive({ type: 'article', prompt: '围绕自主品牌商品、行业解决方案和独立站 SEO 关键词生成内容', count: 5, status: 'draft' })
@@ -650,7 +693,13 @@ function normalizeSite(data: any = {}) {
     template_key: data.template_key || 'business-clean',
     ai: data.ai || {},
     payment: data.payment || {},
-    deploy: data.deploy || {},
+    deploy: {
+      bt_panel_url: data.deploy?.bt_panel_url || '',
+      site_path: data.deploy?.site_path || '',
+      mode: data.deploy?.mode || 'manual',
+      after_action: data.deploy?.after_action || '',
+      note: data.deploy?.note || ''
+    },
     content: data.content || {},
     hero: data.hero || {},
     home_sections: data.home_sections || {},
@@ -1043,6 +1092,17 @@ async function loadVersions() {
   const data = await request('/api/site/publish-versions')
   versions.value = data.items || data || []
 }
+
+function parseSummary(value: any) {
+  if (!value) return {}
+  if (typeof value === 'object') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return { message: value }
+  }
+}
+
 async function generateSite() {
   generating.value = true
   try {
@@ -1055,6 +1115,19 @@ async function generateSite() {
     generating.value = false
   }
 }
+
+async function checkDeployConfig() {
+  deployTesting.value = true
+  try {
+    const data = await request('/api/site/deploy-test', { method: 'POST' })
+    publishResult.value = data || { message: '部署配置检查完成' }
+    ElMessage.success(data?.message || '部署配置检查完成')
+    await loadVersions()
+  } finally {
+    deployTesting.value = false
+  }
+}
+
 function openPublishVersion(row: any) {
   Object.assign(publishDetail, row)
   publishDrawerVisible.value = true

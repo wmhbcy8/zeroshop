@@ -228,6 +228,21 @@ body {
   border-radius: 12px;
   background: #f8fbff;
 }
+.head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.mt16 {
+  margin-top: 16px;
+}
+.output-log {
+  max-height: 220px;
+  margin: 8px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
 .template-grid {
   display: grid;
   gap: 14px;
