@@ -9,6 +9,14 @@ if (!str_starts_with($requestPath, '/api')) {
     if ($serverRelativePath !== '' && $serverRelativePath !== 'index.php') {
         $serverTargetPath = realpath($serverPublic . DIRECTORY_SEPARATOR . str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $serverRelativePath));
         $serverBase = realpath($serverPublic);
+        if ($serverTargetPath && $serverBase && str_starts_with($serverTargetPath, $serverBase) && is_dir($serverTargetPath)) {
+            $serverIndexPath = realpath($serverTargetPath . DIRECTORY_SEPARATOR . 'index.html');
+            if ($serverIndexPath && str_starts_with($serverIndexPath, $serverBase) && is_file($serverIndexPath)) {
+                header('Content-Type: text/html; charset=utf-8');
+                readfile($serverIndexPath);
+                exit;
+            }
+        }
         if ($serverTargetPath && $serverBase && str_starts_with($serverTargetPath, $serverBase) && is_file($serverTargetPath)) {
             $ext = strtolower(pathinfo($serverTargetPath, PATHINFO_EXTENSION));
             $types = [

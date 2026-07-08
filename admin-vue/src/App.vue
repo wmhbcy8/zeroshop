@@ -1,0 +1,571 @@
+<template>
+  <div v-if="!token" class="login-page">
+    <el-card class="login-card" shadow="always">
+      <div class="login-brand">
+        <span>简</span>
+        <div>
+          <strong>化简新版后台</strong>
+          <small>Art Design Pro UI · API 保持不变</small>
+        </div>
+      </div>
+      <el-form :model="loginForm" label-position="top" @submit.prevent="login">
+        <el-form-item label="账号"><el-input v-model="loginForm.username" /></el-form-item>
+        <el-form-item label="密码"><el-input v-model="loginForm.password" type="password" show-password /></el-form-item>
+        <el-button type="primary" size="large" :loading="loading" native-type="submit" class="full-btn">登录后台</el-button>
+      </el-form>
+    </el-card>
+  </div>
+
+  <el-container v-else class="app-shell">
+    <el-aside width="248px" class="side">
+      <div class="brand">
+        <span>简</span>
+        <div>
+          <strong>化简</strong>
+          <small>ZeroShop Admin</small>
+        </div>
+      </div>
+      <el-menu :default-active="view" class="menu" @select="setView">
+        <el-menu-item v-for="item in navItems" :key="item.key" :index="item.key">
+          <el-icon><component :is="item.icon" /></el-icon>
+          <span>{{ item.label }}</span>
+          <el-badge v-if="item.key === 'service' && servicePending" :value="servicePending" class="menu-badge" />
+        </el-menu-item>
+      </el-menu>
+    </el-aside>
+
+    <el-container>
+      <el-header class="topbar">
+        <div>
+          <h1>{{ currentNav?.label }}</h1>
+          <p>{{ currentNav?.hint }}</p>
+        </div>
+        <div class="top-actions">
+          <el-button @click="previewSite">预览站点</el-button>
+          <el-button type="primary" :loading="generating" @click="generateSite">生成静态站</el-button>
+          <el-button @click="logout">退出</el-button>
+        </div>
+      </el-header>
+
+      <el-main class="main">
+        <section v-if="view === 'dashboard'">
+          <div class="metric-grid">
+            <MetricCard title="今日访客" :value="metrics.today_visitors || 0" :note="`浏览 ${metrics.today_views || 0} 次`" icon="User" />
+            <MetricCard title="访问深度" :value="metrics.visit_depth || 0" note="人均浏览页数" icon="TrendCharts" />
+            <MetricCard title="今日支付金额" :value="metrics.today_paid_amount || '0.00'" :suffix="`/ ${metrics.currency || 'CNY'}`" note="已支付订单金额" icon="Money" />
+            <MetricCard title="待处理订单" :value="metrics.pending_orders || 0" :note="`待付款 ${metrics.pending_payment_orders || 0} / 待发货 ${metrics.pending_fulfillment_orders || 0}`" icon="Tickets" />
+            <MetricCard title="文章" :value="totals.articles" note="SEO 内容库" icon="Document" />
+            <MetricCard title="商品" :value="totals.products" note="独立站商品" icon="Goods" />
+            <MetricCard title="订单" :value="totals.orders" note="商城订单" icon="ShoppingCart" />
+            <MetricCard title="留言" :value="totals.forms" note="询盘线索" icon="ChatLineRound" />
+          </div>
+          <el-card class="panel" shadow="never">
+            <template #header><strong>站点信息</strong></template>
+            <el-descriptions :column="2" border>
+              <el-descriptions-item label="站点名称">{{ site.name || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="域名">{{ site.domain || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="电话">{{ site.phone || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="邮箱">{{ site.email || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="地址" :span="2">{{ site.address || '-' }}</el-descriptions-item>
+            </el-descriptions>
+          </el-card>
+        </section>
+
+        <section v-if="view === 'settings'">
+          <el-card class="panel" shadow="never">
+            <template #header>
+              <div class="card-head"><strong>站点设置</strong><el-button type="primary" @click="saveSettings">保存设置</el-button></div>
+            </template>
+            <el-form :model="site" label-width="120px" class="wide-form">
+              <el-divider content-position="left">基础信息</el-divider>
+              <el-row :gutter="16">
+                <el-col :span="12"><el-form-item label="站点名称"><el-input v-model="site.name" /></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="域名"><el-input v-model="site.domain" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="品牌标语"><el-input v-model="site.slogan" /></el-form-item>
+              <el-form-item label="网站描述"><el-input v-model="site.description" type="textarea" :rows="3" /></el-form-item>
+              <el-form-item label="SEO 关键词"><el-input v-model="site.keywords" /></el-form-item>
+              <el-row :gutter="16">
+                <el-col :span="12"><el-form-item label="电话"><el-input v-model="site.phone" /></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="邮箱"><el-input v-model="site.email" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="地址"><el-input v-model="site.address" /></el-form-item>
+              <el-divider content-position="left">AI 与支付</el-divider>
+              <el-row :gutter="16">
+                <el-col :span="12"><el-form-item label="AI 服务商"><el-input v-model="site.ai.provider" /></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="模型名称"><el-input v-model="site.ai.model" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="AI API 地址"><el-input v-model="site.ai.endpoint" /></el-form-item>
+              <el-form-item label="AI API Key"><el-input v-model="site.ai.api_key" type="password" show-password /></el-form-item>
+              <el-row :gutter="16">
+                <el-col :span="12"><el-form-item label="支付模式"><el-select v-model="site.payment.mode"><el-option label="人工确认" value="manual" /><el-option label="微信支付" value="wechat" /><el-option label="支付宝" value="alipay" /><el-option label="Stripe" value="stripe" /></el-select></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="默认币种"><el-input v-model="site.payment.currency" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="付款说明"><el-input v-model="site.payment.guide" type="textarea" :rows="3" /></el-form-item>
+            </el-form>
+          </el-card>
+        </section>
+
+        <section v-if="view === 'articles'">
+          <ContentEditor type="article" :items="articles" :form="articleForm" @new="newArticle" @edit="editArticle" @save="saveArticle" @delete="deleteArticle" @ai="generateArticleDraft" />
+        </section>
+
+        <section v-if="view === 'products'">
+          <ContentEditor type="product" :items="products" :form="productForm" @new="newProduct" @edit="editProduct" @save="saveProduct" @delete="deleteProduct" @ai="generateProductDraft" />
+        </section>
+
+        <section v-if="view === 'orders'">
+          <el-row :gutter="16">
+            <el-col :span="15">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>订单列表</strong>
+                    <el-button @click="loadOrders">刷新</el-button>
+                  </div>
+                </template>
+                <el-form :inline="true" class="toolbar" @submit.prevent="loadOrders">
+                  <el-form-item><el-input v-model="orderFilters.keyword" placeholder="订单号/客户/手机号" clearable /></el-form-item>
+                  <el-form-item><el-select v-model="orderFilters.payment_status" placeholder="支付" clearable><el-option label="待支付" value="pending" /><el-option label="已支付" value="paid" /></el-select></el-form-item>
+                  <el-form-item><el-select v-model="orderFilters.fulfillment_status" placeholder="履约" clearable><el-option label="新订单" value="new" /><el-option label="已确认" value="confirmed" /><el-option label="已发货" value="shipped" /><el-option label="已完成" value="finished" /></el-select></el-form-item>
+                  <el-button type="primary" @click="loadOrders">筛选</el-button>
+                </el-form>
+                <el-table :data="orders" height="560" row-key="id" highlight-current-row @row-click="selectOrder">
+                  <el-table-column prop="order_no" label="订单号" min-width="160" />
+                  <el-table-column prop="customer_name" label="客户" min-width="130">
+                    <template #default="{ row }"><strong>{{ row.customer_name }}</strong><br /><small>{{ row.phone }}</small></template>
+                  </el-table-column>
+                  <el-table-column label="金额" width="120"><template #default="{ row }">{{ row.currency }} {{ row.total_amount }}</template></el-table-column>
+                  <el-table-column label="状态" width="130">
+                    <template #default="{ row }"><el-tag>{{ paymentLabel(row.payment_status) }}</el-tag><br /><el-tag class="mt4" type="success">{{ fulfillLabel(row.fulfillment_status) }}</el-tag></template>
+                  </el-table-column>
+                </el-table>
+              </el-card>
+            </el-col>
+            <el-col :span="9">
+              <el-card class="panel" shadow="never">
+                <template #header><strong>订单跟进</strong></template>
+                <el-empty v-if="!orderDetail.id" description="选择一条订单查看详情" />
+                <el-form v-else :model="orderDetail" label-width="92px">
+                  <el-descriptions :column="1" border class="mb16">
+                    <el-descriptions-item label="订单号">{{ orderDetail.order_no }}</el-descriptions-item>
+                    <el-descriptions-item label="客户">{{ orderDetail.customer_name }} / {{ orderDetail.phone }}</el-descriptions-item>
+                    <el-descriptions-item label="金额">{{ orderDetail.currency }} {{ orderDetail.total_amount }}</el-descriptions-item>
+                  </el-descriptions>
+                  <el-form-item label="支付状态"><el-select v-model="orderDetail.payment_status"><el-option label="待支付" value="pending" /><el-option label="已支付" value="paid" /><el-option label="已退款" value="refunded" /></el-select></el-form-item>
+                  <el-form-item label="履约状态"><el-select v-model="orderDetail.fulfillment_status"><el-option label="新订单" value="new" /><el-option label="已确认" value="confirmed" /><el-option label="已发货" value="shipped" /><el-option label="已完成" value="finished" /><el-option label="已关闭" value="closed" /></el-select></el-form-item>
+                  <el-form-item label="物流公司"><el-input v-model="orderDetail.tracking_company" /></el-form-item>
+                  <el-form-item label="物流单号"><el-input v-model="orderDetail.tracking_no" /></el-form-item>
+                  <el-form-item label="新增跟进"><el-input v-model="orderDetail.followup_note" type="textarea" :rows="3" /></el-form-item>
+                  <el-form-item label="时间线"><el-input v-model="orderDetail.remark" type="textarea" :rows="6" /></el-form-item>
+                  <el-button type="primary" @click="saveOrder">保存订单</el-button>
+                </el-form>
+              </el-card>
+            </el-col>
+          </el-row>
+        </section>
+
+        <section v-if="view === 'service'">
+          <el-card class="panel" shadow="never">
+            <template #header>
+              <div class="card-head"><strong>服务中心</strong><el-button type="primary" @click="resolveSelectedServices">批量标记已处理</el-button></div>
+            </template>
+            <el-form :inline="true" class="toolbar" @submit.prevent="loadServices">
+              <el-form-item><el-input v-model="serviceFilters.keyword" placeholder="搜索订单/客户/请求内容" clearable /></el-form-item>
+              <el-form-item><el-select v-model="serviceFilters.status" placeholder="状态" clearable><el-option label="待处理" value="pending" /><el-option label="已处理" value="handled" /></el-select></el-form-item>
+              <el-form-item><el-select v-model="serviceFilters.type" placeholder="类型" clearable><el-option label="催发货" value="催发货" /><el-option label="改地址" value="修改收货信息" /><el-option label="售后" value="售后问题" /><el-option label="其他" value="其他服务" /></el-select></el-form-item>
+              <el-button type="primary" @click="loadServices">筛选</el-button>
+            </el-form>
+            <el-table :data="services" height="600" @selection-change="selectedServiceIds = $event.map((item: any) => item.id)">
+              <el-table-column type="selection" width="48" :selectable="(row: any) => row.status === 'pending'" />
+              <el-table-column prop="type" label="类型" width="130" />
+              <el-table-column prop="message" label="请求内容" min-width="260" />
+              <el-table-column label="客户" width="170"><template #default="{ row }">{{ row.customer_name }}<br /><small>{{ row.phone }}</small></template></el-table-column>
+              <el-table-column prop="order_no" label="订单号" width="170" />
+              <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.status === 'handled' ? 'success' : 'warning'">{{ row.status === 'handled' ? '已处理' : '待处理' }}</el-tag></template></el-table-column>
+              <el-table-column label="操作" width="110"><template #default="{ row }"><el-button link type="primary" @click="openOrder(row.order_id)">去处理</el-button></template></el-table-column>
+            </el-table>
+          </el-card>
+        </section>
+
+        <section v-if="view === 'media'">
+          <el-card class="panel" shadow="never">
+            <template #header><strong>媒体库</strong></template>
+            <el-upload drag action="/api/media/upload" :headers="authHeaders" name="file" :on-success="loadMedia">
+              <el-icon class="upload-icon"><UploadFilled /></el-icon>
+              <div>拖拽文件到这里，或点击上传</div>
+            </el-upload>
+            <div class="media-grid">
+              <article v-for="item in media" :key="item.id" class="media-card">
+                <img v-if="item.file_type === 'image'" :src="`/${item.file_path}`" />
+                <strong>{{ item.file_name }}</strong>
+                <small>/{{ item.file_path }}</small>
+              </article>
+            </div>
+          </el-card>
+        </section>
+
+        <section v-if="view === 'forms'">
+          <el-card class="panel" shadow="never">
+            <template #header><strong>留言线索</strong></template>
+            <el-table :data="forms" height="650">
+              <el-table-column prop="form_key" label="来源" width="140" />
+              <el-table-column label="内容" min-width="340"><template #default="{ row }"><pre>{{ pretty(row.data) }}</pre></template></el-table-column>
+              <el-table-column prop="status" label="状态" width="120" />
+              <el-table-column prop="created_at" label="时间" width="170" />
+            </el-table>
+          </el-card>
+        </section>
+
+        <section v-if="view === 'publish'">
+          <el-card class="panel" shadow="never">
+            <template #header>
+              <div class="card-head"><strong>发布中心</strong><el-button type="primary" :loading="generating" @click="generateSite">生成静态站</el-button></div>
+            </template>
+            <el-alert title="新版后台复用原 PHP 发布接口，不影响旧 admin.html。" type="info" show-icon class="mb16" />
+            <el-table :data="versions">
+              <el-table-column prop="version_no" label="版本号" min-width="160" />
+              <el-table-column prop="publish_type" label="类型" width="120" />
+              <el-table-column prop="status" label="状态" width="120" />
+              <el-table-column prop="created_at" label="时间" width="180" />
+            </el-table>
+          </el-card>
+        </section>
+      </el-main>
+    </el-container>
+  </el-container>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import axios from 'axios'
+
+const TOKEN_KEY = 'huajian_admin_token'
+const token = ref(localStorage.getItem(TOKEN_KEY) || '')
+const loading = ref(false)
+const generating = ref(false)
+const view = ref('dashboard')
+
+const loginForm = reactive({ username: 'admin', password: 'admin123456' })
+const site = reactive<any>({ ai: {}, payment: {}, deploy: {}, content: {} })
+const metrics = ref<any>({})
+const totals = reactive({ articles: 0, products: 0, orders: 0, media: 0, forms: 0 })
+const articles = ref<any[]>([])
+const products = ref<any[]>([])
+const orders = ref<any[]>([])
+const services = ref<any[]>([])
+const media = ref<any[]>([])
+const forms = ref<any[]>([])
+const versions = ref<any[]>([])
+const servicePending = ref(0)
+const selectedServiceIds = ref<string[]>([])
+
+const orderFilters = reactive({ keyword: '', payment_status: '', fulfillment_status: '' })
+const serviceFilters = reactive({ keyword: '', status: '', type: '' })
+const orderDetail = reactive<any>({})
+const articleForm = reactive<any>({})
+const productForm = reactive<any>({})
+
+const navItems = [
+  { key: 'dashboard', label: '概览', hint: '查看运营指标、内容数量和站点状态。', icon: 'Odometer' },
+  { key: 'settings', label: '站点', hint: '维护企业信息、SEO、AI、支付和发布配置。', icon: 'Setting' },
+  { key: 'articles', label: '文章', hint: '管理 SEO 文章和知识库内容。', icon: 'Document' },
+  { key: 'products', label: '商品', hint: '管理独立站商品与商城展示内容。', icon: 'Goods' },
+  { key: 'orders', label: '订单', hint: '处理支付、发货和订单跟进。', icon: 'ShoppingCart' },
+  { key: 'service', label: '服务', hint: '集中处理客户服务请求。', icon: 'Service' },
+  { key: 'media', label: '媒体库', hint: '上传并复用图片和文件素材。', icon: 'Picture' },
+  { key: 'forms', label: '留言', hint: '处理询盘线索和联系表单。', icon: 'ChatLineRound' },
+  { key: 'publish', label: '发布', hint: '生成静态站并查看发布记录。', icon: 'Upload' }
+]
+const currentNav = computed(() => navItems.find((item) => item.key === view.value))
+const authHeaders = computed(() => ({ Authorization: `Bearer ${token.value}` }))
+
+async function request(path: string, options: any = {}) {
+  const response = await axios({
+    url: path,
+    method: options.method || 'GET',
+    data: options.body ? JSON.parse(options.body) : options.data,
+    headers: token.value ? { Authorization: `Bearer ${token.value}`, ...(options.headers || {}) } : options.headers
+  })
+  if (!response.data.success) throw new Error(response.data.message || '请求失败')
+  return response.data.data
+}
+
+async function login() {
+  loading.value = true
+  try {
+    const data = await request('/api/auth/login', {
+      method: 'POST',
+      data: { ...loginForm }
+    })
+    token.value = data.token
+    localStorage.setItem(TOKEN_KEY, data.token)
+    ElMessage.success('登录成功')
+    await loadAll()
+  } finally {
+    loading.value = false
+  }
+}
+
+async function logout() {
+  try { await request('/api/auth/logout', { method: 'POST' }) } catch {}
+  token.value = ''
+  localStorage.removeItem(TOKEN_KEY)
+}
+
+function setView(key: string) {
+  view.value = key
+  if (key === 'dashboard') loadDashboard()
+  if (key === 'orders') loadOrders()
+  if (key === 'service') loadServices()
+}
+
+async function loadAll() {
+  await Promise.all([loadDashboard(), loadSettings(), loadArticles(), loadProducts(), loadOrders(), loadServices(), loadMedia(), loadForms(), loadVersions()])
+}
+
+async function loadDashboard() {
+  const [articleData, productData, orderData, mediaData, formData, metricData] = await Promise.all([
+    request('/api/articles?page_size=1'),
+    request('/api/products?page_size=1'),
+    request('/api/orders?page_size=1'),
+    request('/api/media?page_size=1'),
+    request('/api/forms/submissions?page_size=1'),
+    request('/api/dashboard/metrics')
+  ])
+  totals.articles = articleData.pagination?.total || 0
+  totals.products = productData.pagination?.total || 0
+  totals.orders = orderData.pagination?.total || 0
+  totals.media = mediaData.pagination?.total || 0
+  totals.forms = formData.pagination?.total || 0
+  metrics.value = metricData
+}
+
+async function loadSettings() {
+  const data = await request('/api/site/settings')
+  Object.assign(site, normalizeSite(data))
+}
+
+function normalizeSite(data: any = {}) {
+  return {
+    ...data,
+    ai: data.ai || {},
+    payment: data.payment || {},
+    deploy: data.deploy || {},
+    content: data.content || {}
+  }
+}
+
+async function saveSettings() {
+  const data = await request('/api/site/settings', { method: 'PUT', data: site })
+  Object.assign(site, normalizeSite(data))
+  ElMessage.success('站点设置已保存')
+}
+
+async function loadArticles() {
+  const data = await request('/api/articles?page_size=50')
+  articles.value = data.items || []
+}
+
+async function loadProducts() {
+  const data = await request('/api/products?page_size=50')
+  products.value = data.items || []
+}
+
+function newArticle() { Object.assign(articleForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft' }) }
+function editArticle(item: any) { Object.assign(articleForm, item) }
+async function saveArticle() {
+  const method = articleForm.id ? 'PUT' : 'POST'
+  const path = articleForm.id ? `/api/articles/${articleForm.id}` : '/api/articles'
+  await request(path, { method, data: { ...articleForm } })
+  ElMessage.success('文章已保存')
+  await loadArticles()
+}
+async function deleteArticle(item: any) {
+  await ElMessageBox.confirm(`确定删除文章「${item.title}」？`)
+  await request(`/api/articles/${item.id}`, { method: 'DELETE' })
+  await loadArticles()
+}
+async function generateArticleDraft(prompt: string) {
+  const data = await request('/api/ai/generate', { method: 'POST', data: { type: 'article', prompt } })
+  Object.assign(articleForm, data)
+}
+
+function newProduct() { Object.assign(productForm, { id: '', title: '', slug: '', sku: '', cover: '', summary: '', description: '', price: 0, stock: 0, status: 'draft' }) }
+function editProduct(item: any) { Object.assign(productForm, item) }
+async function saveProduct() {
+  const method = productForm.id ? 'PUT' : 'POST'
+  const path = productForm.id ? `/api/products/${productForm.id}` : '/api/products'
+  await request(path, { method, data: { ...productForm } })
+  ElMessage.success('商品已保存')
+  await loadProducts()
+}
+async function deleteProduct(item: any) {
+  await ElMessageBox.confirm(`确定删除商品「${item.title}」？`)
+  await request(`/api/products/${item.id}`, { method: 'DELETE' })
+  await loadProducts()
+}
+async function generateProductDraft(prompt: string) {
+  const data = await request('/api/ai/generate', { method: 'POST', data: { type: 'product', prompt } })
+  Object.assign(productForm, data)
+}
+
+async function loadOrders() {
+  const params = new URLSearchParams()
+  Object.entries(orderFilters).forEach(([key, value]) => value && params.set(key, value))
+  const data = await request(`/api/orders?page_size=50&${params.toString()}`)
+  orders.value = data.items || []
+}
+function selectOrder(row: any) { Object.assign(orderDetail, row, { followup_note: '' }) }
+async function saveOrder() {
+  await request(`/api/orders/${orderDetail.id}`, {
+    method: 'PUT',
+    data: {
+      payment_status: orderDetail.payment_status,
+      fulfillment_status: orderDetail.fulfillment_status,
+      tracking_company: orderDetail.tracking_company,
+      tracking_no: orderDetail.tracking_no,
+      followup_note: orderDetail.followup_note,
+      remark: orderDetail.remark
+    }
+  })
+  ElMessage.success('订单已保存')
+  await Promise.all([loadOrders(), loadServices(), loadDashboard()])
+}
+async function openOrder(id: number) {
+  const data = await request(`/api/orders/${id}`)
+  Object.assign(orderDetail, data, { followup_note: '' })
+  view.value = 'orders'
+}
+
+async function loadServices() {
+  const params = new URLSearchParams()
+  Object.entries(serviceFilters).forEach(([key, value]) => value && params.set(key, value))
+  const data = await request(`/api/orders/service-requests?${params.toString()}`)
+  services.value = data.items || []
+  servicePending.value = data.pending || 0
+}
+async function resolveSelectedServices() {
+  if (!selectedServiceIds.value.length) return ElMessage.warning('请选择待处理服务请求')
+  const data = await request('/api/orders/service-requests/resolve', { method: 'POST', data: { ids: selectedServiceIds.value } })
+  ElMessage.success(`已处理 ${data.handled || 0} 条服务请求`)
+  await loadServices()
+}
+
+async function loadMedia() {
+  const data = await request('/api/media?page_size=50')
+  media.value = data.items || []
+}
+async function loadForms() {
+  const data = await request('/api/forms/submissions?page_size=50')
+  forms.value = data.items || []
+}
+async function loadVersions() {
+  const data = await request('/api/site/publish-versions')
+  versions.value = data.items || data || []
+}
+async function generateSite() {
+  generating.value = true
+  try {
+    await request('/api/site/generate', { method: 'POST' })
+    ElMessage.success('静态站已生成')
+    await loadVersions()
+  } finally {
+    generating.value = false
+  }
+}
+function previewSite() {
+  window.open('/', '_blank')
+}
+
+function paymentLabel(value: string) {
+  return ({ pending: '待支付', paid: '已支付', refunded: '已退款', failed: '失败' } as any)[value] || value || '-'
+}
+function fulfillLabel(value: string) {
+  return ({ new: '新订单', confirmed: '已确认', shipped: '已发货', finished: '已完成', closed: '已关闭' } as any)[value] || value || '-'
+}
+function pretty(value: string) {
+  try { return JSON.stringify(JSON.parse(value || '{}'), null, 2) } catch { return value || '-' }
+}
+
+onMounted(() => {
+  if (token.value) loadAll().catch((error) => ElMessage.error(error.message))
+})
+</script>
+
+<script lang="ts">
+import { defineComponent } from 'vue'
+
+export default defineComponent({
+  components: {
+    MetricCard: {
+      props: ['title', 'value', 'note', 'icon', 'suffix'],
+      template: `
+        <el-card class="metric-card" shadow="never">
+          <div class="metric-top">
+            <span>{{ title }} <em v-if="suffix">{{ suffix }}</em></span>
+            <el-icon><component :is="icon" /></el-icon>
+          </div>
+          <strong>{{ value }}</strong>
+          <small>{{ note }}</small>
+        </el-card>
+      `
+    },
+    ContentEditor: {
+      props: ['type', 'items', 'form'],
+      emits: ['new', 'edit', 'save', 'delete', 'ai'],
+      data() {
+        return { prompt: '' }
+      },
+      computed: {
+        title() { return this.type === 'article' ? '文章' : '商品' },
+        bodyField() { return this.type === 'article' ? 'content' : 'description' }
+      },
+      template: `
+        <el-row :gutter="16">
+          <el-col :span="14">
+            <el-card class="panel" shadow="never">
+              <template #header><div class="card-head"><strong>{{ title }}列表</strong><el-button type="primary" @click="$emit('new')">新建{{ title }}</el-button></div></template>
+              <el-table :data="items" height="650">
+                <el-table-column prop="title" label="标题" min-width="220">
+                  <template #default="{ row }"><strong>{{ row.title }}</strong><br /><small>{{ row.slug }}</small></template>
+                </el-table-column>
+                <el-table-column prop="status" label="状态" width="110" />
+                <el-table-column label="操作" width="150">
+                  <template #default="{ row }">
+                    <el-button link type="primary" @click="$emit('edit', row)">编辑</el-button>
+                    <el-button link type="danger" @click="$emit('delete', row)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-card>
+          </el-col>
+          <el-col :span="10">
+            <el-card class="panel" shadow="never">
+              <template #header><strong>{{ form.id ? '编辑' : '新建' }}{{ title }}</strong></template>
+              <el-form :model="form" label-width="90px">
+                <el-alert type="info" show-icon :closable="false" class="mb16" title="AI 生成入口保留，内容会填充到当前表单。" />
+                <el-form-item label="AI 要求"><el-input v-model="prompt" placeholder="输入生成要求" /></el-form-item>
+                <el-form-item><el-button @click="$emit('ai', prompt)">AI 生成草稿</el-button></el-form-item>
+                <el-form-item label="标题"><el-input v-model="form.title" /></el-form-item>
+                <el-form-item label="Slug"><el-input v-model="form.slug" /></el-form-item>
+                <el-form-item v-if="type === 'product'" label="SKU"><el-input v-model="form.sku" /></el-form-item>
+                <el-form-item label="封面"><el-input v-model="form.cover" /></el-form-item>
+                <el-form-item label="摘要"><el-input v-model="form.summary" type="textarea" :rows="3" /></el-form-item>
+                <el-form-item :label="type === 'article' ? '正文' : '描述'"><el-input v-model="form[bodyField]" type="textarea" :rows="7" /></el-form-item>
+                <el-row v-if="type === 'product'" :gutter="12">
+                  <el-col :span="12"><el-form-item label="价格"><el-input-number v-model="form.price" :min="0" /></el-form-item></el-col>
+                  <el-col :span="12"><el-form-item label="库存"><el-input-number v-model="form.stock" :min="0" /></el-form-item></el-col>
+                </el-row>
+                <el-form-item label="状态"><el-select v-model="form.status"><el-option label="草稿" value="draft" /><el-option label="发布" value="published" /></el-select></el-form-item>
+                <el-button type="primary" @click="$emit('save')">保存{{ title }}</el-button>
+              </el-form>
+            </el-card>
+          </el-col>
+        </el-row>
+      `
+    }
+  }
+})
+</script>

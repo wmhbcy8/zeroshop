@@ -3,6 +3,8 @@
 /powershell-safe-invocation/
 /tools/
 /sites/
+/admin-vue/node_modules/
+/admin-vue/dist/
 /storage-api-*.log
 /*.png
 

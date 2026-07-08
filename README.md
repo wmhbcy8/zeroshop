@@ -47,6 +47,13 @@ tools/php/php.exe -S 127.0.0.1:8000 -t server/public server/public/index.php
 http://127.0.0.1:8000/admin.html
 ```
 
+新版 Vue 后台入口：
+```text
+http://127.0.0.1:8000/admin-vue/
+```
+
+新版后台源码位于 `admin-vue/`，使用 Vue 3 + Vite + Element Plus，并保留 Art Design Pro 的 MIT License；旧版 `admin.html` 后台继续保留。
+
 默认试用账号：
 
 ```text
