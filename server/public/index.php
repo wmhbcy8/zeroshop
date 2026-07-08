@@ -6110,6 +6110,9 @@ try {
 
     if ($method === 'PUT' && $path === '/site/settings') {
         $data = body_json();
+        if (!empty($data['_preserve_service_configs'])) {
+            $data = preserve_service_configs($data, site_settings($pdo, requested_site_id()));
+        }
         ok(sanitize_site_settings_for_response(save_site_settings($pdo, $data)), '保存成功');
     }
 

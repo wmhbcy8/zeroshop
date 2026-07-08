@@ -507,8 +507,8 @@
                   <el-button @click="loadStaticPages">刷新页面列表</el-button>
                   <el-button @click="saveSiteStructureAsDefault">保存为公共默认</el-button>
                   <el-button @click="applySiteStructureToAll">应用到全部站点</el-button>
-                  <el-button @click="saveSettings">保存当前站点</el-button>
-                  <el-button type="primary" :loading="generating" @click="saveSettingsAndGenerate">保存并生成静态站</el-button>
+                  <el-button @click="saveSiteStructure">保存当前站点</el-button>
+                  <el-button type="primary" :loading="generating" @click="saveSiteStructureAndGenerate">保存并生成静态站</el-button>
                 </div>
               </div>
             </template>
@@ -518,8 +518,22 @@
                 type="info"
                 show-icon
                 :closable="false"
-                :title="`当前编辑：${currentSite?.name || site.name || '默认站点'}，${settingsScopeText}。普通保存只影响当前站点；需要统一菜单时再使用“应用到全部站点”。`"
+                :title="`当前编辑：${currentSite?.name || site.name || '默认站点'}，${settingsScopeText}。这里仅维护基础信息、SEO 和导航；AI、支付、宝塔部署已拆到左侧独立菜单。`"
               />
+              <div class="service-shortcuts mb16">
+                <button type="button" @click="setView('ai-settings')">
+                  <strong>AI 配置</strong>
+                  <small>模型、密钥、图片和视频接口</small>
+                </button>
+                <button type="button" @click="setView('payments')">
+                  <strong>支付配置</strong>
+                  <small>收款方式、支付通道、回调密钥</small>
+                </button>
+                <button type="button" @click="setView('publish')">
+                  <strong>宝塔/部署</strong>
+                  <small>站点目录、发布包、本机同步</small>
+                </button>
+              </div>
               <el-divider content-position="left">基础信息</el-divider>
               <el-row :gutter="16">
                 <el-col :span="12"><el-form-item label="站点名称"><el-input v-model="site.name" /></el-form-item></el-col>
@@ -834,11 +848,12 @@
                     <template #default="{ row }"><small>{{ contentSiteLabel(row.site_ids || []) }}</small></template>
                   </el-table-column>
                   <el-table-column prop="created_at" label="时间" width="170" />
-                  <el-table-column label="操作" width="320">
+                  <el-table-column label="操作" width="430">
                     <template #default="{ row }">
-                      <el-button link type="primary" :disabled="row.status !== 'success'" @click="confirmAiTask(row, 'save_draft')">存草稿</el-button>
-                      <el-button link type="success" :disabled="row.status !== 'success'" @click="confirmAiTask(row, 'publish')">发布</el-button>
-                      <el-button link type="warning" :disabled="row.status !== 'success'" @click="confirmAiTaskWithCurrentScope(row)">按当前范围发布</el-button>
+                      <el-button link type="primary" :disabled="row.status !== 'success'" @click="confirmAiTask(row, 'save_draft')">按任务范围存草稿</el-button>
+                      <el-button link type="success" :disabled="row.status !== 'success'" @click="confirmAiTask(row, 'publish')">按任务范围发布</el-button>
+                      <el-button link type="primary" :disabled="row.status !== 'success'" @click="confirmAiTaskWithCurrentScope(row, 'save_draft')">按当前范围存草稿</el-button>
+                      <el-button link type="warning" :disabled="row.status !== 'success'" @click="confirmAiTaskWithCurrentScope(row, 'publish')">按当前范围发布</el-button>
                       <el-button link type="danger" :disabled="row.status !== 'success'" @click="confirmAiTask(row, 'discard')">丢弃</el-button>
                       <el-button link type="danger" @click="deleteAiTask(row)">删除</el-button>
                     </template>
@@ -2615,6 +2630,13 @@ async function saveSiteStructureAsDefault() {
   ElMessage.success('公共默认站点结构已保存，AI、支付和部署配置保持不变')
 }
 
+async function saveSiteStructure() {
+  site.nav = cleanNavItems(site.nav)
+  const data = await request('/api/site/settings', { method: 'PUT', data: { ...site, _preserve_service_configs: true } })
+  Object.assign(site, normalizeSite(data))
+  ElMessage.success('当前站点结构已保存，AI、支付和部署配置保持不变')
+}
+
 async function applySettingsToAll() {
   await ElMessageBox.confirm('确定把当前站点设置应用到全部站点吗？已有独立菜单、SEO、AI、支付等设置会被覆盖。')
   site.nav = cleanNavItems(site.nav)
@@ -2633,6 +2655,12 @@ async function applySiteStructureToAll() {
 
 async function saveSettingsAndGenerate() {
   await saveSettings()
+  await generateSite()
+  await loadStaticPages()
+}
+
+async function saveSiteStructureAndGenerate() {
+  await saveSiteStructure()
   await generateSite()
   await loadStaticPages()
 }
@@ -3157,18 +3185,19 @@ async function confirmAiTask(row: any, action: 'save_draft' | 'publish' | 'disca
   await Promise.all([loadAiTasks(), loadArticles(), loadProducts(), loadDashboard(), loadSites()])
 }
 
-async function confirmAiTaskWithCurrentScope(row: any) {
+async function confirmAiTaskWithCurrentScope(row: any, action: 'save_draft' | 'publish' = 'publish') {
   const site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
-  await ElMessageBox.confirm(`确定把这个 AI 任务结果发布到：${contentSiteLabel(site_ids)}？`)
+  const actionText = action === 'save_draft' ? '保存为草稿' : '发布'
+  await ElMessageBox.confirm(`确定把这个 AI 任务结果${actionText}到：${contentSiteLabel(site_ids)}？`)
   await request(`/api/ai/tasks/${row.id}/confirm`, {
     method: 'POST',
     data: {
-      action: 'publish',
+      action,
       site_scope: aiForm.site_scope,
       site_ids
     }
   })
-  ElMessage.success('AI 任务已按当前范围发布')
+  ElMessage.success(`AI 任务已按当前范围${actionText}`)
   await Promise.all([loadAiTasks(), loadArticles(), loadProducts(), loadDashboard(), loadSites()])
 }
 

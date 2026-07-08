@@ -57,7 +57,19 @@
 
     <el-drawer v-model="drawerVisible" :title="(form.id ? '编辑' : '新建') + title" size="620px">
       <el-form :model="form" label-width="90px">
-        <el-alert type="info" show-icon :closable="false" class="mb16" title="AI 生成入口保留，内容会填充到当前表单。" />
+        <el-alert type="info" show-icon :closable="false" class="mb16" :title="`这是一份中台内容，保存后会同步到：${siteNames(form)}。AI 生成草稿也会沿用这个发布范围。`" />
+        <el-form-item label="发布范围">
+          <el-radio-group v-model="form.site_scope" @change="syncScope">
+            <el-radio-button label="current">当前站点</el-radio-button>
+            <el-radio-button label="all">全部站点</el-radio-button>
+            <el-radio-button label="selected">指定站点</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="form.site_scope === 'selected'" label="选择站点">
+          <el-select v-model="form.site_ids" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择站点">
+            <el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="AI 要求"><el-input v-model="prompt" placeholder="输入生成要求" /></el-form-item>
         <el-form-item><el-button @click="generateDraft">AI 生成草稿</el-button></el-form-item>
         <el-form-item label="标题"><el-input v-model="form.title" /></el-form-item>
@@ -77,19 +89,7 @@
         </el-form-item>
         <el-form-item label="摘要"><el-input v-model="form.summary" type="textarea" :rows="3" /></el-form-item>
         <el-form-item :label="bodyLabel"><el-input v-model="form[bodyField]" type="textarea" :rows="7" /></el-form-item>
-        <el-form-item label="发布范围">
-          <el-radio-group v-model="form.site_scope" @change="syncScope">
-            <el-radio-button label="current">当前站点</el-radio-button>
-            <el-radio-button label="all">全部站点</el-radio-button>
-            <el-radio-button label="selected">指定站点</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
-        <el-alert type="info" show-icon :closable="false" class="mb16" :title="`当前会发布到：${siteNames(form)}`" />
-        <el-form-item v-if="form.site_scope === 'selected'" label="选择站点">
-          <el-select v-model="form.site_ids" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择站点">
-            <el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id" />
-          </el-select>
-        </el-form-item>
+        <el-alert type="info" show-icon :closable="false" class="mb16" :title="`保存后前台可见范围：${siteNames(form)}`" />
         <el-row v-if="type === 'product'" :gutter="12">
           <el-col :span="12"><el-form-item label="价格"><el-input-number v-model="form.price" :min="0" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="库存"><el-input-number v-model="form.stock" :min="0" /></el-form-item></el-col>
@@ -214,6 +214,10 @@ function selectCover(item: any) {
 function syncScope() {
   if (props.form.site_scope === 'all') {
     props.form.site_ids = allSiteIds()
+    return
+  }
+  if (props.form.site_scope === 'selected') {
+    props.form.site_ids = siteIdsForScope('selected', props.form.site_ids)
     return
   }
   if (props.form.site_scope === 'current' || !props.form.site_scope) {
