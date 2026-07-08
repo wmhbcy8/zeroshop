@@ -1992,20 +1992,20 @@ function setView(key: string) {
   if (key === 'domains') loadDomains()
   if (key === 'templates') Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry()])
   if (key === 'pages') loadPages()
-  if (key === 'ai') Promise.all([loadAiTasks(), isPlatformAdmin.value ? loadPlatform() : Promise.resolve()])
+  if (key === 'ai') Promise.all([loadSettings(), loadAiTasks(), isPlatformAdmin.value ? loadPlatform() : Promise.resolve()])
   if (key === 'articles') loadArticles()
   if (key === 'products') loadProducts()
   if (key === 'categories') loadCategories()
   if (key === 'orders') loadOrders()
   if (key === 'service') loadServices()
-  if (key === 'payments') loadPaymentChannels()
+  if (key === 'payments') Promise.all([loadSettings(), loadPaymentChannels()])
   if (key === 'tasks') loadBatchTasks()
   if (key === 'logs') loadOperationLogs()
   if (key === 'media') loadMedia()
   if (key === 'forms') loadForms()
   if (key === 'collector') loadCollector()
   if (key === 'seo') loadSeoAudit()
-  if (key === 'publish') Promise.all([loadVersions(), loadDeployTasks(), loadSiteBackups()])
+  if (key === 'publish') Promise.all([loadSettings(), loadVersions(), loadDeployTasks(), loadSiteBackups()])
 }
 
 function refreshCurrentView() {
@@ -2016,21 +2016,21 @@ function refreshCurrentView() {
     domains: loadDomains,
     settings: async () => { await Promise.all([loadSettings(), loadStaticPages()]) },
     templates: async () => { await Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry(), loadSettings(), loadStaticPages()]) },
-    ai: async () => { await Promise.all([loadAiTasks(), isPlatformAdmin.value ? loadPlatform() : Promise.resolve()]) },
+    ai: async () => { await Promise.all([loadSettings(), loadAiTasks(), isPlatformAdmin.value ? loadPlatform() : Promise.resolve()]) },
     pages: loadPages,
     articles: async () => { await Promise.all([loadArticles(), loadCategories()]) },
     products: async () => { await Promise.all([loadProducts(), loadCategories()]) },
     categories: loadCategories,
     orders: loadOrders,
     service: loadServices,
-    payments: loadPaymentChannels,
+    payments: async () => { await Promise.all([loadSettings(), loadPaymentChannels()]) },
     tasks: loadBatchTasks,
     logs: loadOperationLogs,
     media: loadMedia,
     forms: loadForms,
     collector: loadCollector,
     seo: loadSeoAudit,
-    publish: async () => { await Promise.all([loadVersions(), loadDeployTasks(), loadSiteBackups()]) }
+    publish: async () => { await Promise.all([loadSettings(), loadVersions(), loadDeployTasks(), loadSiteBackups()]) }
   }
   loaders[view.value]?.().then(() => ElMessage.success('当前页面已刷新'))
 }
@@ -2924,6 +2924,21 @@ function normalizeDistributionPayload(form: any) {
   }
 }
 
+function mergeDraftIntoContentForm(form: any, draft: any) {
+  const currentScope = form.site_scope || 'current'
+  const currentSiteIds = siteIdsForScope(currentScope, form.site_ids)
+  Object.assign(form, draft || {})
+  form.site_scope = currentScope
+  form.site_ids = currentSiteIds
+}
+
+async function generateContentDraft(type: 'article' | 'product', prompt: string, form: any) {
+  const site_scope = form.site_scope || 'current'
+  const site_ids = siteIdsForScope(site_scope, form.site_ids)
+  const data = await request('/api/ai/generate', { method: 'POST', data: { type, prompt, site_scope, site_ids } })
+  mergeDraftIntoContentForm(form, data.draft || data)
+}
+
 async function bulkDistributeContent(type: 'article' | 'product' | 'page', payload: any, reload: () => Promise<void>) {
   const items = Array.isArray(payload?.items) ? payload.items : []
   if (!items.length) {
@@ -2966,7 +2981,7 @@ async function deletePage(item: any) {
 }
 async function generatePageDraft(prompt: string) {
   const data = await request('/api/ai/generate', { method: 'POST', data: { type: 'article', prompt } })
-  Object.assign(pageForm, { ...(data.draft || data), content: (data.draft || data).content || '' })
+  mergeDraftIntoContentForm(pageForm, { ...(data.draft || data), content: (data.draft || data).content || '' })
 }
 
 function newArticle() { Object.assign(articleForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', site_scope: 'current', site_ids: currentSiteIds() }) }
@@ -2988,8 +3003,7 @@ async function deleteArticle(item: any) {
   await loadArticles()
 }
 async function generateArticleDraft(prompt: string) {
-  const data = await request('/api/ai/generate', { method: 'POST', data: { type: 'article', prompt } })
-  Object.assign(articleForm, data.draft || data)
+  await generateContentDraft('article', prompt, articleForm)
 }
 
 function newProduct() { Object.assign(productForm, { id: '', title: '', slug: '', sku: '', cover: '', summary: '', description: '', price: 0, stock: 0, status: 'draft', site_scope: 'current', site_ids: currentSiteIds() }) }
@@ -3011,8 +3025,7 @@ async function deleteProduct(item: any) {
   await loadProducts()
 }
 async function generateProductDraft(prompt: string) {
-  const data = await request('/api/ai/generate', { method: 'POST', data: { type: 'product', prompt } })
-  Object.assign(productForm, data.draft || data)
+  await generateContentDraft('product', prompt, productForm)
 }
 
 function aiPromptFor(index = 1) {

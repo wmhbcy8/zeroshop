@@ -59,7 +59,7 @@
       <el-form :model="form" label-width="90px">
         <el-alert type="info" show-icon :closable="false" class="mb16" title="AI 生成入口保留，内容会填充到当前表单。" />
         <el-form-item label="AI 要求"><el-input v-model="prompt" placeholder="输入生成要求" /></el-form-item>
-        <el-form-item><el-button @click="$emit('ai', prompt)">AI 生成草稿</el-button></el-form-item>
+        <el-form-item><el-button @click="generateDraft">AI 生成草稿</el-button></el-form-item>
         <el-form-item label="标题"><el-input v-model="form.title" /></el-form-item>
         <el-form-item label="Slug"><el-input v-model="form.slug" /></el-form-item>
         <el-form-item v-if="type !== 'page'" label="分类">
@@ -160,6 +160,11 @@ function saveForm() {
   emit('save')
 }
 
+function generateDraft() {
+  syncScope()
+  emit('ai', prompt.value)
+}
+
 function allSiteIds() {
   return props.sites.map((site: any) => Number(site.id)).filter((id: number) => id > 0)
 }
@@ -214,3 +219,4 @@ function syncScope() {
   }
 }
 </script>
+
