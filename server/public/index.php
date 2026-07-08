@@ -6645,6 +6645,62 @@ try {
         ok(['items' => $items]);
     }
 
+    if ($method === 'POST' && $path === '/tags') {
+        ensure_article_tag_tables($pdo);
+        $data = body_json();
+        require_fields($data, ['name']);
+        $name = mb_substr(trim((string)$data['name']), 0, 80, 'UTF-8');
+        if ($name === '') {
+            fail('标签名称不能为空', 'VALIDATION_ERROR', 422);
+        }
+        $slug = trim((string)($data['slug'] ?? '')) ?: normalize_tag_slug($name);
+        $slug = normalize_tag_slug($slug);
+        $time = now();
+        $stmt = $pdo->prepare("INSERT INTO tags (name, slug, description, created_at, updated_at)
+            VALUES (:name, :slug, :description, :created_at, :updated_at)");
+        $stmt->execute([
+            'name' => $name,
+            'slug' => $slug,
+            'description' => $data['description'] ?? '',
+            'created_at' => $time,
+            'updated_at' => $time,
+        ]);
+        ok(fetch_one($pdo, 'tags', (int)$pdo->lastInsertId()), '创建成功');
+    }
+
+    if ($params = route_param('/tags/{id}', $path)) {
+        ensure_article_tag_tables($pdo);
+        $id = (int)$params['id'];
+        if ($method === 'PUT') {
+            $data = body_json();
+            require_fields($data, ['name']);
+            $name = mb_substr(trim((string)$data['name']), 0, 80, 'UTF-8');
+            if ($name === '') {
+                fail('标签名称不能为空', 'VALIDATION_ERROR', 422);
+            }
+            $slug = trim((string)($data['slug'] ?? '')) ?: normalize_tag_slug($name);
+            $slug = normalize_tag_slug($slug);
+            $stmt = $pdo->prepare("UPDATE tags SET name=:name, slug=:slug, description=:description, updated_at=:updated_at WHERE id=:id");
+            $stmt->execute([
+                'id' => $id,
+                'name' => $name,
+                'slug' => $slug,
+                'description' => $data['description'] ?? '',
+                'updated_at' => now(),
+            ]);
+            ok(fetch_one($pdo, 'tags', $id), '保存成功');
+        }
+        if ($method === 'DELETE') {
+            $countStmt = $pdo->prepare('SELECT COUNT(*) FROM article_tags WHERE tag_id = ?');
+            $countStmt->execute([$id]);
+            if ((int)$countStmt->fetchColumn() > 0) {
+                fail('标签已被文章使用，请先从文章中移除后再删除', 'TAG_IN_USE', 422);
+            }
+            $pdo->prepare('DELETE FROM tags WHERE id = ?')->execute([$id]);
+            ok([], '删除成功');
+        }
+    }
+
     if ($method === 'GET' && $path === '/pages') {
         ensure_pages_table($pdo);
         $result = paginate($pdo, 'pages', [], 'id DESC');

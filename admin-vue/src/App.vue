@@ -1157,6 +1157,31 @@
               </el-card>
             </el-col>
           </el-row>
+          <el-card class="panel mt16" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>文章标签</strong>
+                <el-button type="primary" @click="newTag">新建标签</el-button>
+              </div>
+            </template>
+            <el-alert class="mb16" type="info" show-icon :closable="false" title="标签用于文章详情页和 /tag/{slug}/index.html 聚合页。已被文章使用的标签需要先从文章中移除后再删除。" />
+            <el-table :data="tags" height="360" row-key="id">
+              <el-table-column label="标签" min-width="220">
+                <template #default="{ row }"><strong>{{ row.name }}</strong><br /><small>{{ row.slug }}</small></template>
+              </el-table-column>
+              <el-table-column prop="article_count" label="文章数" width="110" />
+              <el-table-column prop="description" label="说明" min-width="260" />
+              <el-table-column label="静态路径" min-width="220">
+                <template #default="{ row }"><small>/tag/{{ row.slug }}/index.html</small></template>
+              </el-table-column>
+              <el-table-column label="操作" width="140">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="editTag(row)">编辑</el-button>
+                  <el-button link type="danger" :disabled="Number(row.article_count || 0) > 0" @click="deleteTag(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
           <el-drawer v-model="categoryDrawerVisible" size="560px" :title="(categoryForm.id ? '编辑' : '新建') + (categoryType === 'article' ? '文章分类' : '商品分类')">
             <el-form :model="categoryForm" label-width="96px">
               <el-form-item label="分类名称"><el-input v-model="categoryForm.name" /></el-form-item>
@@ -1176,6 +1201,17 @@
               <div class="drawer-actions">
                 <el-button @click="categoryDrawerVisible = false">取消</el-button>
                 <el-button type="primary" @click="saveCategory">保存分类</el-button>
+              </div>
+            </el-form>
+          </el-drawer>
+          <el-drawer v-model="tagDrawerVisible" size="520px" :title="tagForm.id ? '编辑文章标签' : '新建文章标签'">
+            <el-form :model="tagForm" label-width="90px">
+              <el-form-item label="标签名称"><el-input v-model="tagForm.name" /></el-form-item>
+              <el-form-item label="Slug"><el-input v-model="tagForm.slug" placeholder="留空则自动生成" /></el-form-item>
+              <el-form-item label="说明"><el-input v-model="tagForm.description" type="textarea" :rows="4" /></el-form-item>
+              <div class="drawer-actions">
+                <el-button @click="tagDrawerVisible = false">取消</el-button>
+                <el-button type="primary" @click="saveTag">保存标签</el-button>
               </div>
             </el-form>
           </el-drawer>
@@ -1964,6 +2000,7 @@ const publishDrawerVisible = ref(false)
 const siteDrawerVisible = ref(false)
 const batchTaskDrawerVisible = ref(false)
 const categoryDrawerVisible = ref(false)
+const tagDrawerVisible = ref(false)
 const platformCustomerDrawerVisible = ref(false)
 const customerAdminDrawerVisible = ref(false)
 const deployNodeDrawerVisible = ref(false)
@@ -1995,6 +2032,7 @@ const publishDetail = reactive<any>({})
 const batchTaskDetail = reactive<any>({})
 const categoryForm = reactive<any>({})
 const categoryType = ref<'article' | 'product'>('article')
+const tagForm = reactive<any>({})
 const platformCustomerForm = reactive<any>({})
 const customerAdminForm = reactive<any>({})
 const deployNodeForm = reactive<any>({})
@@ -2235,7 +2273,7 @@ function setView(key: string) {
   if (key === 'ai-settings') Promise.all([loadSettings(), isPlatformAdmin.value ? loadPlatform() : Promise.resolve()])
   if (key === 'articles') Promise.all([loadArticles(), loadCategories(), loadTags()])
   if (key === 'products') loadProducts()
-  if (key === 'categories') loadCategories()
+  if (key === 'categories') Promise.all([loadCategories(), loadTags()])
   if (key === 'orders') loadOrders()
   if (key === 'service') loadServices()
   if (key === 'payments') Promise.all([loadSettings(), loadPaymentChannels()])
@@ -2262,7 +2300,7 @@ function refreshCurrentView() {
     pages: loadPages,
     articles: async () => { await Promise.all([loadArticles(), loadCategories(), loadTags()]) },
     products: async () => { await Promise.all([loadProducts(), loadCategories()]) },
-    categories: loadCategories,
+    categories: async () => { await Promise.all([loadCategories(), loadTags()]) },
     orders: loadOrders,
     service: loadServices,
     payments: async () => { await Promise.all([loadSettings(), loadPaymentChannels()]) },
@@ -3155,6 +3193,32 @@ async function deleteCategory(type: 'article' | 'product', item: any) {
   await request(`${categoryEndpoint(type)}/${item.id}`, { method: 'DELETE' })
   ElMessage.success('分类已删除')
   await loadCategories()
+}
+
+function newTag() {
+  Object.assign(tagForm, { id: '', name: '', slug: '', description: '' })
+  tagDrawerVisible.value = true
+}
+
+function editTag(item: any) {
+  Object.assign(tagForm, { ...item })
+  tagDrawerVisible.value = true
+}
+
+async function saveTag() {
+  const method = tagForm.id ? 'PUT' : 'POST'
+  const path = tagForm.id ? `/api/tags/${tagForm.id}` : '/api/tags'
+  await request(path, { method, data: { ...tagForm } })
+  tagDrawerVisible.value = false
+  ElMessage.success('标签已保存')
+  await Promise.all([loadTags(), loadArticles()])
+}
+
+async function deleteTag(item: any) {
+  await ElMessageBox.confirm(`确定删除标签“${item.name}”？`)
+  await request(`/api/tags/${item.id}`, { method: 'DELETE' })
+  ElMessage.success('标签已删除')
+  await Promise.all([loadTags(), loadArticles()])
 }
 
 function allSiteIds() {
