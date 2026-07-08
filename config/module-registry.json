@@ -34,7 +34,7 @@
       "enabled_by_default": true,
       "config_path": "global_modules.floating_inquiry",
       "render_slot": "footer.before_scripts",
-      "description": "在前台页面右下角显示咨询按钮，引导客户进入联系页或后续客服系统。"
+      "description": "在前台页面右下角显示联系页、电话、邮箱、WhatsApp 和微信等快捷咨询入口。"
     },
     {
       "key": "about",

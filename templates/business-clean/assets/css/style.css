@@ -432,6 +432,14 @@ p { color: var(--muted); margin: 0 0 12px; }
   box-shadow: 0 12px 30px rgba(22,119,255,.28);
   font-weight: 700;
 }
+.floating-actions a:not(.primary) {
+  background: #fff;
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 24px rgba(15,23,42,.12);
+}
+.floating-actions a.whatsapp { color: #128c7e; }
+.floating-actions a.wechat { color: #1aad19; }
 .content { padding: 36px; max-width: 840px; margin: 0 auto; }
 .cover { width: 100%; border-radius: 6px; margin: 24px 0; background: #eef3fb; }
 .richtext p { margin-bottom: 14px; color: #344054; }

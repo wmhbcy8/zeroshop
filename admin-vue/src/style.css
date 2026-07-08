@@ -131,6 +131,31 @@ body {
 }
 .toolbar { margin-bottom: 12px; }
 .media-toolbar { margin-top: 16px; }
+.content-scope-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.content-scope-summary article {
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid #dbe7f7;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #ffffff, #f8fbff);
+}
+.content-scope-summary span {
+  color: var(--hj-muted);
+  font-size: 12px;
+}
+.content-scope-summary strong {
+  font-size: 15px;
+}
+.content-scope-summary small {
+  color: var(--hj-muted);
+  line-height: 1.5;
+}
 .content-distribution-bar {
   display: flex;
   flex-wrap: wrap;

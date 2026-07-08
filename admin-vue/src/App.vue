@@ -810,6 +810,14 @@
                       </label>
                       <el-form label-width="96px" class="floating-text-form">
                         <el-form-item label="浮动按钮文案"><el-input v-model="site.global_modules.floating_text" /></el-form-item>
+                        <el-row :gutter="12">
+                          <el-col :span="12"><el-form-item label="浮动电话"><el-input v-model="site.global_modules.floating_phone" placeholder="默认使用站点电话" /></el-form-item></el-col>
+                          <el-col :span="12"><el-form-item label="浮动邮箱"><el-input v-model="site.global_modules.floating_email" placeholder="默认使用站点邮箱" /></el-form-item></el-col>
+                        </el-row>
+                        <el-row :gutter="12">
+                          <el-col :span="12"><el-form-item label="WhatsApp"><el-input v-model="site.global_modules.floating_whatsapp" placeholder="例如 8613800000000" /></el-form-item></el-col>
+                          <el-col :span="12"><el-form-item label="微信号"><el-input v-model="site.global_modules.floating_wechat" placeholder="用于联系页提示" /></el-form-item></el-col>
+                        </el-row>
                       </el-form>
                     </div>
                   </el-tab-pane>
@@ -1002,6 +1010,7 @@
             :product-categories="productCategories"
             :tags="tags"
             :current-site-id="currentSiteId"
+            :list-site-scope="contentListSiteScope"
             @new="newArticle"
             @edit="editArticle"
             @save="saveArticle"
@@ -1010,6 +1019,7 @@
             @bulk-distribute="bulkDistributeArticles"
             @publish-status="publishArticleStatus"
             @page-change="changeArticlePage"
+            @scope-change="changeContentListScope"
           />
         </section>
 
@@ -1077,6 +1087,7 @@
             :categories="categories"
             :product-categories="productCategories"
             :current-site-id="currentSiteId"
+            :list-site-scope="contentListSiteScope"
             @new="newPage"
             @edit="editPage"
             @save="savePage"
@@ -1085,6 +1096,7 @@
             @bulk-distribute="bulkDistributePages"
             @publish-status="publishPageStatus"
             @page-change="changePagePage"
+            @scope-change="changeContentListScope"
           />
         </section>
 
@@ -1101,6 +1113,7 @@
             :categories="categories"
             :product-categories="productCategories"
             :current-site-id="currentSiteId"
+            :list-site-scope="contentListSiteScope"
             @new="newProduct"
             @edit="editProduct"
             @save="saveProduct"
@@ -1109,6 +1122,7 @@
             @bulk-distribute="bulkDistributeProducts"
             @publish-status="publishProductStatus"
             @page-change="changeProductPage"
+            @scope-change="changeContentListScope"
           />
         </section>
 
@@ -2069,6 +2083,7 @@ const deployNodes = ref<any[]>([])
 const aiProviders = ref<any[]>([])
 const currentSiteId = ref<number | string>(10001)
 const operationSiteScope = ref('all')
+const contentListSiteScope = ref('all')
 const templates = ref<any[]>([])
 const templateCloneTasks = ref<any[]>([])
 const moduleRegistry = ref<any>({ scopes: [], modules: [] })
@@ -2818,7 +2833,10 @@ async function applySelectedAiProvider() {
 function switchSite() {
   ElMessage.success('已切换当前站点')
   publishResult.value = null
-  Promise.all([loadDomains(), loadStaticPages(), refreshCurrentView()])
+  const contentRefresh = contentListSiteScope.value === 'current'
+    ? Promise.all([loadArticles(), loadProducts(), loadPages()])
+    : Promise.resolve()
+  Promise.all([loadDomains(), loadStaticPages(), refreshCurrentView(), contentRefresh])
 }
 
 function openSite(item: any) {
@@ -2924,7 +2942,11 @@ function normalizeSite(data: any = {}) {
       breadcrumbs: data.global_modules?.breadcrumbs ?? true,
       related: data.global_modules?.related ?? true,
       floating_inquiry: data.global_modules?.floating_inquiry ?? true,
-      floating_text: data.global_modules?.floating_text || '立即咨询'
+      floating_text: data.global_modules?.floating_text || '立即咨询',
+      floating_phone: data.global_modules?.floating_phone || '',
+      floating_email: data.global_modules?.floating_email || '',
+      floating_whatsapp: data.global_modules?.floating_whatsapp || '',
+      floating_wechat: data.global_modules?.floating_wechat || ''
     },
     home_modules: Array.isArray(data.home_modules) && data.home_modules.length ? data.home_modules : defaultHomeModules()
   }
@@ -3219,8 +3241,25 @@ async function applyPagePlanSaveGeneratePreview() {
   }
 }
 
+function contentListSiteId() {
+  if (contentListSiteScope.value === 'current') return String(currentSiteId.value || 10001)
+  return String(contentListSiteScope.value || 'all')
+}
+
+async function changeContentListScope(scope: string) {
+  contentListSiteScope.value = scope || 'all'
+  articlePager.page = 1
+  productPager.page = 1
+  pagePager.page = 1
+  await Promise.all([loadArticles(), loadProducts(), loadPages()])
+}
+
 async function loadArticles() {
-  const data = await request(`/api/articles?page=${articlePager.page}&page_size=${articlePager.page_size}`)
+  const params = new URLSearchParams()
+  params.set('page', String(articlePager.page))
+  params.set('page_size', String(articlePager.page_size))
+  params.set('site_id', contentListSiteId())
+  const data = await request(`/api/articles?${params.toString()}`)
   articles.value = data.items || []
   articlePager.total = data.pagination?.total || articles.value.length
 }
@@ -3236,7 +3275,11 @@ function changeArticlePage(page: number) {
 }
 
 async function loadProducts() {
-  const data = await request(`/api/products?page=${productPager.page}&page_size=${productPager.page_size}`)
+  const params = new URLSearchParams()
+  params.set('page', String(productPager.page))
+  params.set('page_size', String(productPager.page_size))
+  params.set('site_id', contentListSiteId())
+  const data = await request(`/api/products?${params.toString()}`)
   products.value = data.items || []
   productPager.total = data.pagination?.total || products.value.length
 }
@@ -3246,7 +3289,11 @@ function changeProductPage(page: number) {
 }
 
 async function loadPages() {
-  const data = await request(`/api/pages?page=${pagePager.page}&page_size=${pagePager.page_size}`)
+  const params = new URLSearchParams()
+  params.set('page', String(pagePager.page))
+  params.set('page_size', String(pagePager.page_size))
+  params.set('site_id', contentListSiteId())
+  const data = await request(`/api/pages?${params.toString()}`)
   pages.value = data.items || []
   pagePager.total = data.pagination?.total || pages.value.length
 }

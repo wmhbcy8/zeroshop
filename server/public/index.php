@@ -701,7 +701,7 @@ function fetch_one(PDO $pdo, string $table, int $id): ?array
     return $item ?: null;
 }
 
-function paginate(PDO $pdo, string $table, array $where = [], string $order = 'id DESC', string $keywordColumn = 'title'): array
+function paginate(PDO $pdo, string $table, array $where = [], string $order = 'id DESC', string $keywordColumn = 'title', array $extraParams = []): array
 {
     $page = max(1, (int)($_GET['page'] ?? 1));
     $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
@@ -710,7 +710,7 @@ function paginate(PDO $pdo, string $table, array $where = [], string $order = 'i
     $status = trim((string)($_GET['status'] ?? ''));
 
     $clauses = $where;
-    $params = [];
+    $params = $extraParams;
     if ($keyword !== '') {
         $clauses[] = "{$keywordColumn} LIKE :keyword";
         $params['keyword'] = '%' . $keyword . '%';
@@ -1036,6 +1036,20 @@ function list_order_service_requests_scoped(PDO $pdo, ?PDO $main = null): array
         'total' => $total,
         'pending' => count(array_filter($items, static fn($item) => $item['status'] === 'pending')),
         'handled' => count(array_filter($items, static fn($item) => $item['status'] === 'handled')),
+    ];
+}
+
+function content_distribution_filter_clause(string $type, string $table): array
+{
+    $siteId = requested_site_filter();
+    if ($siteId === null) {
+        return ['', []];
+    }
+    $safeType = str_replace("'", "''", $type);
+    $siteId = (int)$siteId;
+    return [
+        "EXISTS (SELECT 1 FROM content_site_relations cd WHERE cd.content_type = '{$safeType}' AND cd.content_id = {$table}.id AND cd.site_id = {$siteId})",
+        [],
     ];
 }
 
@@ -7050,7 +7064,10 @@ try {
 
     if ($method === 'GET' && $path === '/pages') {
         ensure_pages_table($pdo);
-        $result = paginate($pdo, 'pages', [], 'id DESC');
+        ensure_content_distribution_table($pdo);
+        [$distributionWhere, $distributionParams] = content_distribution_filter_clause('page', 'pages');
+        $where = $distributionWhere ? [$distributionWhere] : [];
+        $result = paginate($pdo, 'pages', $where, 'id DESC', 'title', $distributionParams);
         $result['items'] = attach_distribution($pdo, 'page', $result['items']);
         ok($result);
     }
@@ -7111,7 +7128,10 @@ try {
     }
 
     if ($method === 'GET' && $path === '/articles') {
-        $result = paginate($pdo, 'articles', [], 'published_at DESC, id DESC');
+        ensure_content_distribution_table($pdo);
+        [$distributionWhere, $distributionParams] = content_distribution_filter_clause('article', 'articles');
+        $where = $distributionWhere ? [$distributionWhere] : [];
+        $result = paginate($pdo, 'articles', $where, 'published_at DESC, id DESC', 'title', $distributionParams);
         $result['items'] = attach_distribution($pdo, 'article', $result['items']);
         $result['items'] = attach_article_tags($pdo, $result['items']);
         ok($result);
@@ -7177,7 +7197,10 @@ try {
     }
 
     if ($method === 'GET' && $path === '/products') {
-        $result = paginate($pdo, 'products', [], 'id DESC');
+        ensure_content_distribution_table($pdo);
+        [$distributionWhere, $distributionParams] = content_distribution_filter_clause('product', 'products');
+        $where = $distributionWhere ? [$distributionWhere] : [];
+        $result = paginate($pdo, 'products', $where, 'id DESC', 'title', $distributionParams);
         $result['items'] = attach_distribution($pdo, 'product', $result['items']);
         ok($result);
     }

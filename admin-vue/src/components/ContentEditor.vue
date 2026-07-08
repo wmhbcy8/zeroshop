@@ -8,9 +8,45 @@
         </div>
       </template>
 
+      <div class="content-scope-summary">
+        <article>
+          <span>查看范围</span>
+          <strong>{{ scopeLabel(listSiteScope) }}</strong>
+          <small>列表只筛选已经分发给该范围的内容，不改变内容本身。</small>
+        </article>
+        <article>
+          <span>新建默认</span>
+          <strong>{{ scopeLabel(bulkForm.site_scope) }}</strong>
+          <small>新建、AI 草稿和批量分发都沿用下方发布范围。</small>
+        </article>
+        <article>
+          <span>内容模型</span>
+          <strong>一份内容，多站点分发</strong>
+          <small>静态生成时，每个前台只读取分发给自己的文章、页面或商品。</small>
+        </article>
+      </div>
+
       <div class="content-distribution-bar">
         <div>
-          <strong>发布范围</strong>
+          <strong>查看内容</strong>
+          <small>先按站点查看内容库，再对选中的内容批量改分发范围。</small>
+        </div>
+        <el-select
+          :model-value="listSiteScope"
+          size="small"
+          placeholder="查看范围"
+          class="bulk-site-select"
+          @update:model-value="$emit('scope-change', $event)"
+        >
+          <el-option label="全部内容库" value="all" />
+          <el-option :label="`当前站点：${currentSiteName}`" value="current" />
+          <el-option v-for="site in sites" :key="site.id" :label="site.name" :value="String(site.id)" />
+        </el-select>
+      </div>
+
+      <div class="content-distribution-bar">
+        <div>
+          <strong>批量发布范围</strong>
           <small>内容在中台只保存一份，发布范围决定它同步到哪些前台静态站。</small>
         </div>
         <el-radio-group v-model="bulkForm.site_scope" size="small" @change="syncBulkScope">
@@ -160,9 +196,10 @@ const props = defineProps<{
   productCategories?: any[]
   tags?: any[]
   currentSiteId: number | string
+  listSiteScope?: string
 }>()
 
-const emit = defineEmits(['new', 'edit', 'save', 'delete', 'ai', 'page-change', 'bulk-distribute', 'publish-status'])
+const emit = defineEmits(['new', 'edit', 'save', 'delete', 'ai', 'page-change', 'bulk-distribute', 'publish-status', 'scope-change'])
 
 const prompt = ref('')
 const drawerVisible = ref(false)
@@ -173,6 +210,7 @@ const title = computed(() => props.type === 'article' ? '文章' : (props.type =
 const bodyField = computed(() => props.type === 'product' ? 'description' : 'content')
 const bodyLabel = computed(() => props.type === 'product' ? '描述' : '正文')
 const categoryOptions = computed(() => props.type === 'article' ? (props.categories || []) : (props.productCategories || []))
+const currentSiteName = computed(() => (props.sites || []).find((site: any) => String(site.id) === String(props.currentSiteId))?.name || '当前站点')
 
 function openNew() {
   emit('new')
@@ -233,6 +271,13 @@ function siteNames(row: any) {
   if (allIds.length && ids.length === allIds.length && allIds.every((id) => ids.includes(id))) return '全部站点'
   const names = (props.sites || []).filter((site: any) => ids.includes(Number(site.id))).map((site: any) => site.name)
   return names.length ? names.join('、') : '未分发'
+}
+
+function scopeLabel(scope: string = 'all') {
+  if (scope === 'all') return '全部内容库'
+  if (scope === 'current') return currentSiteName.value
+  const site = (props.sites || []).find((item: any) => String(item.id) === String(scope))
+  return site?.name || scope || '全部内容库'
 }
 
 function selectCover(item: any) {

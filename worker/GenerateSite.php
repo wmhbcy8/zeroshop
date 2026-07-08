@@ -397,6 +397,10 @@ function site_for(array $site, string $rootBase): array
         'related' => true,
         'floating_inquiry' => true,
         'floating_text' => '立即咨询',
+        'floating_phone' => '',
+        'floating_email' => '',
+        'floating_whatsapp' => '',
+        'floating_wechat' => '',
     ], $site['global_modules'] ?? []);
     $site['payment'] = array_replace([
         'mode' => 'manual',
@@ -540,8 +544,36 @@ function floating_actions_html(array $site, string $rootBase): string
         return '';
     }
 
-    $text = (string)($modules['floating_text'] ?? '立即咨询');
-    return '<div class="floating-actions"><a href="' . e($rootBase . 'contact.html') . '">' . e($text) . '</a></div>';
+    $actions = [];
+    $text = trim((string)($modules['floating_text'] ?? '立即咨询')) ?: '立即咨询';
+    $actions[] = ['label' => $text, 'href' => $rootBase . 'contact.html', 'class' => 'primary'];
+    $phone = trim((string)($modules['floating_phone'] ?? ($site['phone'] ?? '')));
+    if ($phone !== '') {
+        $actions[] = ['label' => '电话', 'href' => 'tel:' . preg_replace('/\s+/', '', $phone), 'class' => 'phone'];
+    }
+    $email = trim((string)($modules['floating_email'] ?? ($site['email'] ?? '')));
+    if ($email !== '') {
+        $actions[] = ['label' => '邮箱', 'href' => 'mailto:' . $email, 'class' => 'email'];
+    }
+    $whatsapp = trim((string)($modules['floating_whatsapp'] ?? ''));
+    if ($whatsapp !== '') {
+        $digits = preg_replace('/[^\d+]/', '', $whatsapp);
+        $digits = ltrim((string)$digits, '+');
+        if ($digits !== '') {
+            $actions[] = ['label' => 'WhatsApp', 'href' => 'https://wa.me/' . $digits, 'class' => 'whatsapp', 'target' => '_blank'];
+        }
+    }
+    $wechat = trim((string)($modules['floating_wechat'] ?? ''));
+    if ($wechat !== '') {
+        $actions[] = ['label' => '微信', 'href' => $rootBase . 'contact.html#wechat', 'class' => 'wechat', 'title' => '微信：' . $wechat];
+    }
+    $html = '<div class="floating-actions" aria-label="快捷咨询">';
+    foreach ($actions as $action) {
+        $target = !empty($action['target']) ? ' target="' . e($action['target']) . '" rel="noopener"' : '';
+        $title = !empty($action['title']) ? ' title="' . e($action['title']) . '"' : '';
+        $html .= '<a class="' . e($action['class']) . '" href="' . e($action['href']) . '"' . $target . $title . '>' . e($action['label']) . '</a>';
+    }
+    return $html . '</div>';
 }
 
 function breadcrumb_html(array $site, array $items): string
