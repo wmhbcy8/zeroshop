@@ -10,12 +10,14 @@ const state = {
   productCategories: [],
   media: [],
   forms: [],
+  serviceRequests: [],
   versions: [],
   moduleRegistry: { scopes: [], modules: [] },
   pagePlan: null,
   selectedFormId: null,
   selectedOrderId: null,
   orderFilters: { keyword: '', payment_status: '', fulfillment_status: '' },
+  serviceFilters: { keyword: '', status: '', type: '' },
   orderFilterTimer: null
 };
 
@@ -25,6 +27,7 @@ const titles = {
   articles: ['文章', '发布行业资讯、知识库文章和 SEO 内容。'],
   products: ['商品', '维护产品展示和询盘型独立站内容。'],
   orders: ['订单', '处理独立站商城订单、支付状态和履约跟进。'],
+  service: ['服务', '集中处理客户在查单页提交的服务请求。'],
   media: ['媒体库', '上传图片和文件，供文章、商品、页面使用。'],
   forms: ['留言', '处理前台联系表单和商品询盘。'],
   publish: ['发布', '生成静态网站并查看发布版本。']
@@ -1290,6 +1293,57 @@ async function loadOrders() {
   }
 }
 
+function buildServiceQuery() {
+  const params = new URLSearchParams();
+  Object.entries(state.serviceFilters).forEach(([key, value]) => {
+    if (value) params.set(key, value);
+  });
+  return params.toString();
+}
+
+function serviceStatusLabel(status) {
+  return status === 'handled' ? '已处理' : '待处理';
+}
+
+function renderServiceSummary(data = {}) {
+  $('#serviceSummary').innerHTML = [
+    ['全部请求', data.total || 0, ''],
+    ['待处理', data.pending || 0, 'pending'],
+    ['已处理', data.handled || 0, 'handled']
+  ].map(([label, value, status]) => `
+    <button class="mini-stat service-stat-button" type="button" data-service-status="${escapeHtml(status)}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </button>
+  `).join('');
+}
+
+async function loadServiceRequests() {
+  const data = await request(`/api/orders/service-requests?${buildServiceQuery()}`);
+  state.serviceRequests = data.items || [];
+  renderServiceSummary(data);
+  $('#serviceRows').innerHTML = state.serviceRequests.length ? state.serviceRequests.map((item) => `
+    <tr>
+      <td><strong>${escapeHtml(item.type || '服务请求')}</strong><br><small>${escapeHtml(item.message || '-')}</small></td>
+      <td>${escapeHtml(item.customer_name || '-')}<br><small>${escapeHtml(item.phone || '-')}</small></td>
+      <td><strong>${escapeHtml(item.order_no || '-')}</strong><br><small>${escapeHtml(paymentStatusLabel(item.payment_status))} / ${escapeHtml(fulfillmentStatusLabel(item.fulfillment_status))}</small></td>
+      <td><span class="tag ${escapeHtml(item.status || 'pending')}">${escapeHtml(serviceStatusLabel(item.status))}</span></td>
+      <td>${escapeHtml(item.time || '-')}</td>
+      <td><button class="text-btn" data-open-service-order="${escapeHtml(item.order_id)}">去处理</button></td>
+    </tr>
+  `).join('') : '<tr><td colspan="6" class="empty-cell">暂无服务请求</td></tr>';
+}
+
+async function applyServiceFilters(form) {
+  const data = formToObject(form || $('#serviceFilterForm'));
+  state.serviceFilters = {
+    keyword: data.keyword || '',
+    status: data.status || '',
+    type: data.type || ''
+  };
+  await loadServiceRequests();
+}
+
 async function loadMedia() {
   const data = await request('/api/media?page_size=50');
   state.media = data.items;
@@ -1572,7 +1626,7 @@ async function loadVersions() {
 
 async function loadAll() {
   await Promise.all([loadSiteSettings(), loadCategories(), loadModuleRegistry()]);
-  await Promise.all([loadDashboard(), loadArticles(), loadProducts(), loadOrders(), loadMedia(), loadForms(), loadVersions()]);
+  await Promise.all([loadDashboard(), loadArticles(), loadProducts(), loadOrders(), loadServiceRequests(), loadMedia(), loadForms(), loadVersions()]);
 }
 
 function resetArticleForm() {
@@ -2017,6 +2071,25 @@ document.addEventListener('click', async (event) => {
     await updateSelectedOrder({ followup_note: note }, '服务请求已标记处理');
   }
 
+  const openServiceOrder = target.closest('[data-open-service-order]');
+  if (openServiceOrder) {
+    const item = await request(`/api/orders/${openServiceOrder.dataset.openServiceOrder}`);
+    const order = item.data || item;
+    state.orderFilters = { keyword: order.order_no || '', payment_status: '', fulfillment_status: '' };
+    syncOrderFilterForm();
+    setView('orders');
+    await loadOrders();
+    fillOrderDetail(order);
+  }
+
+  const serviceStat = target.closest('[data-service-status]');
+  if (serviceStat) {
+    state.serviceFilters.status = serviceStat.dataset.serviceStatus || '';
+    const form = $('#serviceFilterForm');
+    if (form) form.status.value = state.serviceFilters.status;
+    await loadServiceRequests();
+  }
+
   const orderDelete = target.closest('[data-delete-order]');
   if (orderDelete && confirm('确定删除这条订单？')) {
     await request(`/api/orders/${orderDelete.dataset.deleteOrder}`, { method: 'DELETE' });
@@ -2173,6 +2246,11 @@ $('#orderFilterForm').addEventListener('change', scheduleOrderFilters);
 $('#resetOrderFilterBtn').addEventListener('click', async () => {
   await resetOrderFilters();
 });
+$('#serviceFilterForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  await applyServiceFilters(event.currentTarget);
+});
+$('#reloadServiceBtn').addEventListener('click', () => loadServiceRequests().catch((error) => toast(error.message)));
 $('#mediaForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   try {

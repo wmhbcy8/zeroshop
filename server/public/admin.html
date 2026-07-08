@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>化简站点后台 MVP</title>
-  <link rel="stylesheet" href="/admin/assets/admin.css?v=fulfillment-flow-1">
+  <link rel="stylesheet" href="/admin/assets/admin.css?v=service-center-1">
 </head>
 <body>
   <section class="login-screen" id="loginScreen">
@@ -38,6 +38,7 @@
         <button class="nav-item" data-view="articles">文章</button>
         <button class="nav-item" data-view="products">商品</button>
         <button class="nav-item" data-view="orders">订单</button>
+        <button class="nav-item" data-view="service">服务</button>
         <button class="nav-item" data-view="media">媒体库</button>
         <button class="nav-item" data-view="forms">留言</button>
         <button class="nav-item" data-view="publish">发布</button>
@@ -426,6 +427,41 @@
               <button class="text-btn" type="button" id="markOrderShippedBtn">标记已发货</button>
             </div>
           </form>
+        </div>
+      </section>
+
+      <section class="view" id="view-service">
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>服务中心</h2>
+              <p class="muted">集中处理查单页提交的催发货、改地址、售后等服务请求。</p>
+            </div>
+            <button class="text-btn" id="reloadServiceBtn">刷新</button>
+          </div>
+          <form class="toolbar-form" id="serviceFilterForm">
+            <input name="keyword" placeholder="搜索订单号、客户、手机号或请求内容">
+            <select name="status">
+              <option value="">全部状态</option>
+              <option value="pending">待处理</option>
+              <option value="handled">已处理</option>
+            </select>
+            <select name="type">
+              <option value="">全部类型</option>
+              <option value="催发货">催发货</option>
+              <option value="修改收货信息">修改收货信息</option>
+              <option value="售后问题">售后问题</option>
+              <option value="其他服务">其他服务</option>
+            </select>
+            <button class="primary-btn" type="submit">筛选</button>
+          </form>
+          <div class="service-summary" id="serviceSummary"></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>请求</th><th>客户</th><th>订单</th><th>状态</th><th>时间</th><th>操作</th></tr></thead>
+              <tbody id="serviceRows"></tbody>
+            </table>
+          </div>
         </div>
       </section>
 

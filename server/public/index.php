@@ -275,6 +275,102 @@ function public_order_timeline(string $remark): array
     return $items;
 }
 
+function parse_order_timeline_lines(string $remark): array
+{
+    $items = [];
+    foreach (preg_split('/\r?\n/', $remark) ?: [] as $line) {
+        $line = trim($line);
+        if ($line === '') {
+            continue;
+        }
+        $text = $line;
+        $time = '';
+        if (preg_match('/^\[(.+?)\]\s*(.+)$/u', $line, $matches)) {
+            $time = $matches[1];
+            $text = $matches[2];
+        }
+        $items[] = [
+            'time' => $time,
+            'text' => $text,
+        ];
+    }
+    return $items;
+}
+
+function service_requests_from_order(array $order): array
+{
+    $lines = parse_order_timeline_lines((string)($order['remark'] ?? ''));
+    $requests = [];
+    foreach ($lines as $index => $line) {
+        if (!preg_match('/客户服务请求-([^：:]+)[：:](.*)$/u', (string)$line['text'], $matches)) {
+            continue;
+        }
+        $type = trim($matches[1]);
+        $message = trim($matches[2]);
+        $handled = false;
+        for ($i = $index + 1; $i < count($lines); $i++) {
+            $text = (string)$lines[$i]['text'];
+            if (strpos($text, '客服回复服务请求-' . $type) !== false || strpos($text, '客服已处理服务请求-' . $type) !== false) {
+                $handled = true;
+                break;
+            }
+        }
+        $requests[] = [
+            'id' => (int)($order['id'] ?? 0) . '-' . $index,
+            'order_id' => (int)($order['id'] ?? 0),
+            'order_no' => $order['order_no'] ?? '',
+            'customer_name' => $order['customer_name'] ?? '',
+            'phone' => $order['phone'] ?? '',
+            'type' => $type,
+            'message' => $message,
+            'status' => $handled ? 'handled' : 'pending',
+            'time' => $line['time'] ?? '',
+            'payment_status' => $order['payment_status'] ?? 'pending',
+            'fulfillment_status' => $order['fulfillment_status'] ?? 'new',
+        ];
+    }
+    return $requests;
+}
+
+function list_order_service_requests(PDO $pdo): array
+{
+    $status = trim((string)($_GET['status'] ?? ''));
+    $type = trim((string)($_GET['type'] ?? ''));
+    $keyword = trim((string)($_GET['keyword'] ?? ''));
+    $stmt = $pdo->query("SELECT * FROM orders WHERE remark LIKE '%客户服务请求-%' ORDER BY id DESC LIMIT 500");
+    $items = [];
+    while ($order = $stmt->fetch()) {
+        foreach (service_requests_from_order($order) as $request) {
+            if ($status !== '' && $request['status'] !== $status) {
+                continue;
+            }
+            if ($type !== '' && $request['type'] !== $type) {
+                continue;
+            }
+            if ($keyword !== '') {
+                $haystack = implode(' ', [
+                    $request['order_no'],
+                    $request['customer_name'],
+                    $request['phone'],
+                    $request['type'],
+                    $request['message'],
+                ]);
+                if (mb_stripos($haystack, $keyword, 0, 'UTF-8') === false) {
+                    continue;
+                }
+            }
+            $items[] = $request;
+        }
+    }
+    usort($items, static fn($a, $b) => strcmp((string)($b['time'] ?? ''), (string)($a['time'] ?? '')));
+    return [
+        'items' => array_values($items),
+        'total' => count($items),
+        'pending' => count(array_filter($items, static fn($item) => $item['status'] === 'pending')),
+        'handled' => count(array_filter($items, static fn($item) => $item['status'] === 'handled')),
+    ];
+}
+
 function public_order_view(array $order): array
 {
     $items = [];
@@ -1502,6 +1598,10 @@ try {
 
     if ($method === 'GET' && $path === '/orders/export') {
         export_orders_csv($pdo);
+    }
+
+    if ($method === 'GET' && $path === '/orders/service-requests') {
+        ok(list_order_service_requests($pdo));
     }
 
     if ($params = route_param('/orders/{id}', $path)) {

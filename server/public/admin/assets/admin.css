@@ -179,6 +179,19 @@ tr.selected-row td { background: #f0f7ff; }
   align-items: end;
   margin-bottom: 12px;
 }
+.toolbar-form {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(130px, .35fr) minmax(150px, .45fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.service-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
 .mini-stats {
   display: grid;
   grid-template-columns: repeat(5, minmax(110px, 1fr));
@@ -191,14 +204,16 @@ tr.selected-row td { background: #f0f7ff; }
   padding: 10px 12px;
   background: #f8fafc;
 }
-.mini-stat.order-stat-button {
+.mini-stat.order-stat-button,
+.mini-stat.service-stat-button {
   min-height: 0;
   display: block;
   width: 100%;
   text-align: left;
   color: var(--text);
 }
-.mini-stat.order-stat-button:hover {
+.mini-stat.order-stat-button:hover,
+.mini-stat.service-stat-button:hover {
   border-color: #b9d7ff;
   background: #f0f7ff;
 }
@@ -221,6 +236,7 @@ tr.selected-row td { background: #f0f7ff; }
   color: var(--primary);
 }
 .tag.published, .tag.processed { background: #f0fff4; color: var(--success); }
+.tag.handled { background: #f0fff4; color: var(--success); }
 .tag.paid, .tag.finished { background: #f0fff4; color: var(--success); }
 .tag.confirmed, .tag.shipped { background: #e6fffb; color: #08979c; }
 .tag.pending, .tag.failed { background: #fff7e6; color: var(--warning); }
@@ -707,12 +723,14 @@ textarea { resize: vertical; }
   .nav { grid-template-columns: repeat(3, 1fr); }
   .split-layout { grid-template-columns: 1fr; }
   .stats-grid, .mini-stats { grid-template-columns: repeat(2, 1fr); }
+  .service-summary { grid-template-columns: repeat(3, 1fr); }
   .filter-bar { grid-template-columns: 1fr 1fr; }
+  .toolbar-form { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 640px) {
   .main { padding: 16px; }
   .topbar { align-items: flex-start; flex-direction: column; }
   .nav { grid-template-columns: repeat(2, 1fr); }
-  .stats-grid, .mini-stats, .filter-bar, .upload-row, .field-action-row, .toggle-grid { grid-template-columns: 1fr; }
+  .stats-grid, .mini-stats, .service-summary, .filter-bar, .toolbar-form, .upload-row, .field-action-row, .toggle-grid { grid-template-columns: 1fr; }
 }
