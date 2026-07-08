@@ -84,10 +84,17 @@
               <el-table-column label="订单" width="90"><template #default="{ row }">{{ row.stats?.orders || 0 }}</template></el-table-column>
               <el-table-column label="待处理" width="110"><template #default="{ row }">{{ row.stats?.pending_orders || 0 }}</template></el-table-column>
               <el-table-column label="询盘" width="90"><template #default="{ row }">{{ row.stats?.forms || 0 }}</template></el-table-column>
+              <el-table-column label="最近发布" min-width="180">
+                <template #default="{ row }">
+                  <span>{{ row.publish?.last_created_at || '尚未生成' }}</span><br />
+                  <small>{{ row.publish?.last_version || row.publish?.public_path || '-' }}</small>
+                </template>
+              </el-table-column>
               <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status }}</el-tag></template></el-table-column>
-              <el-table-column label="操作" width="210">
+              <el-table-column label="操作" width="260">
                 <template #default="{ row }">
                   <el-button link type="primary" @click="openSite(row)">进入</el-button>
+                  <el-button link type="primary" @click="previewSite(row)">预览</el-button>
                   <el-button link type="primary" @click="editSite(row)">编辑</el-button>
                   <el-button link :type="row.status === 'active' ? 'warning' : 'success'" @click="toggleSiteStatus(row)">
                     {{ row.status === 'active' ? '停用' : '恢复' }}
@@ -123,8 +130,14 @@
                       <span>订单 {{ item.stats?.orders || 0 }}</span>
                       <span>待处理 {{ item.stats?.pending_orders || 0 }}</span>
                     </div>
+                    <div class="site-publish">
+                      <span>{{ item.publish?.generated ? '已生成静态站' : '待生成静态站' }}</span>
+                      <small>{{ item.publish?.last_created_at || item.publish?.public_path || '-' }}</small>
+                    </div>
                     <div class="site-actions" @click.stop>
                       <el-button size="small" type="primary" plain @click="openSite(item)">进入</el-button>
+                      <el-button size="small" :loading="generating && String(currentSiteId) === String(item.id)" @click="generateSiteFor(item)">生成</el-button>
+                      <el-button size="small" @click="previewSite(item)">预览</el-button>
                       <el-button size="small" @click="editSite(item)">编辑</el-button>
                       <el-button size="small" :type="item.status === 'active' ? 'warning' : 'success'" plain @click="toggleSiteStatus(item)">
                         {{ item.status === 'active' ? '停用' : '恢复' }}
@@ -1534,11 +1547,17 @@ async function generateSite() {
     const data = await request('/api/site/generate', { method: 'POST' })
     publishResult.value = data || { message: '静态站已生成' }
     ElMessage.success('静态站已生成')
-    await loadVersions()
+    await Promise.all([loadVersions(), loadSites(), loadDashboard()])
     return data
   } finally {
     generating.value = false
   }
+}
+
+async function generateSiteFor(item: any) {
+  currentSiteId.value = item.id
+  publishResult.value = null
+  return generateSite()
 }
 
 async function checkDeployConfig() {
@@ -1586,8 +1605,9 @@ function openPublishVersion(row: any) {
   Object.assign(publishDetail, row)
   publishDrawerVisible.value = true
 }
-function previewSite() {
-  window.open('/', '_blank')
+function previewSite(item: any = currentSite.value) {
+  const url = item?.publish?.preview_url || (String(item?.id || currentSiteId.value) === '10001' ? '/' : `/s/${item?.site_key || 'site_10001'}/`)
+  window.open(url, '_blank')
 }
 
 function formatFileSize(value: number) {

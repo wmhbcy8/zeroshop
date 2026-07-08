@@ -37,6 +37,35 @@ if (!str_starts_with($requestPath, '/api')) {
         }
     }
 
+    if (preg_match('#^/s/(site_\d+)(?:/(.*))?$#', $requestPath, $sitePreviewMatch)) {
+        $siteKey = $sitePreviewMatch[1];
+        $siteRelativePath = trim((string)($sitePreviewMatch[2] ?? ''), '/');
+        $siteRelativePath = $siteRelativePath === '' ? 'index.html' : $siteRelativePath;
+        $siteStaticRoot = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'sites' . DIRECTORY_SEPARATOR . $siteKey . DIRECTORY_SEPARATOR . 'public';
+        $siteTargetPath = realpath($siteStaticRoot . DIRECTORY_SEPARATOR . str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $siteRelativePath));
+        $siteStaticBase = realpath($siteStaticRoot);
+        if ($siteTargetPath && $siteStaticBase && str_starts_with($siteTargetPath, $siteStaticBase) && is_file($siteTargetPath)) {
+            $ext = strtolower(pathinfo($siteTargetPath, PATHINFO_EXTENSION));
+            $types = [
+                'html' => 'text/html; charset=utf-8',
+                'css' => 'text/css; charset=utf-8',
+                'js' => 'application/javascript; charset=utf-8',
+                'json' => 'application/json; charset=utf-8',
+                'xml' => 'application/xml; charset=utf-8',
+                'txt' => 'text/plain; charset=utf-8',
+                'svg' => 'image/svg+xml',
+                'png' => 'image/png',
+                'jpg' => 'image/jpeg',
+                'jpeg' => 'image/jpeg',
+                'webp' => 'image/webp',
+                'gif' => 'image/gif',
+            ];
+            header('Content-Type: ' . ($types[$ext] ?? 'application/octet-stream'));
+            readfile($siteTargetPath);
+            exit;
+        }
+    }
+
     $staticRoot = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'sites' . DIRECTORY_SEPARATOR . 'site_10001' . DIRECTORY_SEPARATOR . 'public';
     $relativePath = $requestPath === '/' ? 'index.html' : ltrim($requestPath, '/');
     $targetPath = realpath($staticRoot . DIRECTORY_SEPARATOR . str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $relativePath));
@@ -823,8 +852,9 @@ function center_site_items(PDO $main, PDO $sitePdo): array
     $pendingOrderCounts = site_group_counts($sitePdo, 'orders', "payment_status = 'pending' OR fulfillment_status IN ('new', 'confirmed')");
     $formCounts = site_group_counts($sitePdo, 'form_submissions');
     $pendingFormCounts = site_group_counts($sitePdo, 'form_submissions', "status IN ('new', 'pending')");
+    $publishMap = latest_publish_by_site($sitePdo);
 
-    return array_map(function (array $item) use ($articleCounts, $productCounts, $orderCounts, $pendingOrderCounts, $formCounts, $pendingFormCounts) {
+    return array_map(function (array $item) use ($articleCounts, $productCounts, $orderCounts, $pendingOrderCounts, $formCounts, $pendingFormCounts, $publishMap) {
         $siteId = (int)$item['id'];
         $stats = [
             'articles' => $articleCounts[$siteId] ?? 0,
@@ -834,8 +864,56 @@ function center_site_items(PDO $main, PDO $sitePdo): array
             'forms' => $formCounts[$siteId] ?? 0,
             'pending_forms' => $pendingFormCounts[$siteId] ?? 0,
         ];
-        return $item + ['stats' => $stats];
+        return $item + ['stats' => $stats, 'publish' => site_publish_summary($item, $publishMap[$siteId] ?? null)];
     }, $items);
+}
+
+function latest_publish_by_site(PDO $pdo): array
+{
+    try {
+        ensure_publish_versions_site_column($pdo);
+        $rows = $pdo->query('SELECT pv.* FROM publish_versions pv INNER JOIN (SELECT site_id, MAX(id) AS id FROM publish_versions GROUP BY site_id) latest ON latest.id = pv.id')->fetchAll();
+        $items = [];
+        foreach ($rows as $row) {
+            $items[(int)($row['site_id'] ?? 10001)] = $row;
+        }
+        return $items;
+    } catch (Throwable $error) {
+        return [];
+    }
+}
+
+function site_preview_url(array $site): string
+{
+    $siteId = (int)($site['id'] ?? 10001);
+    $siteKey = (string)($site['site_key'] ?? 'site_10001');
+    return $siteId === 10001 ? '/' : '/s/' . rawurlencode($siteKey) . '/';
+}
+
+function site_publish_summary(array $site, ?array $latest): array
+{
+    $summary = [];
+    if ($latest && !empty($latest['summary'])) {
+        $decoded = json_decode((string)$latest['summary'], true);
+        if (is_array($decoded)) {
+            $summary = $decoded;
+        }
+    }
+
+    $publicPath = str_replace(DIRECTORY_SEPARATOR, '/', site_public_path($site));
+    $publicRoot = site_public_root($site);
+    return [
+        'preview_url' => site_preview_url($site),
+        'public_path' => $publicPath,
+        'generated' => is_file($publicRoot . DIRECTORY_SEPARATOR . 'index.html'),
+        'last_version' => (string)($latest['version_no'] ?? ''),
+        'last_type' => (string)($latest['publish_type'] ?? ''),
+        'last_status' => (string)($latest['status'] ?? ''),
+        'last_created_at' => (string)($latest['created_at'] ?? ''),
+        'file_count' => (int)($summary['file_count'] ?? 0),
+        'file_size' => (int)($summary['file_size'] ?? 0),
+        'package_path' => (string)($summary['package_path'] ?? ''),
+    ];
 }
 
 function normalize_center_site_payload(array $data, array $current = []): array

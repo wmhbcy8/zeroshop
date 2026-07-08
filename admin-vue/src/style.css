@@ -186,6 +186,22 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
+.site-publish {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.site-publish span {
+  color: #0f172a;
+  font-weight: 700;
+}
+.site-publish small {
+  color: var(--hj-muted);
+  word-break: break-all;
+}
 .site-stats span,
 .capability-list span {
   padding: 8px 10px;
