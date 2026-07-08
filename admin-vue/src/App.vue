@@ -1849,6 +1849,43 @@
               <el-button type="primary" @click="savePaymentChannel">保存通道</el-button>
             </el-form>
           </el-drawer>
+          <el-card class="panel mt16" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>支付事件</strong>
+                <el-button @click="loadPaymentEvents">刷新事件</el-button>
+              </div>
+            </template>
+            <el-form :inline="true" class="toolbar" @submit.prevent="applyPaymentEventFilters">
+              <el-form-item>
+                <el-select v-model="operationSiteScope" placeholder="站点范围" style="width: 180px" @change="applyPaymentEventFilters">
+                  <el-option label="全部站点" value="all" />
+                  <el-option v-for="item in sites" :key="item.id" :label="item.name" :value="String(item.id)" />
+                </el-select>
+              </el-form-item>
+              <el-form-item><el-input v-model="paymentEventFilters.keyword" placeholder="订单号/交易号/事件Key" clearable /></el-form-item>
+              <el-form-item>
+                <el-select v-model="paymentEventFilters.payment_status" placeholder="支付状态" clearable style="width: 140px">
+                  <el-option label="待支付" value="pending" />
+                  <el-option label="已支付" value="paid" />
+                  <el-option label="已退款" value="refunded" />
+                  <el-option label="失败" value="failed" />
+                </el-select>
+              </el-form-item>
+              <el-button type="primary" @click="applyPaymentEventFilters">筛选</el-button>
+            </el-form>
+            <el-table :data="paymentEvents" height="360" row-key="id">
+              <el-table-column prop="site_name" label="站点" width="150" />
+              <el-table-column prop="order_no" label="订单号" min-width="170" />
+              <el-table-column prop="transaction_id" label="交易号" min-width="160" />
+              <el-table-column label="金额" width="140"><template #default="{ row }">{{ row.currency }} {{ row.amount }}</template></el-table-column>
+              <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag>{{ paymentLabel(row.payment_status) }}</el-tag></template></el-table-column>
+              <el-table-column prop="provider" label="通道" width="110" />
+              <el-table-column prop="processed_at" label="处理时间" width="170" />
+              <el-table-column prop="created_at" label="接收时间" width="170" />
+            </el-table>
+            <el-pagination class="table-pager" layout="prev, pager, next, total" :current-page="paymentEventPager.page" :page-size="paymentEventPager.page_size" :total="paymentEventPager.total" @current-change="changePaymentEventPage" />
+          </el-card>
         </section>
 
         <section v-if="view === 'seo'">
@@ -2319,6 +2356,7 @@ const collectorRecords = ref<any[]>([])
 const domains = ref<any[]>([])
 const domainApplications = ref<any[]>([])
 const paymentChannels = ref<any[]>([])
+const paymentEvents = ref<any[]>([])
 const seoAudit = ref<any>({})
 const versions = ref<any[]>([])
 const batchTasks = ref<any[]>([])
@@ -2380,6 +2418,7 @@ const formFilters = reactive({ keyword: '', status: '' })
 const collectorFilters = reactive({ keyword: '', status: '' })
 const mediaFilters = reactive({ keyword: '', file_type: '' })
 const taskFilters = reactive({ action: '', status: '', date: '' })
+const paymentEventFilters = reactive({ keyword: '', payment_status: '' })
 const logFilters = reactive({ keyword: '', method: '', site_id: 'all' })
 const orderDetail = reactive<any>({})
 const formDetail = reactive<any>({})
@@ -2459,6 +2498,7 @@ const collectorSourcePager = reactive({ page: 1, page_size: 10, total: 0 })
 const collectorRecordPager = reactive({ page: 1, page_size: 10, total: 0 })
 const aiTaskPager = reactive({ page: 1, page_size: 10, total: 0 })
 const taskPager = reactive({ page: 1, page_size: 10, total: 0 })
+const paymentEventPager = reactive({ page: 1, page_size: 10, total: 0 })
 const logPager = reactive({ page: 1, page_size: 20, total: 0 })
 const aiDrafts = ref<any[]>([])
 const aiTasks = ref<any[]>([])
@@ -2679,7 +2719,7 @@ function setView(key: string) {
   if (key === 'categories') Promise.all([loadCategories(), loadTags()])
   if (key === 'orders') loadOrders()
   if (key === 'service') loadServices()
-  if (key === 'payments') Promise.all([loadSettings(), loadPaymentChannels()])
+  if (key === 'payments') Promise.all([loadSettings(), loadPaymentChannels(), loadPaymentEvents()])
   if (key === 'tasks') loadBatchTasks()
   if (key === 'logs') loadOperationLogs()
   if (key === 'media') loadMedia()
@@ -2707,7 +2747,7 @@ function refreshCurrentView() {
     categories: async () => { await Promise.all([loadCategories(), loadTags()]) },
     orders: loadOrders,
     service: loadServices,
-    payments: async () => { await Promise.all([loadSettings(), loadPaymentChannels()]) },
+    payments: async () => { await Promise.all([loadSettings(), loadPaymentChannels(), loadPaymentEvents()]) },
     tasks: loadBatchTasks,
     logs: loadOperationLogs,
     media: loadMedia,
@@ -2749,6 +2789,7 @@ async function loadAll() {
     loadOrders(),
     loadServices(),
     loadPaymentChannels(),
+    loadPaymentEvents(),
     loadBatchTasks(),
     loadDeployTasks(),
     loadSiteBackups(),
@@ -4211,9 +4252,11 @@ function applyOperationSiteScope() {
   orderPager.page = 1
   servicePager.page = 1
   formPager.page = 1
+  paymentEventPager.page = 1
   if (view.value === 'orders') loadOrders()
   if (view.value === 'service') loadServices()
   if (view.value === 'forms') loadForms()
+  if (view.value === 'payments') loadPaymentEvents()
   if (view.value === 'operations') refreshOperations()
 }
 
@@ -4273,6 +4316,28 @@ async function loadPaymentChannels() {
   const data = await request('/api/payment/channels')
   paymentChannels.value = data.items || []
 }
+
+async function loadPaymentEvents() {
+  const params = new URLSearchParams()
+  params.set('page', String(paymentEventPager.page))
+  params.set('page_size', String(paymentEventPager.page_size))
+  params.set('site_id', operationSiteScope.value)
+  Object.entries(paymentEventFilters).forEach(([key, value]) => value && params.set(key, value))
+  const data = await request(`/api/payment/events?${params.toString()}`)
+  paymentEvents.value = data.items || []
+  paymentEventPager.total = data.pagination?.total || paymentEvents.value.length
+}
+
+function applyPaymentEventFilters() {
+  paymentEventPager.page = 1
+  loadPaymentEvents()
+}
+
+function changePaymentEventPage(page: number) {
+  paymentEventPager.page = page
+  loadPaymentEvents()
+}
+
 function newPaymentChannel() {
   Object.assign(paymentForm, {
     id: '',

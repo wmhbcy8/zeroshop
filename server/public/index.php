@@ -3832,6 +3832,45 @@ function handle_payment_webhook(PDO $pdo, PDO $main): array
     ];
 }
 
+function list_payment_webhook_events(PDO $pdo, ?PDO $main = null): array
+{
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $offset = ($page - 1) * $pageSize;
+    $clauses = [];
+    $params = [];
+    append_site_scope_clause($clauses, $params, 'site_id', 'pay_event_site');
+    $keyword = trim((string)($_GET['keyword'] ?? ''));
+    if ($keyword !== '') {
+        $clauses[] = '(order_no LIKE :keyword OR transaction_id LIKE :keyword OR event_key LIKE :keyword OR payload LIKE :keyword)';
+        $params['keyword'] = '%' . $keyword . '%';
+    }
+    $status = trim((string)($_GET['payment_status'] ?? ''));
+    if ($status !== '') {
+        $clauses[] = 'payment_status = :payment_status';
+        $params['payment_status'] = $status;
+    }
+    $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
+    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM payment_webhook_events{$whereSql}");
+    $countStmt->execute($params);
+    $total = (int)$countStmt->fetchColumn();
+    $stmt = $pdo->prepare("SELECT * FROM payment_webhook_events{$whereSql} ORDER BY id DESC LIMIT {$pageSize} OFFSET {$offset}");
+    $stmt->execute($params);
+    $items = array_map(function (array $row) {
+        $row['payload_json'] = json_decode((string)($row['payload'] ?? ''), true) ?: null;
+        return $row;
+    }, $stmt->fetchAll());
+    return [
+        'items' => attach_site_names($items, $main),
+        'pagination' => [
+            'page' => $page,
+            'page_size' => $pageSize,
+            'total' => $total,
+            'total_pages' => (int)ceil($total / $pageSize),
+        ],
+    ];
+}
+
 function ensure_content_distribution_table(PDO $pdo): void
 {
     ensure_pages_table($pdo);
@@ -7022,6 +7061,10 @@ try {
 
     if ($method === 'GET' && $path === '/payment/channels') {
         ok(list_payment_channels(main_pdo()));
+    }
+
+    if ($method === 'GET' && $path === '/payment/events') {
+        ok(list_payment_webhook_events($pdo, main_pdo()));
     }
 
     if ($method === 'GET' && $path === '/site/domains') {
