@@ -5959,6 +5959,74 @@ function publish_collector_record(PDO $pdo, int $recordId, string $status = 'dra
     return ['article' => attach_distribution($pdo, 'article', [fetch_one($pdo, 'articles', $articleId)])[0], 'record' => fetch_one($pdo, 'collector_records', $recordId)];
 }
 
+function create_manual_collector_record(PDO $pdo, array $data, ?array $draft = null): array
+{
+    ensure_collector_tables($pdo);
+    require_fields($data, ['title', 'content']);
+    $siteIds = normalize_site_ids($data);
+    $siteId = (int)($siteIds[0] ?? requested_site_id());
+    $title = mb_substr(trim((string)($draft['title'] ?? $data['title'])), 0, 255, 'UTF-8');
+    if ($title === '') {
+        fail('标题不能为空', 'VALIDATION_ERROR', 422);
+    }
+    $rawContent = trim((string)($data['content'] ?? $data['summary'] ?? ''));
+    $summary = trim((string)($draft['summary'] ?? $data['summary'] ?? text_excerpt($rawContent, 180)));
+    $content = trim((string)($draft['content'] ?? $data['content'] ?? ''));
+    if ($content === '') {
+        $content = '<p>' . htmlspecialchars(text_excerpt($rawContent, 1800), ENT_QUOTES, 'UTF-8') . '</p>';
+    }
+    $sourceUrl = trim((string)($data['source_url'] ?? ''));
+    if ($sourceUrl === '') {
+        $sourceUrl = 'manual://' . date('YmdHis') . '-' . substr(md5($title . $rawContent . random_bytes(4)), 0, 10);
+    }
+    $time = now();
+    $stmt = $pdo->prepare("INSERT INTO collector_records (site_id, source_id, source_type, source_url, title, summary, content, status, collected_at, created_at, updated_at)
+        VALUES (:site_id, NULL, :source_type, :source_url, :title, :summary, :content, :status, :collected_at, :created_at, :updated_at)");
+    $stmt->execute([
+        'site_id' => $siteId,
+        'source_type' => (string)($draft ? 'ai-rewrite' : 'manual'),
+        'source_url' => mb_substr($sourceUrl, 0, 500, 'UTF-8'),
+        'title' => $title,
+        'summary' => $summary,
+        'content' => $content,
+        'status' => $draft ? 'rewritten' : 'draft',
+        'collected_at' => $time,
+        'created_at' => $time,
+        'updated_at' => $time,
+    ]);
+    $record = fetch_one($pdo, 'collector_records', (int)$pdo->lastInsertId()) ?: [];
+    $record['site_ids'] = $siteIds;
+    return $record;
+}
+
+function rewrite_manual_collector_record(PDO $pdo, array $data): array
+{
+    require_fields($data, ['title', 'content']);
+    $title = trim((string)$data['title']);
+    $content = trim((string)$data['content']);
+    if ($content === '') {
+        fail('请粘贴需要改写的正文', 'VALIDATION_ERROR', 422);
+    }
+    consume_ai_quota(main_pdo(), auth_user(), 1);
+    $site = site_settings($pdo);
+    $prompt = implode("\n", [
+        '请把下面采集或粘贴的资料改写成适合企业独立站 SEO 收录的原创文章草稿。',
+        '要求：保留事实信息，重写标题、摘要、正文结构，避免低质量伪原创；正文使用 p、h2、ul、li HTML。',
+        '原始标题：' . $title,
+        '补充要求：' . trim((string)($data['prompt'] ?? '')),
+        '原文：' . text_limit(strip_tags($content), 2400),
+    ]);
+    $fallback = local_ai_draft('article', $prompt, $site);
+    $remote = remote_ai_draft('article', $prompt, $site);
+    $draft = $remote ? array_replace($fallback, $remote) : $fallback;
+    $record = create_manual_collector_record($pdo, $data, $draft);
+    return [
+        'source' => $remote ? 'remote' : 'local',
+        'draft' => $draft,
+        'record' => $record,
+    ];
+}
+
 function ensure_ai_task_tables(PDO $pdo): void
 {
     $pdo->exec("CREATE TABLE IF NOT EXISTS ai_tasks (
@@ -8183,6 +8251,14 @@ try {
 
     if ($method === 'GET' && $path === '/collector/records') {
         ok(list_collector_records($pdo, main_pdo()));
+    }
+
+    if ($method === 'POST' && $path === '/collector/records/manual') {
+        ok(create_manual_collector_record($pdo, body_json()), '粘贴内容已进入采集记录');
+    }
+
+    if ($method === 'POST' && $path === '/collector/records/rewrite') {
+        ok(rewrite_manual_collector_record($pdo, body_json()), 'AI 改写已生成待审核记录');
     }
 
     if ($params = route_param('/collector/records/{id}', $path)) {

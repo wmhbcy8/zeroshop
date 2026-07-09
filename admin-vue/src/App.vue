@@ -1699,7 +1699,10 @@
                 <template #header>
                   <div class="card-head">
                     <strong>采集记录</strong>
-                    <el-button @click="loadCollectorRecords">刷新记录</el-button>
+                    <div class="head-actions">
+                      <el-button @click="loadCollectorRecords">刷新记录</el-button>
+                      <el-button type="primary" @click="newManualCollectorRecord">粘贴改写</el-button>
+                    </div>
                   </div>
                 </template>
                 <el-form :inline="true" class="toolbar" @submit.prevent="loadCollectorRecords">
@@ -1707,6 +1710,7 @@
                   <el-form-item>
                     <el-select v-model="collectorFilters.status" placeholder="状态" clearable>
                       <el-option label="草稿" value="draft" />
+                      <el-option label="已改写" value="rewritten" />
                       <el-option label="已转文章" value="converted" />
                     </el-select>
                   </el-form-item>
@@ -1743,7 +1747,9 @@
                     </template>
                   </el-table-column>
                   <el-table-column prop="site_name" label="站点" width="130" />
-                  <el-table-column prop="status" label="状态" width="100" />
+                  <el-table-column label="状态" width="100">
+                    <template #default="{ row }"><el-tag :type="collectorRecordStatusTag(row.status)">{{ collectorRecordStatusLabel(row.status) }}</el-tag></template>
+                  </el-table-column>
                   <el-table-column prop="collected_at" label="采集时间" width="170" />
                   <el-table-column label="操作" width="220">
                     <template #default="{ row }">
@@ -1804,6 +1810,32 @@
               <div class="drawer-actions">
                 <el-button @click="collectorDrawerVisible = false">取消</el-button>
                 <el-button type="primary" @click="saveCollectorSource">保存采集源</el-button>
+              </div>
+            </el-form>
+          </el-drawer>
+          <el-drawer v-model="manualCollectorDrawerVisible" size="620px" title="粘贴内容 / AI 改写">
+            <el-form :model="manualCollectorForm" label-width="96px">
+              <el-alert class="mb16" type="info" show-icon :closable="false" title="粘贴内容先进入采集记录；AI 改写后仍需人工点击转草稿或发布，避免未经审核直接进入前台。" />
+              <el-form-item label="发布范围">
+                <el-radio-group v-model="manualCollectorForm.site_scope" @change="syncManualCollectorScope">
+                  <el-radio-button label="current">当前站点</el-radio-button>
+                  <el-radio-button label="all">全部站点</el-radio-button>
+                  <el-radio-button label="selected">指定站点</el-radio-button>
+                </el-radio-group>
+              </el-form-item>
+              <el-form-item v-if="manualCollectorForm.site_scope === 'selected'" label="选择站点">
+                <el-select v-model="manualCollectorForm.site_ids" multiple filterable collapse-tags collapse-tags-tooltip placeholder="选择站点">
+                  <el-option v-for="item in sites" :key="item.id" :label="item.name" :value="item.id" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="原文标题"><el-input v-model="manualCollectorForm.title" placeholder="粘贴来源文章、新闻或产品知识标题" /></el-form-item>
+              <el-form-item label="来源链接"><el-input v-model="manualCollectorForm.source_url" placeholder="可选，用于记录原文出处" /></el-form-item>
+              <el-form-item label="改写要求"><el-input v-model="manualCollectorForm.prompt" type="textarea" :rows="3" placeholder="例如：改写成适合无人机独立站 SEO 的行业资讯，增加采购建议和询盘引导" /></el-form-item>
+              <el-form-item label="原文内容"><el-input v-model="manualCollectorForm.content" type="textarea" :rows="10" placeholder="粘贴需要保存或 AI 改写的正文内容" /></el-form-item>
+              <div class="drawer-actions">
+                <el-button @click="manualCollectorDrawerVisible = false">取消</el-button>
+                <el-button :loading="manualCollectorSaving" @click="saveManualCollectorRecord">保存原文</el-button>
+                <el-button type="primary" :loading="manualCollectorRewriting" @click="rewriteManualCollectorRecord">AI 改写入记录</el-button>
               </div>
             </el-form>
           </el-drawer>
@@ -2436,6 +2468,7 @@ const orderDrawerVisible = ref(false)
 const paymentDrawerVisible = ref(false)
 const formDrawerVisible = ref(false)
 const collectorDrawerVisible = ref(false)
+const manualCollectorDrawerVisible = ref(false)
 const domainDrawerVisible = ref(false)
 const domainApplicationDrawerVisible = ref(false)
 const platformDomainApplicationDrawerVisible = ref(false)
@@ -2472,6 +2505,7 @@ const logFilters = reactive({ keyword: '', method: '', site_id: 'all' })
 const orderDetail = reactive<any>({})
 const formDetail = reactive<any>({})
 const collectorForm = reactive<any>({})
+const manualCollectorForm = reactive<any>({})
 const collectorPublishScope = reactive<any>({ site_scope: 'current', site_ids: [] })
 const domainForm = reactive<any>({})
 const domainApplicationForm = reactive<any>({})
@@ -2564,6 +2598,8 @@ const pagePlanSaving = ref(false)
 const pagePlanPublishing = ref(false)
 const siteCreating = ref(false)
 const collectorRunningId = ref<number | string>('')
+const manualCollectorSaving = ref(false)
+const manualCollectorRewriting = ref(false)
 
 const navItems = [
   { key: 'platform', label: '平台', hint: '运营方后台：管理客户、套餐、站点和部署节点。', icon: 'Monitor' },
@@ -4043,6 +4079,19 @@ function syncCollectorPublishScope() {
   collectorPublishScope.site_ids = currentSiteIds()
 }
 
+function syncManualCollectorScope() {
+  if (manualCollectorForm.site_scope === 'all') {
+    manualCollectorForm.site_ids = allSiteIds()
+    return
+  }
+  if (manualCollectorForm.site_scope === 'selected') {
+    manualCollectorForm.site_ids = (manualCollectorForm.site_ids || []).map((id: any) => Number(id)).filter((id: number) => id > 0)
+    return
+  }
+  manualCollectorForm.site_scope = 'current'
+  manualCollectorForm.site_ids = currentSiteIds()
+}
+
 function applyAiQuickCommand(item: any) {
   aiForm.type = item.type
   aiForm.count = item.count
@@ -4624,9 +4673,25 @@ function resetCollectorForm() {
   })
 }
 
+function resetManualCollectorForm() {
+  Object.assign(manualCollectorForm, {
+    title: '',
+    source_url: '',
+    prompt: '',
+    content: '',
+    site_scope: 'current',
+    site_ids: currentSiteIds()
+  })
+}
+
 function newCollectorSource() {
   resetCollectorForm()
   collectorDrawerVisible.value = true
+}
+
+function newManualCollectorRecord() {
+  resetManualCollectorForm()
+  manualCollectorDrawerVisible.value = true
 }
 
 function editCollectorSource(row: any) {
@@ -4693,6 +4758,53 @@ async function publishCollectorRecord(row: any, status: 'draft' | 'published') {
     const siteIds = data.article?.site_ids?.length ? data.article.site_ids : site_ids
     await syncGeneratedSitesForContent(siteIds, '采集记录发布后自动生成')
   }
+}
+
+function manualCollectorPayload() {
+  if (!ensureSelectedSiteScope(manualCollectorForm.site_scope, manualCollectorForm.site_ids, '粘贴内容发布范围')) return null
+  syncManualCollectorScope()
+  const site_ids = siteIdsForScope(manualCollectorForm.site_scope, manualCollectorForm.site_ids)
+  return {
+    ...manualCollectorForm,
+    site_scope: manualCollectorForm.site_scope,
+    site_ids
+  }
+}
+
+async function saveManualCollectorRecord() {
+  const payload = manualCollectorPayload()
+  if (!payload) return
+  manualCollectorSaving.value = true
+  try {
+    await request('/api/collector/records/manual', { method: 'POST', data: payload })
+    ElMessage.success('粘贴内容已进入采集记录')
+    manualCollectorDrawerVisible.value = false
+    await Promise.all([loadCollectorRecords(), loadDashboard()])
+  } finally {
+    manualCollectorSaving.value = false
+  }
+}
+
+async function rewriteManualCollectorRecord() {
+  const payload = manualCollectorPayload()
+  if (!payload) return
+  manualCollectorRewriting.value = true
+  try {
+    await request('/api/collector/records/rewrite', { method: 'POST', data: payload })
+    ElMessage.success('AI 改写已生成待审核采集记录')
+    manualCollectorDrawerVisible.value = false
+    await Promise.all([loadCollectorRecords(), loadDashboard()])
+  } finally {
+    manualCollectorRewriting.value = false
+  }
+}
+
+function collectorRecordStatusLabel(value: string) {
+  return ({ draft: '草稿', rewritten: '已改写', converted: '已转文章' } as any)[value] || value || '-'
+}
+
+function collectorRecordStatusTag(value: string) {
+  return ({ draft: 'info', rewritten: 'warning', converted: 'success' } as any)[value] || 'info'
 }
 
 async function deleteCollectorRecord(row: any) {
