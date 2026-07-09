@@ -2499,6 +2499,48 @@
             </div>
             <el-empty v-else description="暂无部署计划，请刷新计划或保存部署配置" />
           </el-card>
+          <el-card class="panel mb16" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>发布验收清单</strong>
+                <div class="head-actions">
+                  <el-button @click="loadPublishReadiness">刷新清单</el-button>
+                  <el-button type="primary" :loading="generating" @click="generateSiteAndRefreshReadiness">生成并验收</el-button>
+                </div>
+              </div>
+            </template>
+            <div v-if="publishReadiness" class="readiness-grid">
+              <article class="readiness-score" :class="{ ready: publishReadiness.ready }">
+                <span>静态站状态</span>
+                <strong>{{ publishReadiness.score || 0 }}</strong>
+                <small>{{ publishReadiness.ready ? '核心文件已就绪' : '仍有发布项待处理' }}</small>
+              </article>
+              <article class="deploy-plan-summary">
+                <span>生成文件</span>
+                <strong>{{ publishReadiness.file_count || 0 }}</strong>
+                <small>{{ formatFileSize(publishReadiness.file_size || 0) }}</small>
+              </article>
+              <article class="deploy-plan-summary">
+                <span>最近版本</span>
+                <strong>{{ publishReadiness.latest_version?.version_no || '暂无版本' }}</strong>
+                <small>{{ publishReadiness.latest_version?.created_at || publishReadiness.public_path || '-' }}</small>
+              </article>
+            </div>
+            <div v-if="publishReadiness" class="deploy-check-list mt16">
+              <el-tag v-for="item in publishReadiness.checks || []" :key="item.key" :type="item.ok ? 'success' : 'warning'" effect="plain">
+                {{ item.label }}：{{ item.ok ? '已生成' : '缺失' }}
+              </el-tag>
+            </div>
+            <el-alert
+              v-if="publishReadiness && !publishReadiness.ready"
+              class="mt16"
+              type="warning"
+              show-icon
+              :closable="false"
+              title="建议先点击“生成并验收”，确保首页、sitemap、robots、search.json、文章列表和商品列表都已生成，再创建发布包或部署上线。"
+            />
+            <el-empty v-if="!publishReadiness" description="暂无验收数据，请刷新清单" />
+          </el-card>
           <el-card class="panel" shadow="never">
             <template #header>
               <div class="card-head">
@@ -2909,6 +2951,7 @@ const batchTasks = ref<any[]>([])
 const taskStream = ref<any[]>([])
 const deployTasks = ref<any[]>([])
 const deployPlan = ref<any>(null)
+const publishReadiness = ref<any>(null)
 const siteBackups = ref<any[]>([])
 const operationLogs = ref<any[]>([])
 const batchTaskOverview = ref<any>({})
@@ -3353,7 +3396,7 @@ function setView(key: string) {
   if (key === 'forms') loadForms()
   if (key === 'collector') loadCollector()
   if (key === 'seo') loadSeoAudit()
-  if (key === 'publish') Promise.all([loadSettings(), loadVersions(), loadDeployTasks(), loadSiteBackups(), loadDeployPlan()])
+  if (key === 'publish') Promise.all([loadSettings(), loadVersions(), loadDeployTasks(), loadSiteBackups(), loadDeployPlan(), loadPublishReadiness()])
 }
 
 function refreshCurrentView() {
@@ -3383,7 +3426,7 @@ function refreshCurrentView() {
     forms: loadForms,
     collector: loadCollector,
     seo: loadSeoAudit,
-    publish: async () => { await Promise.all([loadSettings(), loadVersions(), loadDeployTasks(), loadSiteBackups(), loadDeployPlan()]) }
+    publish: async () => { await Promise.all([loadSettings(), loadVersions(), loadDeployTasks(), loadSiteBackups(), loadDeployPlan(), loadPublishReadiness()]) }
   }
   loaders[view.value]?.().then(() => ElMessage.success('当前页面已刷新'))
 }
@@ -4247,7 +4290,7 @@ async function savePublishDeploySettings() {
     })
   }
   ElMessage.success('发布部署配置已保存到当前站点')
-  await Promise.all([loadSites(), loadDeployPlan(), loadDashboard()])
+  await Promise.all([loadSites(), loadDeployPlan(), loadPublishReadiness(), loadDashboard()])
 }
 
 async function saveSettingsAsDefault() {
@@ -5846,6 +5889,10 @@ async function loadDeployPlan() {
   deployPlan.value = await request('/api/site/deploy-plan')
 }
 
+async function loadPublishReadiness() {
+  publishReadiness.value = await request('/api/site/publish-readiness')
+}
+
 async function loadSiteBackups() {
   const data = await request('/api/site/backups?page_size=20')
   siteBackups.value = data.items || []
@@ -6036,11 +6083,16 @@ async function generateSite() {
     const data = await request('/api/site/generate', { method: 'POST' })
     publishResult.value = data || { message: '静态站已生成' }
     ElMessage.success('静态站已生成')
-    await Promise.all([loadVersions(), loadSites(), loadDashboard()])
+    await Promise.all([loadVersions(), loadPublishReadiness(), loadSites(), loadDashboard()])
     return data
   } finally {
     generating.value = false
   }
+}
+
+async function generateSiteAndRefreshReadiness() {
+  await generateSite()
+  await loadPublishReadiness()
 }
 
 async function generateSiteFor(item: any) {
@@ -6139,7 +6191,7 @@ async function checkDeployConfig() {
     const data = await request('/api/site/deploy-test', { method: 'POST' })
     publishResult.value = data || { message: '部署配置检查完成' }
     ElMessage.success(data?.message || '部署配置检查完成')
-    await Promise.all([loadVersions(), loadDeployTasks()])
+    await Promise.all([loadVersions(), loadDeployTasks(), loadPublishReadiness()])
   } finally {
     deployTesting.value = false
   }
@@ -6151,7 +6203,7 @@ async function createPackage() {
     const data = await request('/api/site/package', { method: 'POST' })
     publishResult.value = data || { message: '发布包已生成' }
     ElMessage.success(data?.message || '发布包已生成')
-    await Promise.all([loadVersions(), loadDeployTasks()])
+    await Promise.all([loadVersions(), loadDeployTasks(), loadPublishReadiness()])
   } finally {
     packaging.value = false
   }
@@ -6163,7 +6215,7 @@ async function deploySite() {
     const data = await request('/api/site/deploy', { method: 'POST' })
     publishResult.value = data || { message: '部署任务已创建' }
     ElMessage.success(data?.message || '部署任务已创建')
-    await Promise.all([loadVersions(), loadDeployTasks(), loadSites(), loadDashboard()])
+    await Promise.all([loadVersions(), loadDeployTasks(), loadPublishReadiness(), loadSites(), loadDashboard()])
   } finally {
     deploying.value = false
   }
@@ -6185,7 +6237,7 @@ async function retryDeployTask(row: any) {
     if (deployTaskDrawerVisible.value && data?.task?.id) {
       Object.assign(deployTaskDetail, data.task)
     }
-    await Promise.all([loadVersions(), loadDeployTasks(), loadDeployPlan(), loadSites(), loadDashboard()])
+    await Promise.all([loadVersions(), loadDeployTasks(), loadDeployPlan(), loadPublishReadiness(), loadSites(), loadDashboard()])
   } finally {
     deployTaskRetrying.value = false
   }
@@ -6219,7 +6271,7 @@ async function rollbackVersion(row: any) {
   publishResult.value = data || { message: '回滚成功' }
   publishDrawerVisible.value = false
   ElMessage.success('已回滚到所选版本')
-  await Promise.all([loadVersions(), loadSites(), loadDashboard()])
+  await Promise.all([loadVersions(), loadPublishReadiness(), loadSites(), loadDashboard()])
 }
 
 async function createSiteBackup() {
@@ -6241,7 +6293,7 @@ async function restoreSiteBackup(row: any) {
   const data = await request(`/api/site/backups/${row.id}/restore`, { method: 'POST' })
   publishResult.value = data || { message: '站点备份已恢复' }
   ElMessage.success('站点备份已恢复')
-  await Promise.all([loadSiteBackups(), loadVersions(), loadSites(), loadDashboard()])
+  await Promise.all([loadSiteBackups(), loadVersions(), loadPublishReadiness(), loadSites(), loadDashboard()])
 }
 
 async function deleteSiteBackup(row: any) {

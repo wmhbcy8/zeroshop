@@ -4340,6 +4340,69 @@ function build_deploy_plan(PDO $main, array $site, array $deploy, bool $configur
     ];
 }
 
+function publish_readiness(PDO $pdo, PDO $main, array $site): array
+{
+    ensure_publish_versions_site_column($pdo);
+    $siteId = (int)($site['id'] ?? requested_site_id());
+    $publicRoot = site_public_root($site);
+    $publicPath = str_replace(DIRECTORY_SEPARATOR, '/', site_public_path($site));
+    $requiredFiles = [
+        ['key' => 'home', 'label' => '首页', 'path' => 'index.html'],
+        ['key' => 'sitemap', 'label' => 'Sitemap', 'path' => 'sitemap.xml'],
+        ['key' => 'robots', 'label' => 'Robots', 'path' => 'robots.txt'],
+        ['key' => 'search', 'label' => '搜索索引', 'path' => 'search.json'],
+        ['key' => 'articles', 'label' => '文章列表', 'path' => 'news/index.html'],
+        ['key' => 'products', 'label' => '商品列表', 'path' => 'products/index.html'],
+    ];
+    $checks = [];
+    foreach ($requiredFiles as $file) {
+        $absolute = $publicRoot . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $file['path']);
+        $exists = is_file($absolute);
+        $checks[] = [
+            'key' => $file['key'],
+            'label' => $file['label'],
+            'ok' => $exists,
+            'value' => $file['path'],
+            'size' => $exists ? filesize($absolute) : 0,
+            'updated_at' => $exists ? date('Y-m-d H:i:s', (int)filemtime($absolute)) : '',
+        ];
+    }
+    $fileCount = 0;
+    $fileSize = 0;
+    if (is_dir($publicRoot)) {
+        $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($publicRoot, FilesystemIterator::SKIP_DOTS));
+        foreach ($iterator as $fileInfo) {
+            if ($fileInfo->isFile()) {
+                $fileCount++;
+                $fileSize += (int)$fileInfo->getSize();
+            }
+        }
+    }
+    $stmt = $pdo->prepare('SELECT * FROM publish_versions WHERE site_id = ? ORDER BY id DESC LIMIT 1');
+    $stmt->execute([$siteId]);
+    $latestVersion = $stmt->fetch() ?: null;
+    $settings = site_settings($pdo, $siteId);
+    [$deploy, $configured] = deploy_config_status($site, $settings);
+    $plan = build_deploy_plan($main, $site, $deploy, $configured);
+    $okCount = count(array_filter($checks, fn($item) => !empty($item['ok'])));
+    $ready = $okCount === count($checks) && $fileCount > 0 && !empty($latestVersion);
+    return [
+        'ready' => $ready,
+        'score' => count($checks) ? (int)round(($okCount / count($checks)) * 100) : 0,
+        'site_id' => $siteId,
+        'site_key' => (string)($site['site_key'] ?? ''),
+        'site_name' => (string)($site['name'] ?? ''),
+        'public_path' => $publicPath,
+        'preview_url' => site_preview_url($site),
+        'file_count' => $fileCount,
+        'file_size' => $fileSize,
+        'checks' => $checks,
+        'latest_version' => $latestVersion,
+        'deploy_configured' => $configured,
+        'deploy_plan' => $plan,
+    ];
+}
+
 function execute_site_deploy(PDO $main, PDO $pdo, array $site): array
 {
     $settings = site_settings($pdo);
@@ -10229,6 +10292,12 @@ try {
         $site = site_settings($pdo);
         [$deploy, $configured] = deploy_config_status($currentSite, $site);
         ok(build_deploy_plan($main, $currentSite, $deploy, $configured), '部署计划已生成');
+    }
+
+    if ($method === 'GET' && $path === '/site/publish-readiness') {
+        $main = main_pdo();
+        $currentSite = current_site($main, $pdo);
+        ok(publish_readiness($pdo, $main, $currentSite), '发布验收清单已生成');
     }
 
     if ($method === 'POST' && $path === '/site/package') {
