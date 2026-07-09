@@ -4294,6 +4294,10 @@ function clone_asset_local_path(string $url, string $contentType = ''): string
     }
     $hash = substr(sha1($url), 0, 10);
     $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+    if (in_array($ext, ['php', 'phtml', 'phar', 'asp', 'aspx', 'jsp', 'cgi', 'pl'], true)) {
+        $name .= '.txt';
+        $ext = 'txt';
+    }
     $folder = match (true) {
         in_array($ext, ['css'], true) => 'css',
         in_array($ext, ['js'], true) => 'js',

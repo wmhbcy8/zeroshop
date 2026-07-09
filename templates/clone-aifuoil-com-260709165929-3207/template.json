@@ -1,0 +1,62 @@
+{
+    "name": "Static Clone - AIFUEL",
+    "key": "clone-aifuoil-com-260709165929-3207",
+    "version": "0.1.0",
+    "author": "Huajian Template Clone",
+    "type": [
+        "company",
+        "blog",
+        "shop"
+    ],
+    "supports": [
+        "page",
+        "article",
+        "product",
+        "seo",
+        "form",
+        "clone-draft",
+        "static-mirror"
+    ],
+    "entry": "pages/index.html",
+    "clone_mode": "static_mirror",
+    "mirror_entry": "mirror/index.html",
+    "source_url": "https://aifuoil.com",
+    "module_plan": [
+        {
+            "module": "header",
+            "title": "Brand navigation",
+            "description": "Keep the AIFUEL logo, top menu, and language entry."
+        },
+        {
+            "module": "hero",
+            "title": "Home hero",
+            "description": "Use the cloned theme hero image, search entry, and brand message."
+        },
+        {
+            "module": "products",
+            "title": "Product center",
+            "description": "Reuse the target site's product card style and later bind it to the product library."
+        },
+        {
+            "module": "about",
+            "title": "Brand introduction",
+            "description": "Keep the company profile, service data, and product visual blocks."
+        },
+        {
+            "module": "articles",
+            "title": "News",
+            "description": "Reuse the target site's news list structure and later bind it to articles and collection tasks."
+        },
+        {
+            "module": "contact",
+            "title": "Contact and inquiry",
+            "description": "Keep phone, email, service scope, and inquiry entry."
+        },
+        {
+            "module": "source",
+            "title": "Static mirror source",
+            "description": "https://aifuoil.com"
+        }
+    ]
+}
+
