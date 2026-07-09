@@ -2719,9 +2719,8 @@ function auto_operation_log(string $message, $data = []): void
     }
 }
 
-function list_operation_logs(PDO $main): array
+function operation_log_filter_sql(PDO $main): array
 {
-    ensure_center_tables($main);
     $where = [];
     $params = [];
     $keyword = trim((string)($_GET['keyword'] ?? ''));
@@ -2743,6 +2742,13 @@ function list_operation_logs(PDO $main): array
         append_site_scope_clause($where, $params);
     }
     $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
+    return [$whereSql, $params];
+}
+
+function list_operation_logs(PDO $main): array
+{
+    ensure_center_tables($main);
+    [$whereSql, $params] = operation_log_filter_sql($main);
     $page = max(1, (int)($_GET['page'] ?? 1));
     $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
     $offset = ($page - 1) * $pageSize;
@@ -2760,6 +2766,41 @@ function list_operation_logs(PDO $main): array
             'total_pages' => (int)ceil($total / $pageSize),
         ],
     ];
+}
+
+function export_operation_logs_csv(PDO $main): void
+{
+    ensure_center_tables($main);
+    [$whereSql, $params] = operation_log_filter_sql($main);
+    $siteMap = site_name_map($main);
+    $stmt = $main->prepare("SELECT * FROM operation_logs {$whereSql} ORDER BY id DESC LIMIT 10000");
+    $stmt->execute($params);
+
+    header_remove('Content-Type');
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="operation-logs-' . date('Ymd-His') . '.csv"');
+    echo "\xEF\xBB\xBF";
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['时间', '用户', '站点ID', '站点名称', '方法', '接口路径', '动作', '对象类型', '对象ID', '说明', '摘要', 'IP', 'User-Agent']);
+    while ($row = $stmt->fetch()) {
+        fputcsv($out, [
+            $row['created_at'] ?? '',
+            $row['username'] ?? '',
+            $row['site_id'] ?? '',
+            $siteMap[(int)($row['site_id'] ?? 0)] ?? '',
+            $row['method'] ?? '',
+            $row['path'] ?? '',
+            $row['action'] ?? '',
+            $row['target_type'] ?? '',
+            $row['target_id'] ?? '',
+            preg_replace('/\s+/', ' ', (string)($row['message'] ?? '')),
+            preg_replace('/\s+/', ' ', (string)($row['summary'] ?? '')),
+            $row['ip_address'] ?? '',
+            $row['user_agent'] ?? '',
+        ]);
+    }
+    fclose($out);
+    exit;
 }
 
 function platform_system_defaults(): array
@@ -8738,6 +8779,10 @@ try {
 
     if ($method === 'GET' && $path === '/operation-logs') {
         ok(list_operation_logs(main_pdo()));
+    }
+
+    if ($method === 'GET' && $path === '/operation-logs/export') {
+        export_operation_logs_csv(main_pdo());
     }
 
     if ($method === 'GET' && $path === '/platform/overview') {

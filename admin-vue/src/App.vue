@@ -2882,7 +2882,10 @@
             <template #header>
               <div class="card-head">
                 <strong>操作日志</strong>
-                <el-button @click="loadOperationLogs">刷新日志</el-button>
+                <div class="head-actions">
+                  <el-button @click="exportOperationLogs">导出当前筛选</el-button>
+                  <el-button @click="loadOperationLogs">刷新日志</el-button>
+                </div>
               </div>
             </template>
             <el-form :inline="true" class="toolbar" @submit.prevent="applyLogFilters">
@@ -6099,15 +6102,27 @@ function changeTaskPageSize(size: number) {
 }
 
 async function loadOperationLogs() {
-  const query = new URLSearchParams()
-  query.set('page', String(logPager.page))
-  query.set('page_size', String(logPager.page_size))
-  if (logFilters.keyword) query.set('keyword', logFilters.keyword)
-  if (logFilters.method) query.set('method', logFilters.method)
-  if (logFilters.site_id) query.set('site_id', logFilters.site_id)
+  const query = operationLogQuery()
   const data = await request(`/api/operation-logs?${query.toString()}`)
   operationLogs.value = data.items || []
   logPager.total = data.pagination?.total || operationLogs.value.length
+}
+
+function operationLogQuery(includePage = true) {
+  const query = new URLSearchParams()
+  if (includePage) {
+    query.set('page', String(logPager.page))
+    query.set('page_size', String(logPager.page_size))
+  }
+  if (logFilters.keyword) query.set('keyword', logFilters.keyword)
+  if (logFilters.method) query.set('method', logFilters.method)
+  if (logFilters.site_id) query.set('site_id', logFilters.site_id)
+  return query
+}
+
+async function exportOperationLogs() {
+  const query = operationLogQuery(false)
+  await downloadCsv(`/api/operation-logs/export${query.toString() ? `?${query.toString()}` : ''}`, `operation-logs-${dateFileStamp()}.csv`)
 }
 
 function applyLogFilters() {
