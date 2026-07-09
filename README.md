@@ -134,6 +134,7 @@ http://127.0.0.1:8000/
 - 站点设置包含 AI 服务配置占位，文章和商品支持 AI 草稿生成入口
 - 新版中台把 AI 内容生产和 AI 接口配置拆成独立菜单；支付通道与宝塔部署也分别在左侧“支付”“部署”中维护
 - 设置页只维护站点基础信息、SEO、导航和页面结构；AI、支付与宝塔部署属于站点服务能力，统一从左侧独立菜单配置
+- AI 菜单新增对话式指令入口，用户可直接输入“给当前站点生成 5 篇行业文章”等自然语言，系统会解析内容类型、数量、站点范围并返回可执行计划；文章/商品指令会自动创建 AI 任务等待确认
 - AI 草稿生成已接入后端 `/api/ai/generate`，配置真实模型后可切换到 OpenAI-compatible 远程调用；未配置时自动使用本地草稿
 - AI 页面搭建支持根据一句话生成首页草案、查看差异预览，并可一键应用、保存和生成静态站
 - AI 页面搭建会先从用户指令中提炼页面主题，避免把“帮我搭一个……”这类操作指令直接写进首页标题或案例标题
@@ -213,6 +214,7 @@ POST             /api/media/upload
 PUT/DELETE       /api/media/{id}
 GET              /api/forms/submissions
 GET/PUT/DELETE   /api/forms/submissions/{id}
+POST             /api/ai/chat
 POST             /api/ai/generate
 POST             /api/ai/page-plan
 POST             /api/ai/batch-articles

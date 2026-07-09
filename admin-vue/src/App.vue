@@ -1195,6 +1195,36 @@
               </el-card>
             </el-col>
             <el-col :span="10">
+              <el-card class="panel ai-chat-card" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>AI 对话指令</strong>
+                    <el-button :disabled="!aiChatMessages.length" @click="clearAiChat">清空对话</el-button>
+                  </div>
+                </template>
+                <div class="ai-chat-list">
+                  <article v-for="item in aiChatMessages" :key="item.local_id" :class="['ai-chat-message', item.role]">
+                    <strong>{{ item.role === 'user' ? '你' : '化简 AI' }}</strong>
+                    <p>{{ item.content }}</p>
+                    <div v-if="item.plan?.length" class="ai-chat-plan">
+                      <span v-for="step in item.plan" :key="step.action || step.title">{{ step.title }}</span>
+                    </div>
+                    <div v-if="item.next_action" class="ai-chat-actions">
+                      <el-button v-if="item.next_action === 'confirm_ai_task'" size="small" type="primary" @click="loadAiTasks">查看任务记录</el-button>
+                      <el-button v-if="item.next_action === 'open_templates'" size="small" @click="setView('templates')">打开模板中心</el-button>
+                      <el-button v-if="item.next_action === 'open_collector'" size="small" @click="setView('collector')">打开采集中心</el-button>
+                      <el-button v-if="item.next_action === 'generate_preview'" size="small" @click="generateAiPreview">生成预览</el-button>
+                    </div>
+                  </article>
+                  <el-empty v-if="!aiChatMessages.length" description="像聊天一样输入：给全部站点生成 5 篇行业文章，或根据当前产品生成 3 个商品详情草稿" />
+                </div>
+                <el-form class="ai-chat-form" @submit.prevent="submitAiChat">
+                  <el-input v-model="aiChatForm.message" type="textarea" :rows="3" placeholder="请输入你的 AI 指令，例如：给当前站点生成 5 篇低空经济 SEO 文章，先存草稿" />
+                  <div class="drawer-actions">
+                    <el-button :loading="aiChatLoading" type="primary" @click="submitAiChat">发送指令</el-button>
+                  </div>
+                </el-form>
+              </el-card>
               <el-card class="panel" shadow="never">
                 <template #header>
                   <div class="card-head">
@@ -2724,6 +2754,8 @@ const siteEditingId = ref<number | string>('')
 const emptyDeploy = () => ({ bt_panel_url: '', site_path: '', mode: 'manual', after_action: '', note: '' })
 const siteForm = reactive<any>({ name: '', deploy_node_id: 0, domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active', deploy: emptyDeploy() })
 const aiForm = reactive<any>({ type: 'article', prompt: '围绕自主品牌商品、行业解决方案和独立站 SEO 关键词生成内容', count: 5, status: 'draft', site_scope: 'current', site_ids: [] })
+const aiChatForm = reactive<any>({ message: '' })
+const aiChatMessages = ref<any[]>([])
 const aiQuickCommands = [
   {
     title: '生成 SEO 文章',
@@ -2775,6 +2807,7 @@ const pagePlan = ref<any>(null)
 const aiLoading = ref(false)
 const aiBatchLoading = ref(false)
 const aiTaskLoading = ref(false)
+const aiChatLoading = ref(false)
 const seoFixing = ref(false)
 const aiCoverLoading = ref('')
 const pagePlanLoading = ref(false)
@@ -4635,6 +4668,60 @@ async function batchCreateAiContent() {
   } finally {
     aiBatchLoading.value = false
   }
+}
+
+async function submitAiChat() {
+  const message = String(aiChatForm.message || '').trim()
+  if (!message) {
+    ElMessage.warning('请先输入 AI 指令')
+    return
+  }
+  syncAiSiteScope()
+  if (!ensureSelectedSiteScope(aiForm.site_scope, aiForm.site_ids, 'AI 对话指令')) return
+  const site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
+  aiChatMessages.value.push({
+    local_id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    role: 'user',
+    content: message
+  })
+  aiChatLoading.value = true
+  try {
+    const data = await request('/api/ai/chat', {
+      method: 'POST',
+      data: {
+        message,
+        count: aiForm.count,
+        site_scope: 'selected',
+        site_ids
+      }
+    })
+    if (data.content_type === 'article' || data.content_type === 'product') {
+      aiForm.type = data.content_type
+      aiForm.count = Number(data.count || aiForm.count || 1)
+      aiForm.prompt = message
+      aiForm.site_scope = inferSiteScope(data.site_ids || site_ids)
+      aiForm.site_ids = data.site_ids?.length ? data.site_ids : site_ids
+    }
+    aiChatMessages.value.push({
+      local_id: `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      role: 'assistant',
+      content: data.message || '已生成执行计划',
+      plan: data.plan || [],
+      next_action: data.next_action || '',
+      task_id: data.task_id || ''
+    })
+    aiChatForm.message = ''
+    if (data.task_id) {
+      await Promise.all([loadAiTasks(), loadTaskStream()])
+    }
+    ElMessage.success(data.task_id ? 'AI 任务已创建' : 'AI 执行计划已生成')
+  } finally {
+    aiChatLoading.value = false
+  }
+}
+
+function clearAiChat() {
+  aiChatMessages.value = []
 }
 
 async function generateAiCover(item: any) {

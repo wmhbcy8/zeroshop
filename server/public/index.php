@@ -6515,6 +6515,144 @@ function create_ai_task(PDO $pdo, array $data): array
     return normalize_ai_task_row(fetch_one($pdo, 'ai_tasks', (int)$pdo->lastInsertId()) ?: []);
 }
 
+function ai_chat_count(string $message, int $fallback = 3): int
+{
+    if (preg_match('/(\d+)\s*(篇|个|条|款|组)?/u', $message, $match)) {
+        return min(20, max(1, (int)$match[1]));
+    }
+    $map = ['一' => 1, '二' => 2, '两' => 2, '三' => 3, '四' => 4, '五' => 5, '六' => 6, '七' => 7, '八' => 8, '九' => 9, '十' => 10];
+    foreach ($map as $word => $count) {
+        if (mb_strpos($message, $word . '篇', 0, 'UTF-8') !== false || mb_strpos($message, $word . '个', 0, 'UTF-8') !== false || mb_strpos($message, $word . '条', 0, 'UTF-8') !== false) {
+            return $count;
+        }
+    }
+    return min(20, max(1, $fallback));
+}
+
+function ai_chat_target(string $message): string
+{
+    $lower = mb_strtolower($message, 'UTF-8');
+    if (str_contains($lower, 'http') || str_contains($message, '克隆') || str_contains($message, '仿站') || str_contains($message, '模板')) {
+        return 'template';
+    }
+    if (str_contains($message, '采集') || str_contains($message, '新闻') || str_contains($message, '资讯')) {
+        return 'collector';
+    }
+    if (str_contains($message, '首页') || str_contains($message, '页面') || str_contains($message, '模块') || str_contains($message, 'Banner') || str_contains($message, '企业介绍')) {
+        return 'page';
+    }
+    if (str_contains($message, '商品') || str_contains($message, '产品') || str_contains($message, 'SKU')) {
+        return 'product';
+    }
+    if (str_contains($message, '图片') || str_contains($message, '封面') || str_contains($message, '配图')) {
+        return 'image';
+    }
+    return 'article';
+}
+
+function record_ai_plan_task(PDO $pdo, string $taskType, string $prompt, array $siteIds, array $result, string $message): array
+{
+    ensure_ai_task_tables($pdo);
+    $time = now();
+    $stmt = $pdo->prepare("INSERT INTO ai_tasks (site_id, task_type, prompt, status, site_ids, result_json, message, success_count, started_at, finished_at, created_at, updated_at)
+        VALUES (:site_id, :task_type, :prompt, 'success', :site_ids, :result_json, :message, 1, :started_at, :finished_at, :created_at, :updated_at)");
+    $stmt->execute([
+        'site_id' => requested_site_id(),
+        'task_type' => $taskType,
+        'prompt' => $prompt,
+        'site_ids' => json_encode(array_values(array_unique(array_map('intval', $siteIds))), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'result_json' => json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'message' => $message,
+        'started_at' => $time,
+        'finished_at' => $time,
+        'created_at' => $time,
+        'updated_at' => $time,
+    ]);
+    return normalize_ai_task_row(fetch_one($pdo, 'ai_tasks', (int)$pdo->lastInsertId()) ?: []);
+}
+
+function create_ai_chat(PDO $pdo, array $data): array
+{
+    require_fields($data, ['message']);
+    $message = trim((string)$data['message']);
+    $target = ai_chat_target($message);
+    $count = ai_chat_count($message, (int)($data['count'] ?? 3));
+    $siteIds = normalize_site_ids($data);
+    $site = site_settings($pdo);
+    $steps = [];
+    $task = null;
+    $contentType = $target;
+    $nextAction = 'review_plan';
+    $response = '已理解你的指令，并整理成可执行计划。';
+
+    if (in_array($target, ['article', 'product'], true)) {
+        $contentType = $target;
+        $task = create_ai_task($pdo, [
+            'type' => $target,
+            'prompt' => $message,
+            'count' => $count,
+            'site_scope' => 'selected',
+            'site_ids' => $siteIds,
+        ]);
+        $steps = [
+            ['action' => 'read_site_context', 'title' => '读取当前站点品牌、SEO 和内容上下文'],
+            ['action' => $target === 'article' ? 'create_article_drafts' : 'create_product_drafts', 'title' => '生成结构化' . ($target === 'article' ? '文章' : '商品') . '草稿', 'count' => $count],
+            ['action' => 'bind_sites', 'title' => '绑定发布范围', 'site_count' => count($siteIds)],
+            ['action' => 'wait_confirmation', 'title' => '等待人工确认后保存草稿或发布'],
+        ];
+        $nextAction = 'confirm_ai_task';
+        $response = '已创建 AI ' . ($target === 'article' ? '文章' : '商品') . '任务，生成结果已进入任务记录，确认后可发布到目标站点。';
+    } elseif ($target === 'page') {
+        $registry = read_config_json('module-registry.json');
+        $plan = local_page_plan($message, $site, $registry);
+        $task = record_ai_plan_task($pdo, 'page_build', $message, $siteIds, $plan, '页面搭建计划已生成，等待应用到模板/首页模块');
+        $steps = [
+            ['action' => 'analyze_page_goal', 'title' => '提炼页面主题和转化目标'],
+            ['action' => 'choose_modules', 'title' => '从模块注册表选择首页模块'],
+            ['action' => 'preview_page_plan', 'title' => '生成页面草案并等待应用'],
+        ];
+        $nextAction = 'open_templates';
+        $response = '已生成页面搭建计划，可到模板/页面搭建区域预览并应用。';
+    } elseif ($target === 'template') {
+        $steps = [
+            ['action' => 'extract_url', 'title' => '识别目标网址'],
+            ['action' => 'create_clone_task', 'title' => '创建目标网站转模板草稿任务'],
+            ['action' => 'review_template_draft', 'title' => '预览并保存为标准主题模板'],
+        ];
+        $nextAction = 'open_templates';
+        $response = '这是模板克隆类指令，请在模板中心粘贴目标网址并生成模板草稿。';
+    } elseif ($target === 'collector') {
+        $steps = [
+            ['action' => 'create_collector_source', 'title' => '配置 RSS 或指定 URL 采集源'],
+            ['action' => 'rewrite_with_ai', 'title' => '采集后用 AI 改写为文章草稿'],
+            ['action' => 'publish_articles', 'title' => '审核后发布到目标站点'],
+        ];
+        $nextAction = 'open_collector';
+        $response = '这是采集类指令，请到采集中心配置 RSS、指定 URL 或粘贴内容改写。';
+    } else {
+        $steps = [
+            ['action' => 'generate_image', 'title' => '根据文章或商品主题生成封面图'],
+            ['action' => 'save_media', 'title' => '写入媒体库'],
+            ['action' => 'apply_cover', 'title' => '选择文章或商品后设置为封面'],
+        ];
+        $nextAction = 'generate_preview';
+        $response = '这是素材生成类指令，可以先生成文章/商品草稿，再为选中的草稿生成封面。';
+    }
+
+    return [
+        'message' => $response,
+        'target' => $target,
+        'content_type' => in_array($contentType, ['article', 'product'], true) ? $contentType : '',
+        'count' => $count,
+        'site_ids' => $siteIds,
+        'task' => $task,
+        'task_id' => $task['id'] ?? null,
+        'requires_confirmation' => $nextAction === 'confirm_ai_task',
+        'next_action' => $nextAction,
+        'plan' => $steps,
+    ];
+}
+
 function confirm_ai_task(PDO $pdo, int $taskId, array $data): array
 {
     ensure_ai_task_tables($pdo);
@@ -8001,6 +8139,10 @@ try {
 
     if ($method === 'POST' && $path === '/ai/tasks') {
         ok(create_ai_task($pdo, body_json()), 'AI 任务已创建');
+    }
+
+    if ($method === 'POST' && $path === '/ai/chat') {
+        ok(create_ai_chat($pdo, body_json()), 'AI 指令已解析');
     }
 
     if ($params = route_param('/ai/tasks/{id}/confirm', $path)) {

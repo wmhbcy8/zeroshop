@@ -892,6 +892,56 @@ body {
   color: var(--hj-muted);
   line-height: 1.5;
 }
+.ai-chat-card {
+  margin-bottom: 16px;
+}
+.ai-chat-list {
+  display: grid;
+  gap: 10px;
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 4px;
+}
+.ai-chat-message {
+  padding: 12px;
+  border: 1px solid var(--hj-line);
+  border-radius: 8px;
+  background: #fff;
+}
+.ai-chat-message.user {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+.ai-chat-message.assistant {
+  border-color: #d1fae5;
+  background: #f0fdf4;
+}
+.ai-chat-message p {
+  margin: 6px 0 0;
+  color: var(--hj-text);
+  line-height: 1.65;
+}
+.ai-chat-plan {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.ai-chat-plan span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .75);
+  color: var(--hj-muted);
+  font-size: 12px;
+}
+.ai-chat-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ai-chat-form {
+  margin-top: 14px;
+}
 .ai-plan-card {
   position: sticky;
   top: 86px;
