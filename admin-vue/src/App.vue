@@ -216,6 +216,40 @@
           <el-card class="panel mt16" shadow="never">
             <template #header>
               <div class="card-head">
+                <strong>平台发布 / 部署任务</strong>
+                <el-button @click="loadPlatformPublishTasks">刷新任务</el-button>
+              </div>
+            </template>
+            <el-table :data="platformPublishTasks" height="320" row-key="id">
+              <el-table-column label="任务" min-width="210">
+                <template #default="{ row }">
+                  <strong>{{ row.task_no }}</strong><br />
+                  <small>{{ row.version_no || row.package_path || '-' }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column label="站点" min-width="190">
+                <template #default="{ row }">
+                  <strong>{{ row.site_name || row.site_key || row.site_id }}</strong><br />
+                  <small>{{ row.site_key || row.site_id }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column prop="action" label="动作" width="120" />
+              <el-table-column label="状态" width="110">
+                <template #default="{ row }"><el-tag :type="deployTaskTag(row.status)">{{ row.status }}</el-tag></template>
+              </el-table-column>
+              <el-table-column prop="deploy_mode" label="模式" width="120" />
+              <el-table-column prop="message" label="说明" min-width="240" />
+              <el-table-column prop="created_at" label="时间" width="170" />
+              <el-table-column label="操作" width="100">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="openPlatformPublishTask(row)">详情</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+          <el-card class="panel mt16" shadow="never">
+            <template #header>
+              <div class="card-head">
                 <strong>域名申请工单</strong>
                 <el-button @click="loadPlatform">刷新</el-button>
               </div>
@@ -243,6 +277,33 @@
               </el-table-column>
             </el-table>
           </el-card>
+          <el-drawer v-model="platformPublishTaskDrawerVisible" size="620px" title="平台发布任务详情">
+            <el-descriptions :column="1" border>
+              <el-descriptions-item label="任务号">{{ platformPublishTaskDetail.task_no || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="站点">{{ platformPublishTaskDetail.site_name || platformPublishTaskDetail.site_key || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="动作">{{ platformPublishTaskDetail.action || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="状态">{{ platformPublishTaskDetail.status || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="部署模式">{{ platformPublishTaskDetail.deploy_mode || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="发布版本">{{ platformPublishTaskDetail.version_no || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="发布包">{{ platformPublishTaskDetail.package_path || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="目标目录">{{ platformPublishTaskDetail.target_path || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="说明">{{ platformPublishTaskDetail.message || platformPublishTaskDetail.summary_json?.message || '-' }}</el-descriptions-item>
+            </el-descriptions>
+            <div v-if="platformPublishTaskDetail.checks?.length" class="deploy-check-list mt16">
+              <el-tag v-for="item in platformPublishTaskDetail.checks" :key="item.label" :type="item.ok ? 'success' : 'warning'" effect="plain">
+                {{ item.label }}：{{ item.value }}
+              </el-tag>
+            </div>
+            <div v-if="platformPublishTaskDetail.steps?.length" class="deploy-step-list mt16">
+              <article v-for="item in platformPublishTaskDetail.steps" :key="item.key">
+                <el-tag :type="deployStepTag(item.status)">{{ item.status }}</el-tag>
+                <div>
+                  <strong>{{ item.title }}</strong>
+                  <small>{{ item.description }}</small>
+                </div>
+              </article>
+            </div>
+          </el-drawer>
           <el-drawer v-model="platformDomainApplicationDrawerVisible" size="560px" title="处理域名申请">
             <el-form :model="platformDomainApplicationForm" label-width="108px">
               <el-alert class="mb16" type="info" show-icon :closable="false" :title="`${platformDomainApplicationForm.domain || '-'} / ${platformDomainApplicationForm.site_name || platformDomainApplicationForm.site_id || '-'}`" />
@@ -2740,6 +2801,7 @@ const centerOverview = ref<any>({})
 const platformOverview = ref<any>({})
 const platformCustomers = ref<any[]>([])
 const platformSites = ref<any[]>([])
+const platformPublishTasks = ref<any[]>([])
 const platformDomainApplications = ref<any[]>([])
 const platformSettings = ref<any>({})
 const deployNodes = ref<any[]>([])
@@ -2762,6 +2824,7 @@ const manualCollectorDrawerVisible = ref(false)
 const domainDrawerVisible = ref(false)
 const domainApplicationDrawerVisible = ref(false)
 const platformDomainApplicationDrawerVisible = ref(false)
+const platformPublishTaskDrawerVisible = ref(false)
 const platformTemplateImportDrawerVisible = ref(false)
 const publishDrawerVisible = ref(false)
 const deployTaskDrawerVisible = ref(false)
@@ -2808,6 +2871,7 @@ const mediaForm = reactive<any>({})
 const paymentConfigText = ref('')
 const publishDetail = reactive<any>({})
 const deployTaskDetail = reactive<any>({})
+const platformPublishTaskDetail = reactive<any>({})
 const batchTaskDetail = reactive<any>({})
 const categoryForm = reactive<any>({})
 const categoryType = ref<'article' | 'product'>('article')
@@ -3247,12 +3311,13 @@ async function loadAll() {
 
 async function loadPlatform() {
   if (!isPlatformAdmin.value) return
-  const [overview, customers, siteData, nodes, providers, domainApps, systemSettings, templateData] = await Promise.all([
+  const [overview, customers, siteData, nodes, providers, publishTasks, domainApps, systemSettings, templateData] = await Promise.all([
     request('/api/platform/overview'),
     request('/api/platform/customers?page_size=100'),
     request('/api/platform/sites'),
     request('/api/platform/deploy-nodes'),
     request('/api/platform/ai-providers'),
+    request('/api/platform/publish-tasks?page_size=20'),
     request('/api/platform/domain-applications?page_size=100'),
     request('/api/platform/system-settings'),
     request('/api/platform/templates')
@@ -3262,6 +3327,7 @@ async function loadPlatform() {
   platformSites.value = siteData.items || []
   deployNodes.value = nodes.items || []
   aiProviders.value = providers.items || []
+  platformPublishTasks.value = publishTasks.items || []
   platformDomainApplications.value = domainApps.items || []
   templates.value = templateData.items || templates.value
   applyPlatformSettings(systemSettings)
@@ -5512,6 +5578,18 @@ async function loadDeployTasks() {
   params.set('page_size', '20')
   const data = await request(`/api/deploy/tasks?${params.toString()}`)
   deployTasks.value = data.items || []
+}
+
+async function loadPlatformPublishTasks() {
+  if (!isPlatformAdmin.value) return
+  const data = await request('/api/platform/publish-tasks?page_size=20')
+  platformPublishTasks.value = data.items || []
+}
+
+async function openPlatformPublishTask(row: any) {
+  const data = await request(`/api/platform/publish-tasks/${row.id}`)
+  Object.assign(platformPublishTaskDetail, data || row)
+  platformPublishTaskDrawerVisible.value = true
 }
 
 async function loadDeployPlan() {
