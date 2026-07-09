@@ -4427,6 +4427,45 @@ function clone_rewrite_html(string $html, string $pageUrl, string $rootUrl, stri
     }, $html);
 }
 
+function clone_html_looks_like_redirect(string $html): bool
+{
+    return (bool)preg_match('/http-equiv=["\']refresh["\']/i', $html)
+        || (bool)preg_match('/window\.location\.(replace|href|assign)\s*\(/i', $html)
+        || (bool)preg_match('/location\.href\s*=/i', $html);
+}
+
+function clone_select_mirror_entry(string $mirrorRoot): string
+{
+    $indexPath = $mirrorRoot . DIRECTORY_SEPARATOR . 'index.html';
+    $indexHtml = is_file($indexPath) ? (string)file_get_contents($indexPath) : '';
+    $indexLength = strlen($indexHtml);
+    $indexIsRedirect = $indexHtml !== '' && clone_html_looks_like_redirect($indexHtml);
+    $best = ['relative' => 'index.html', 'length' => $indexLength, 'redirect' => $indexIsRedirect];
+    $items = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($mirrorRoot, FilesystemIterator::SKIP_DOTS)
+    );
+    foreach ($items as $item) {
+        if (!$item->isFile() || strtolower($item->getExtension()) !== 'html') {
+            continue;
+        }
+        $relative = str_replace('\\', '/', substr($item->getPathname(), strlen($mirrorRoot) + 1));
+        $html = (string)file_get_contents($item->getPathname());
+        $length = strlen($html);
+        $redirect = clone_html_looks_like_redirect($html);
+        if ($relative === 'index.html') {
+            continue;
+        }
+        if (!$redirect && ($best['redirect'] || $length > (int)$best['length'])) {
+            $best = ['relative' => $relative, 'length' => $length, 'redirect' => false];
+        }
+    }
+    if ($indexHtml !== '' && !$indexIsRedirect && $best['relative'] !== 'index.html') {
+        $bestIsMuchLarger = (int)$best['length'] > max(2000, $indexLength * 3);
+        return $bestIsMuchLarger ? (string)$best['relative'] : 'index.html';
+    }
+    return (string)($best['relative'] ?: 'index.html');
+}
+
 function build_static_mirror_template(string $url, string $templateDir): array
 {
     $mirrorRoot = $templateDir . DIRECTORY_SEPARATOR . 'mirror';
@@ -4465,13 +4504,15 @@ function build_static_mirror_template(string $url, string $templateDir): array
     foreach (['pages', 'partials', 'assets'] as $dir) {
         ensure_dir($templateDir . DIRECTORY_SEPARATOR . $dir);
     }
-    $indexHtml = is_file($mirrorRoot . DIRECTORY_SEPARATOR . 'index.html') ? (string)file_get_contents($mirrorRoot . DIRECTORY_SEPARATOR . 'index.html') : $firstHtml;
+    $mirrorEntry = clone_select_mirror_entry($mirrorRoot);
+    $entryPath = $mirrorRoot . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $mirrorEntry);
+    $indexHtml = is_file($entryPath) ? (string)file_get_contents($entryPath) : (is_file($mirrorRoot . DIRECTORY_SEPARATOR . 'index.html') ? (string)file_get_contents($mirrorRoot . DIRECTORY_SEPARATOR . 'index.html') : $firstHtml);
     foreach (['index', 'article', 'product', 'article-list', 'product-list', 'contact', 'page', 'search', 'order', 'cart', '404'] as $page) {
         file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'pages' . DIRECTORY_SEPARATOR . $page . '.html', $indexHtml);
     }
     file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'partials' . DIRECTORY_SEPARATOR . 'header.html', '<!-- static mirror template header is embedded in pages -->');
     file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'partials' . DIRECTORY_SEPARATOR . 'footer.html', '<!-- static mirror template footer is embedded in pages -->');
-    return ['html' => $firstHtml, 'title' => $firstTitle, 'stats' => $stats];
+    return ['html' => $firstHtml, 'title' => $firstTitle, 'stats' => $stats, 'mirror_entry' => 'mirror/' . $mirrorEntry];
 }
 
 function template_clone_module_plan(string $title, string $url, bool $fetched): array
@@ -4488,7 +4529,7 @@ function template_clone_module_plan(string $title, string $url, bool $fetched): 
     ];
 }
 
-function template_clone_editable_regions(array $modulePlan): array
+function template_clone_editable_regions(array $modulePlan, string $sourceFile = 'mirror/index.html'): array
 {
     $selectors = [
         'header' => ['header', '.b-head', '.hj-header', 'nav'],
@@ -4515,7 +4556,7 @@ function template_clone_editable_regions(array $modulePlan): array
             'title' => (string)($module['title'] ?? $key),
             'description' => (string)($module['description'] ?? ''),
             'scope' => in_array($key, ['header', 'footer'], true) ? 'global' : 'home',
-            'source_file' => 'mirror/index.html',
+            'source_file' => $sourceFile,
             'selectors' => $selectors[$key] ?? ['[data-module="' . $key . '"]'],
             'editable_fields' => [
                 'text',
@@ -4531,18 +4572,18 @@ function template_clone_editable_regions(array $modulePlan): array
     return $regions;
 }
 
-function write_template_editable_regions(string $templateDir, array $modulePlan): void
+function write_template_editable_regions(string $templateDir, array $modulePlan, string $sourceFile = 'mirror/index.html'): void
 {
     $payload = [
         'version' => '0.1',
         'mode' => 'static_mirror',
         'description' => 'Editable region hints generated from the cloned static template. The admin can use these selectors to map cloned HTML into Huajian modules.',
-        'regions' => template_clone_editable_regions($modulePlan),
+        'regions' => template_clone_editable_regions($modulePlan, $sourceFile),
     ];
     file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'editable-regions.json', json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 }
 
-function write_template_clone_metadata(string $templateDir, string $key, string $name, string $url, array $modulePlan): void
+function write_template_clone_metadata(string $templateDir, string $key, string $name, string $url, array $modulePlan, string $mirrorEntry = 'mirror/index.html'): void
 {
     $meta = [
         'name' => $name,
@@ -4553,12 +4594,12 @@ function write_template_clone_metadata(string $templateDir, string $key, string 
         'supports' => ['page', 'article', 'product', 'seo', 'form', 'clone-draft', 'static-mirror'],
         'entry' => 'pages/index.html',
         'clone_mode' => 'static_mirror',
-        'mirror_entry' => 'mirror/index.html',
+        'mirror_entry' => $mirrorEntry,
         'source_url' => $url,
         'module_plan' => $modulePlan,
     ];
     file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'template.json', json_encode($meta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-    write_template_editable_regions($templateDir, $modulePlan);
+    write_template_editable_regions($templateDir, $modulePlan, $mirrorEntry);
     $readme = "# {$name}\n\n来源：{$url}\n\n这是化简根据目标 URL 生成的标准化模板草稿，已转换为可编辑的 header、hero、内容模块、商品、文章、表单和 footer 结构。\n";
     file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'CLONE_SOURCE.md', $readme);
 }
@@ -4575,11 +4616,12 @@ function create_template_clone_task(PDO $main, array $data): array
     $mirror = build_static_mirror_template($url, $templateDir);
     $html = (string)($mirror['html'] ?? '');
     $stats = $mirror['stats'] ?? ['pages' => 0, 'assets' => 0, 'failed_pages' => 0, 'failed_assets' => 0];
+    $mirrorEntry = (string)($mirror['mirror_entry'] ?? 'mirror/index.html');
     $sourceTitle = (string)($mirror['title'] ?: $host);
     $name = '静态克隆 - ' . $sourceTitle;
     $message = sprintf('已真实克隆目标网站：%d 个页面、%d 个资源；失败页面 %d、失败资源 %d。', (int)$stats['pages'], (int)$stats['assets'], (int)$stats['failed_pages'], (int)$stats['failed_assets']);
     $modulePlan = template_clone_module_plan($sourceTitle, $url, true);
-    write_template_clone_metadata($templateDir, $key, $name, $url, $modulePlan);
+    write_template_clone_metadata($templateDir, $key, $name, $url, $modulePlan, $mirrorEntry);
     $now = now();
     $taskNo = 'TC' . date('YmdHis') . strtoupper(substr(bin2hex(random_bytes(3)), 0, 6));
     $stmt = $main->prepare("INSERT INTO template_clone_tasks (task_no, target_url, template_key, template_name, source_title, status, module_plan_json, source_excerpt, message, created_at, updated_at)
