@@ -1521,7 +1521,10 @@
                 <template #header>
                   <div class="card-head">
                     <strong>目标网站转模板</strong>
-                    <el-button :loading="templateCloneLoading" type="primary" @click="createTemplateCloneTask">生成草稿</el-button>
+                    <div class="clone-create-actions">
+                      <el-button :loading="templateCloneLoading" @click="createTemplateCloneTask(false)">生成草稿</el-button>
+                      <el-button :loading="templateCloneLoading" type="primary" @click="createTemplateCloneTask(true)">生成并应用</el-button>
+                    </div>
                   </div>
                 </template>
                 <el-form :model="templateCloneForm" label-width="72px">
@@ -3297,7 +3300,18 @@ const view = ref(isSuperAdminApp ? platformHomeView : customerHomeView)
 const templateTab = ref('home')
 
 const loginForm = reactive({ username: 'admin', password: 'admin123456' })
-const site = reactive<any>({ ai: {}, payment: {}, deploy: {}, content: {} })
+const defaultGlobalModules = () => ({
+  search_nav: true,
+  breadcrumbs: true,
+  related: true,
+  floating_inquiry: true,
+  floating_text: '立即咨询',
+  floating_phone: '',
+  floating_email: '',
+  floating_whatsapp: '',
+  floating_wechat: ''
+})
+const site = reactive<any>({ ai: {}, payment: {}, deploy: {}, content: {}, global_modules: defaultGlobalModules() })
 const metrics = ref<any>({})
 const dashboardTodos = ref<any>({ summary: {}, items: [] })
 const totals = reactive({ articles: 0, products: 0, orders: 0, media: 0, forms: 0 })
@@ -4866,17 +4880,7 @@ function normalizeSite(data: any = {}) {
     nav: normalizeNavItems(data.nav),
     footer_nav: normalizeNavItems(data.footer_nav || data.menus?.footer || []),
     menus: data.menus || {},
-    global_modules: {
-      search_nav: data.global_modules?.search_nav ?? true,
-      breadcrumbs: data.global_modules?.breadcrumbs ?? true,
-      related: data.global_modules?.related ?? true,
-      floating_inquiry: data.global_modules?.floating_inquiry ?? true,
-      floating_text: data.global_modules?.floating_text || '立即咨询',
-      floating_phone: data.global_modules?.floating_phone || '',
-      floating_email: data.global_modules?.floating_email || '',
-      floating_whatsapp: data.global_modules?.floating_whatsapp || '',
-      floating_wechat: data.global_modules?.floating_wechat || ''
-    },
+    global_modules: { ...defaultGlobalModules(), ...(data.global_modules || {}) },
     home_modules: Array.isArray(data.home_modules) && data.home_modules.length ? data.home_modules : defaultHomeModules()
   }
   return normalized
@@ -5146,7 +5150,7 @@ async function loadTemplateCloneTasks() {
   templateCloneTasks.value = data.items || []
 }
 
-async function createTemplateCloneTask() {
+async function createTemplateCloneTask(applyNow = false) {
   if (!String(templateCloneForm.target_url || '').trim()) {
     ElMessage.warning('请先输入目标网站 URL')
     return
@@ -5157,7 +5161,9 @@ async function createTemplateCloneTask() {
     ElMessage.success(task.message || '模板草稿已生成')
     templateCloneForm.target_url = ''
     await Promise.all([loadTemplates(), loadTemplateCloneTasks()])
-    site.template_key = task.template_key || site.template_key
+    if (applyNow && task?.id) {
+      await applyTemplateCloneTask(task)
+    }
   } finally {
     templateCloneLoading.value = false
   }

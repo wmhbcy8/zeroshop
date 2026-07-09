@@ -958,6 +958,12 @@ html.dark-admin .toolbar-breadcrumb {
   display: grid;
   gap: 10px;
 }
+.clone-create-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .clone-task-card {
   display: flex;
   gap: 12px;
