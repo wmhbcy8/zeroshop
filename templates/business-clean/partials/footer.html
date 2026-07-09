@@ -2,6 +2,11 @@
     <div>
       <strong>{{ site.name }}</strong>
       <p>{{ site.description }}</p>
+      <nav class="footer-nav">
+        {{ each site.footer_nav }}
+          <a href="{{ item.url }}">{{ item.title }}</a>
+        {{ /each }}
+      </nav>
     </div>
     <div>
       <p>电话：{{ site.phone }}</p>

@@ -360,13 +360,18 @@ function site_for(array $site, string $rootBase): array
         ['title' => '查订单', 'url' => 'order.html'],
         ['title' => '购物车', 'url' => 'cart.html'],
     ];
-    $site['nav'] = array_map(function (array $item) use ($rootBase) {
+    $normalizeMenu = function (array $items) use ($rootBase): array {
+        return array_map(function (array $item) use ($rootBase) {
         $url = $item['url'] ?? '#';
         if (!preg_match('#^https?://#', $url) && !str_starts_with($url, $rootBase)) {
             $url = $rootBase . ltrim($url, '/');
         }
         return ['title' => $item['title'] ?? '', 'url' => $url, 'target_blank' => !empty($item['target_blank'])];
-    }, $nav);
+        }, $items);
+    };
+    $site['nav'] = $normalizeMenu($nav);
+    $footerNav = $site['footer_nav'] ?? ($site['menus']['footer'] ?? $nav);
+    $site['footer_nav'] = $normalizeMenu(is_array($footerNav) ? $footerNav : []);
     $site['hero'] = array_replace([
         'eyebrow' => '化简静态建站 MVP',
         'title' => $site['slogan'] ?? $site['name'] ?? '',

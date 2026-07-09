@@ -1017,6 +1017,92 @@
           </el-card>
         </section>
 
+        <section v-if="view === 'menus'">
+          <el-card class="panel" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>菜单中心</strong>
+                <div class="head-actions">
+                  <el-button @click="loadMenus">刷新菜单</el-button>
+                  <el-button @click="loadStaticPages">刷新页面</el-button>
+                  <el-button type="primary" :loading="generating" @click="saveActiveMenuAndGenerate">保存并生成静态站</el-button>
+                </div>
+              </div>
+            </template>
+            <el-alert
+              class="mb16"
+              type="info"
+              show-icon
+              :closable="false"
+              :title="`当前站点：${currentSite?.name || site.name || '默认站点'}。顶部菜单和底部菜单按站点独立保存；需要统一到所有站点时，可在站点设置中应用公共默认。`"
+            />
+            <el-tabs v-model="activeMenuKey">
+              <el-tab-pane
+                v-for="menu in menus"
+                :key="menu.menu_key"
+                :name="menu.menu_key"
+                :label="menu.title || menu.menu_key"
+              >
+                <div class="content-distribution-bar mb16">
+                  <div>
+                    <strong>{{ menu.title || menu.menu_key }}</strong>
+                    <small>从静态页面中选择链接，或手动输入外部链接。保存后只影响当前站点。</small>
+                  </div>
+                  <el-button @click="addMenuItem(menu.menu_key)">新增菜单项</el-button>
+                  <el-button type="primary" @click="saveMenu(menu.menu_key)">保存这个菜单</el-button>
+                </div>
+                <el-table :data="menu.items" row-key="id" height="520">
+                  <el-table-column label="标题" min-width="180">
+                    <template #default="{ row }"><el-input v-model="row.title" placeholder="例如：首页" /></template>
+                  </el-table-column>
+                  <el-table-column label="链接页面" min-width="320">
+                    <template #default="{ row }">
+                      <el-select
+                        v-model="row.url"
+                        filterable
+                        allow-create
+                        clearable
+                        default-first-option
+                        placeholder="选择静态页面或输入外链"
+                        class="nav-page-select"
+                        @change="onMenuUrlChange(row)"
+                      >
+                        <el-option-group
+                          v-for="group in staticPageGroups"
+                          :key="group.type"
+                          :label="group.label"
+                        >
+                          <el-option
+                            v-for="page in group.items"
+                            :key="`${menu.menu_key}-${group.type}-${page.url}`"
+                            :label="page.title"
+                            :value="page.url"
+                          >
+                            <div class="page-option">
+                              <span>{{ page.title }}</span>
+                              <small>{{ page.url }}</small>
+                            </div>
+                          </el-option>
+                        </el-option-group>
+                      </el-select>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="新窗口" width="100">
+                    <template #default="{ row }"><el-switch v-model="row.target_blank" /></template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="180">
+                    <template #default="{ $index }">
+                      <el-button link type="primary" @click="moveMenuItem(menu.menu_key, $index, -1)">上移</el-button>
+                      <el-button link type="primary" @click="moveMenuItem(menu.menu_key, $index, 1)">下移</el-button>
+                      <el-button link type="danger" @click="removeMenuItem(menu.menu_key, $index)">删除</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </el-tab-pane>
+            </el-tabs>
+          </el-card>
+        </section>
+
         <section v-if="view === 'modules'">
           <div class="metric-grid">
             <article class="module-stat-card">
@@ -2813,6 +2899,8 @@ const templates = ref<any[]>([])
 const templateCloneTasks = ref<any[]>([])
 const moduleRegistry = ref<any>({ scopes: [], modules: [] })
 const staticPages = ref<any[]>([])
+const menus = ref<any[]>([])
+const activeMenuKey = ref('primary')
 const servicePending = ref(0)
 const selectedServiceIds = ref<string[]>([])
 const orderDrawerVisible = ref(false)
@@ -2985,6 +3073,7 @@ const navItems = [
   { key: 'sites', label: '站点', hint: '管理客户名下所有前台站点。', icon: 'Grid' },
   { key: 'domains', label: '域名', hint: '绑定主域名、别名域名并检查 DNS/SSL 状态。', icon: 'Link' },
   { key: 'settings', label: '设置', hint: '维护当前站点基础信息、SEO、导航和全站页面结构。', icon: 'Setting' },
+  { key: 'menus', label: '菜单', hint: '独立维护当前站点的顶部导航和底部导航，可从静态页面列表直接选择。', icon: 'Menu' },
   { key: 'templates', label: '模板', hint: '选择主题模板，启用首页与全站模块。', icon: 'Grid' },
   { key: 'modules', label: '模块', hint: '查看全站、首页和详情页模块规范，作为 AI 搭积木和模板渲染字典。', icon: 'Operation' },
   { key: 'pages', label: '页面', hint: '管理关于我们、服务介绍、专题落地页等普通静态页面。', icon: 'Files' },
@@ -3212,6 +3301,7 @@ function setView(key: string) {
   if (key === 'operations') refreshOperations()
   if (key === 'sites') loadSites()
   if (key === 'domains') Promise.all([loadDomains(), loadDomainApplications()])
+  if (key === 'menus') Promise.all([loadMenus(), loadStaticPages()])
   if (key === 'templates') Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry()])
   if (key === 'modules') loadModuleRegistry()
   if (key === 'pages') loadPages()
@@ -3241,6 +3331,7 @@ function refreshCurrentView() {
     sites: loadSites,
     domains: async () => { await Promise.all([loadDomains(), loadDomainApplications()]) },
     settings: async () => { await Promise.all([loadSettings(), loadStaticPages()]) },
+    menus: async () => { await Promise.all([loadMenus(), loadStaticPages()]) },
     templates: async () => { await Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadModuleRegistry(), loadSettings(), loadStaticPages()]) },
     modules: loadModuleRegistry,
     ai: async () => { await Promise.all([loadAiTasks(), loadSites()]) },
@@ -3956,6 +4047,76 @@ async function loadStaticPages() {
   staticPages.value = data.items || []
 }
 
+async function loadMenus() {
+  const data = await request('/api/menus')
+  menus.value = (data.items || []).map((item: any) => ({
+    ...item,
+    items: normalizeNavItems(item.items || [])
+  }))
+  if (!menus.value.find((item: any) => item.menu_key === activeMenuKey.value)) {
+    activeMenuKey.value = menus.value[0]?.menu_key || 'primary'
+  }
+}
+
+function currentMenu(menuKey = activeMenuKey.value) {
+  let menu = menus.value.find((item: any) => item.menu_key === menuKey)
+  if (!menu) {
+    menu = { menu_key: menuKey, title: menuKey === 'footer' ? '底部导航' : '顶部导航', items: [] }
+    menus.value = [...menus.value, menu]
+  }
+  return menu
+}
+
+function addMenuItem(menuKey = activeMenuKey.value) {
+  const menu = currentMenu(menuKey)
+  menu.items = [...(menu.items || []), { id: `menu-${Date.now()}`, title: '新菜单', url: '', target_blank: false }]
+}
+
+function onMenuUrlChange(row: any) {
+  const page = staticPages.value.find((item: any) => item.url === row.url)
+  if (!page) return
+  const title = String(row.title || '').trim()
+  if (!title || title === '新菜单') {
+    row.title = page.title
+  }
+}
+
+function removeMenuItem(menuKey: string, index: number) {
+  const menu = currentMenu(menuKey)
+  menu.items = (menu.items || []).filter((_: any, itemIndex: number) => itemIndex !== index)
+}
+
+function moveMenuItem(menuKey: string, index: number, direction: number) {
+  const menu = currentMenu(menuKey)
+  const next = index + direction
+  if (!menu.items || next < 0 || next >= menu.items.length) return
+  const items = [...menu.items]
+  const current = items[index]
+  items[index] = items[next]
+  items[next] = current
+  menu.items = items
+}
+
+async function saveMenu(menuKey = activeMenuKey.value) {
+  const menu = currentMenu(menuKey)
+  menu.items = cleanNavItems(menu.items || [])
+  const data = await request(`/api/menus/${menuKey}`, { method: 'PUT', data: { items: menu.items } })
+  menus.value = (data.menus?.items || menus.value).map((item: any) => ({ ...item, items: normalizeNavItems(item.items || []) }))
+  if (data.site) {
+    Object.assign(site, normalizeSite(data.site))
+  } else if (menuKey === 'primary') {
+    site.nav = normalizeNavItems(menu.items)
+  } else if (menuKey === 'footer') {
+    site.footer_nav = normalizeNavItems(menu.items)
+  }
+  ElMessage.success('菜单已保存')
+}
+
+async function saveActiveMenuAndGenerate() {
+  await saveMenu(activeMenuKey.value)
+  await generateSite()
+}
+
 function normalizeSite(data: any = {}) {
   const normalized = {
     ...data,
@@ -3974,6 +4135,8 @@ function normalizeSite(data: any = {}) {
     home_sections: data.home_sections || {},
     home_content: data.home_content || {},
     nav: normalizeNavItems(data.nav),
+    footer_nav: normalizeNavItems(data.footer_nav || data.menus?.footer || []),
+    menus: data.menus || {},
     global_modules: {
       search_nav: data.global_modules?.search_nav ?? true,
       breadcrumbs: data.global_modules?.breadcrumbs ?? true,
