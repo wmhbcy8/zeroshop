@@ -4856,11 +4856,8 @@ function handle_payment_webhook(PDO $pdo, PDO $main): array
     ];
 }
 
-function list_payment_webhook_events(PDO $pdo, ?PDO $main = null): array
+function payment_event_filter_sql(): array
 {
-    $page = max(1, (int)($_GET['page'] ?? 1));
-    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
-    $offset = ($page - 1) * $pageSize;
     $clauses = [];
     $params = [];
     append_site_scope_clause($clauses, $params, 'site_id', 'pay_event_site');
@@ -4875,6 +4872,15 @@ function list_payment_webhook_events(PDO $pdo, ?PDO $main = null): array
         $params['payment_status'] = $status;
     }
     $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
+    return [$whereSql, $params];
+}
+
+function list_payment_webhook_events(PDO $pdo, ?PDO $main = null): array
+{
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $offset = ($page - 1) * $pageSize;
+    [$whereSql, $params] = payment_event_filter_sql();
     $countStmt = $pdo->prepare("SELECT COUNT(*) FROM payment_webhook_events{$whereSql}");
     $countStmt->execute($params);
     $total = (int)$countStmt->fetchColumn();
@@ -4895,11 +4901,8 @@ function list_payment_webhook_events(PDO $pdo, ?PDO $main = null): array
     ];
 }
 
-function list_payment_proofs(PDO $pdo, ?PDO $main = null): array
+function payment_proof_filter_sql(): array
 {
-    $page = max(1, (int)($_GET['page'] ?? 1));
-    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
-    $offset = ($page - 1) * $pageSize;
     $clauses = [];
     $params = [];
     append_site_scope_clause($clauses, $params, 'site_id', 'pay_proof_site');
@@ -4914,6 +4917,15 @@ function list_payment_proofs(PDO $pdo, ?PDO $main = null): array
         $params['status'] = $status;
     }
     $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
+    return [$whereSql, $params];
+}
+
+function list_payment_proofs(PDO $pdo, ?PDO $main = null): array
+{
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $offset = ($page - 1) * $pageSize;
+    [$whereSql, $params] = payment_proof_filter_sql();
     $countStmt = $pdo->prepare("SELECT COUNT(*) FROM payment_proofs{$whereSql}");
     $countStmt->execute($params);
     $total = (int)$countStmt->fetchColumn();
@@ -4928,6 +4940,72 @@ function list_payment_proofs(PDO $pdo, ?PDO $main = null): array
             'total_pages' => (int)ceil($total / $pageSize),
         ],
     ];
+}
+
+function export_payment_events_csv(PDO $pdo, ?PDO $main = null): void
+{
+    [$whereSql, $params] = payment_event_filter_sql();
+    $stmt = $pdo->prepare("SELECT * FROM payment_webhook_events{$whereSql} ORDER BY id DESC LIMIT 5000");
+    $stmt->execute($params);
+
+    header_remove('Content-Type');
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="payment-events-' . date('Ymd-His') . '.csv"');
+    echo "\xEF\xBB\xBF";
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['站点ID', '站点名称', '通道ID', 'Provider', 'Event Key', '订单号', '交易号', '支付状态', '金额', '币种', 'Payload', '接收时间', '处理时间']);
+    foreach (attach_site_names($stmt->fetchAll(), $main) as $row) {
+        fputcsv($out, [
+            $row['site_id'] ?? '',
+            $row['site_name'] ?? '',
+            $row['channel_id'] ?? '',
+            $row['provider'] ?? '',
+            $row['event_key'] ?? '',
+            $row['order_no'] ?? '',
+            $row['transaction_id'] ?? '',
+            $row['payment_status'] ?? '',
+            $row['amount'] ?? '',
+            $row['currency'] ?? '',
+            preg_replace('/\s+/', ' ', (string)($row['payload'] ?? '')),
+            $row['created_at'] ?? '',
+            $row['processed_at'] ?? '',
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
+function export_payment_proofs_csv(PDO $pdo, ?PDO $main = null): void
+{
+    [$whereSql, $params] = payment_proof_filter_sql();
+    $stmt = $pdo->prepare("SELECT * FROM payment_proofs{$whereSql} ORDER BY id DESC LIMIT 5000");
+    $stmt->execute($params);
+
+    header_remove('Content-Type');
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="payment-proofs-' . date('Ymd-His') . '.csv"');
+    echo "\xEF\xBB\xBF";
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['站点ID', '站点名称', '订单号', '手机', '金额', '币种', '流水/截图编号', '客户说明', '审核状态', '管理备注', '处理人', '处理时间', '提交时间']);
+    foreach (attach_site_names($stmt->fetchAll(), $main) as $row) {
+        fputcsv($out, [
+            $row['site_id'] ?? '',
+            $row['site_name'] ?? '',
+            $row['order_no'] ?? '',
+            $row['phone'] ?? '',
+            $row['amount'] ?? '',
+            $row['currency'] ?? '',
+            $row['reference'] ?? '',
+            preg_replace('/\s+/', ' ', (string)($row['note'] ?? '')),
+            $row['status'] ?? '',
+            preg_replace('/\s+/', ' ', (string)($row['admin_note'] ?? '')),
+            $row['handled_by'] ?? '',
+            $row['handled_at'] ?? '',
+            $row['created_at'] ?? '',
+        ]);
+    }
+    fclose($out);
+    exit;
 }
 
 function handle_payment_proof(PDO $pdo, int $id, array $data): array
@@ -9208,8 +9286,16 @@ try {
         ok(list_payment_webhook_events($pdo, main_pdo()));
     }
 
+    if ($method === 'GET' && $path === '/payment/events/export') {
+        export_payment_events_csv($pdo, main_pdo());
+    }
+
     if ($method === 'GET' && $path === '/payment/proofs') {
         ok(list_payment_proofs($pdo, main_pdo()));
+    }
+
+    if ($method === 'GET' && $path === '/payment/proofs/export') {
+        export_payment_proofs_csv($pdo, main_pdo());
     }
 
     if ($method === 'POST' && preg_match('#^/payment/proofs/(\d+)/handle$#', $path, $matches)) {

@@ -2295,7 +2295,10 @@
             <template #header>
               <div class="card-head">
                 <strong>客户付款凭证</strong>
-                <el-button @click="loadPaymentProofs">刷新凭证</el-button>
+                <div class="head-actions">
+                  <el-button @click="exportPaymentProofs">导出当前筛选</el-button>
+                  <el-button @click="loadPaymentProofs">刷新凭证</el-button>
+                </div>
               </div>
             </template>
             <el-alert class="mb16" type="info" show-icon :closable="false" title="前台订单页提交的付款流水号或截图编号会进入这里。审核通过后，订单会标记为已支付并写入订单时间线。" />
@@ -2342,7 +2345,10 @@
             <template #header>
               <div class="card-head">
                 <strong>支付事件</strong>
-                <el-button @click="loadPaymentEvents">刷新事件</el-button>
+                <div class="head-actions">
+                  <el-button @click="exportPaymentEvents">导出当前筛选</el-button>
+                  <el-button @click="loadPaymentEvents">刷新事件</el-button>
+                </div>
               </div>
             </template>
             <el-form :inline="true" class="toolbar" @submit.prevent="applyPaymentEventFilters">
@@ -5584,25 +5590,49 @@ async function loadPaymentChannels() {
 }
 
 async function loadPaymentEvents() {
-  const params = new URLSearchParams()
-  params.set('page', String(paymentEventPager.page))
-  params.set('page_size', String(paymentEventPager.page_size))
-  params.set('site_id', operationSiteScope.value)
-  Object.entries(paymentEventFilters).forEach(([key, value]) => value && params.set(key, value))
+  const params = paymentEventQuery()
   const data = await request(`/api/payment/events?${params.toString()}`)
   paymentEvents.value = data.items || []
   paymentEventPager.total = data.pagination?.total || paymentEvents.value.length
 }
 
-async function loadPaymentProofs() {
+function paymentEventQuery(includePage = true) {
   const params = new URLSearchParams()
-  params.set('page', String(paymentProofPager.page))
-  params.set('page_size', String(paymentProofPager.page_size))
+  if (includePage) {
+    params.set('page', String(paymentEventPager.page))
+    params.set('page_size', String(paymentEventPager.page_size))
+  }
   params.set('site_id', operationSiteScope.value)
-  Object.entries(paymentProofFilters).forEach(([key, value]) => value && params.set(key, value))
+  Object.entries(paymentEventFilters).forEach(([key, value]) => value && params.set(key, value))
+  return params
+}
+
+async function exportPaymentEvents() {
+  const params = paymentEventQuery(false)
+  await downloadCsv(`/api/payment/events/export?${params.toString()}`, `payment-events-${dateFileStamp()}.csv`)
+}
+
+async function loadPaymentProofs() {
+  const params = paymentProofQuery()
   const data = await request(`/api/payment/proofs?${params.toString()}`)
   paymentProofs.value = data.items || []
   paymentProofPager.total = data.pagination?.total || paymentProofs.value.length
+}
+
+function paymentProofQuery(includePage = true) {
+  const params = new URLSearchParams()
+  if (includePage) {
+    params.set('page', String(paymentProofPager.page))
+    params.set('page_size', String(paymentProofPager.page_size))
+  }
+  params.set('site_id', operationSiteScope.value)
+  Object.entries(paymentProofFilters).forEach(([key, value]) => value && params.set(key, value))
+  return params
+}
+
+async function exportPaymentProofs() {
+  const params = paymentProofQuery(false)
+  await downloadCsv(`/api/payment/proofs/export?${params.toString()}`, `payment-proofs-${dateFileStamp()}.csv`)
 }
 
 function applyPaymentProofFilters() {
