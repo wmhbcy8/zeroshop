@@ -217,10 +217,16 @@ GET              /api/forms/submissions
 GET/PUT/DELETE   /api/forms/submissions/{id}
 POST             /api/ai/chat
 POST             /api/ai/generate
+POST             /api/ai/articles/generate
+POST             /api/ai/products/describe
 POST             /api/ai/page-plan
+POST             /api/ai/page/fill
 POST             /api/ai/batch-articles
 POST             /api/ai/batch-products
 POST             /api/ai/generate-image
+POST             /api/ai/images/generate
+POST             /api/ai/template/clone
+GET              /api/ai/template/clone/{task_id}
 POST             /api/site/generate
 POST             /api/site/deploy-test
 GET              /api/site/publish-versions

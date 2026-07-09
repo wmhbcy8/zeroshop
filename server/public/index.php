@@ -7998,6 +7998,23 @@ try {
         ok(create_template_clone_task(main_pdo(), body_json()), '模板草稿已生成');
     }
 
+    if ($method === 'POST' && $path === '/ai/template/clone') {
+        $data = body_json();
+        if (empty($data['target_url']) && !empty($data['url'])) {
+            $data['target_url'] = $data['url'];
+        }
+        ok(create_template_clone_task(main_pdo(), $data), '模板草稿已生成');
+    }
+
+    if ($params = route_param('/ai/template/clone/{id}', $path)) {
+        if ($method === 'GET') {
+            $main = main_pdo();
+            ensure_center_tables($main);
+            $task = fetch_one($main, 'template_clone_tasks', (int)$params['id']);
+            $task ? ok(normalize_template_clone_task($task)) : fail('模板克隆任务不存在', 'NOT_FOUND', 404);
+        }
+    }
+
     if ($params = route_param('/template-clone/tasks/{id}/apply', $path)) {
         if ($method === 'POST') {
             ok(apply_template_clone_task(main_pdo(), $pdo, (int)$params['id']), '模板草稿已应用到当前站点');
@@ -8224,12 +8241,68 @@ try {
         ok(['source' => 'local', 'draft' => $fallback], '生成成功');
     }
 
+    if ($method === 'POST' && $path === '/ai/articles/generate') {
+        $data = body_json();
+        $topic = trim((string)($data['topic'] ?? $data['prompt'] ?? ''));
+        if ($topic === '') {
+            fail('请填写文章生成主题', 'VALIDATION_ERROR', 422);
+        }
+        $keywords = $data['keywords'] ?? [];
+        if (is_array($keywords) && $keywords) {
+            $topic .= '；关键词：' . implode('、', array_map('strval', $keywords));
+        }
+        $publishMode = (string)($data['publish_mode'] ?? $data['status'] ?? 'draft');
+        $task = create_ai_task($pdo, [
+            'type' => 'article',
+            'prompt' => $topic,
+            'count' => min(20, max(1, (int)($data['count'] ?? 5))),
+            'site_scope' => $data['site_scope'] ?? 'current',
+            'site_ids' => $data['site_ids'] ?? [requested_site_id()],
+            'status' => in_array($publishMode, ['draft', 'published'], true) ? $publishMode : 'draft',
+        ]);
+        ok([
+            'task_id' => $task['id'] ?? null,
+            'task' => $task,
+            'plan' => [
+                ['action' => 'read_site_context', 'title' => '读取站点品牌、商品和 SEO 上下文'],
+                ['action' => 'create_article_drafts', 'title' => '生成文章草稿', 'count' => (int)($task['success_count'] ?? 0)],
+                ['action' => 'confirm_ai_task', 'title' => '确认后保存草稿或发布静态页'],
+            ],
+            'requires_confirmation' => true,
+        ], 'AI 文章任务已创建');
+    }
+
+    if ($method === 'POST' && $path === '/ai/products/describe') {
+        $data = body_json();
+        $prompt = trim((string)($data['prompt'] ?? $data['topic'] ?? $data['title'] ?? ''));
+        if ($prompt === '') {
+            fail('请填写商品描述生成要求', 'VALIDATION_ERROR', 422);
+        }
+        consume_ai_quota(main_pdo(), $user, 1);
+        $site = site_settings($pdo);
+        $fallback = local_ai_draft('product', $prompt, $site);
+        $remote = remote_ai_draft('product', $prompt, $site);
+        ok([
+            'source' => $remote ? 'remote' : 'local',
+            'draft' => $remote ? array_replace($fallback, $remote) : $fallback,
+            'requires_confirmation' => true,
+        ], '商品描述已生成');
+    }
+
     if ($method === 'POST' && $path === '/ai/page-plan') {
         $data = body_json();
         require_fields($data, ['prompt']);
         $site = site_settings($pdo);
         $registry = read_config_json('module-registry.json');
         ok(local_page_plan((string)$data['prompt'], $site, $registry), '生成成功');
+    }
+
+    if ($method === 'POST' && $path === '/ai/page/fill') {
+        $data = body_json();
+        require_fields($data, ['prompt']);
+        $site = site_settings($pdo);
+        $registry = read_config_json('module-registry.json');
+        ok(local_page_plan((string)$data['prompt'], $site, $registry), '页面填充计划已生成');
     }
 
     if ($method === 'POST' && $path === '/ai/batch-articles') {
@@ -8304,6 +8377,17 @@ try {
         $title = trim((string)($data['title'] ?? ''));
         $media = generate_cover_svg($pdo, $type, $title, $prompt);
         ok(['media' => $media, 'path' => $media['file_path'] ?? ''], '封面生成成功');
+    }
+
+    if ($method === 'POST' && $path === '/ai/images/generate') {
+        $data = body_json();
+        require_fields($data, ['prompt']);
+        consume_ai_quota(main_pdo(), $user, 1);
+        $type = in_array(($data['type'] ?? 'article'), ['article', 'product'], true) ? $data['type'] : 'article';
+        $prompt = trim((string)$data['prompt']);
+        $title = trim((string)($data['title'] ?? $data['target'] ?? ''));
+        $media = generate_cover_svg($pdo, $type, $title, $prompt);
+        ok(['media' => $media, 'path' => $media['file_path'] ?? ''], '图片生成成功');
     }
 
     if ($method === 'GET' && $path === '/categories') {
