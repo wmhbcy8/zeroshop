@@ -288,6 +288,88 @@ function template_registry(): array
     return ['items' => $items];
 }
 
+function template_item(string $key): array
+{
+    $key = trim($key);
+    foreach (template_registry()['items'] ?? [] as $item) {
+        if ((string)($item['key'] ?? '') === $key) {
+            return $item;
+        }
+    }
+    fail('模板不存在', 'NOT_FOUND', 404);
+}
+
+function activate_site_template(PDO $main, PDO $sitePdo, string $key): array
+{
+    $template = template_item($key);
+    $siteId = requested_site_id();
+    $settings = site_settings($sitePdo, $siteId);
+    $settings['template_key'] = (string)$template['key'];
+    $settings = save_site_settings($sitePdo, $settings, $siteId);
+    ensure_center_tables($main);
+    $main->prepare('UPDATE sites SET template_key = :template_key, updated_at = :updated_at WHERE id = :id')
+        ->execute([
+            'id' => $siteId,
+            'template_key' => (string)$template['key'],
+            'updated_at' => now(),
+        ]);
+    return [
+        'template' => $template,
+        'template_key' => (string)$template['key'],
+        'site' => sanitize_site_settings_for_response($settings),
+        'preview_url' => template_preview_url($siteId, (string)$template['key']),
+    ];
+}
+
+function template_preview_url(int $siteId, string $templateKey): string
+{
+    $siteKey = 'site_' . $siteId;
+    try {
+        $main = main_pdo();
+        ensure_center_tables($main);
+        $site = fetch_one($main, 'sites', $siteId);
+        if ($site && !empty($site['site_key'])) {
+            $siteKey = (string)$site['site_key'];
+        }
+    } catch (Throwable $error) {
+        $siteKey = 'site_' . $siteId;
+    }
+    return '/template-previews/' . rawurlencode($siteKey) . '/' . rawurlencode($templateKey) . '/';
+}
+
+function template_preview_response(string $key): array
+{
+    $template = template_item($key);
+    $siteId = requested_site_id();
+    return [
+        'template' => $template,
+        'template_key' => (string)$template['key'],
+        'site_id' => $siteId,
+        'preview_url' => template_preview_url($siteId, (string)$template['key']),
+    ];
+}
+
+function install_site_template(PDO $main, PDO $sitePdo, array $data): array
+{
+    $key = trim((string)($data['template_key'] ?? $data['key'] ?? ''));
+    if ($key === '') {
+        fail('请选择模板', 'VALIDATION_ERROR', 422);
+    }
+    $template = template_item($key);
+    $result = [
+        'template' => $template,
+        'template_key' => (string)$template['key'],
+        'installed' => true,
+        'activated' => false,
+        'message' => '本地模板已在模板注册表中，可直接启用',
+    ];
+    if (!empty($data['activate'])) {
+        $activated = activate_site_template($main, $sitePdo, (string)$template['key']);
+        $result = array_replace($result, $activated, ['activated' => true]);
+    }
+    return $result;
+}
+
 function ensure_dir(string $dir): void
 {
     if (!is_dir($dir)) {
@@ -8190,6 +8272,10 @@ try {
         ok(['items' => $stmt->fetchAll()]);
     }
 
+    if ($method === 'GET' && $path === '/platform/templates') {
+        ok(template_registry());
+    }
+
     if ($method === 'GET' && $path === '/platform/deploy-tasks') {
         ok(list_deploy_tasks(main_pdo()));
     }
@@ -8385,8 +8471,30 @@ try {
         }
     }
 
-    if ($method === 'GET' && $path === '/site/templates') {
+    if ($method === 'GET' && ($path === '/site/templates' || $path === '/templates')) {
         ok(template_registry());
+    }
+
+    if ($method === 'POST' && $path === '/templates/install') {
+        ok(install_site_template(main_pdo(), $pdo, body_json()), '模板已安装');
+    }
+
+    if ($params = route_param('/templates/{key}/preview', $path)) {
+        if ($method === 'GET') {
+            ok(template_preview_response((string)$params['key']));
+        }
+    }
+
+    if ($params = route_param('/templates/{key}/activate', $path)) {
+        if ($method === 'POST') {
+            ok(activate_site_template(main_pdo(), $pdo, (string)$params['key']), '模板已启用');
+        }
+    }
+
+    if ($params = route_param('/templates/{key}', $path)) {
+        if ($method === 'GET') {
+            ok(template_item((string)$params['key']));
+        }
     }
 
     if ($method === 'GET' && $path === '/template-clone/tasks') {

@@ -204,6 +204,12 @@ PUT              /api/menus/{menu_key}
 GET              /api/site/modules
 GET              /api/modules
 GET              /api/modules/{key}
+GET              /api/templates
+POST             /api/templates/install
+GET              /api/templates/{key}
+GET              /api/templates/{key}/preview
+POST             /api/templates/{key}/activate
+GET              /api/platform/templates
 GET              /api/dashboard/metrics
 GET/POST         /api/articles
 GET/PUT/DELETE   /api/articles/{id}
