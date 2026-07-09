@@ -4443,6 +4443,7 @@ function ensure_pages_table(PDO $pdo): void
         cover VARCHAR(255),
         summary TEXT,
         content MEDIUMTEXT,
+        module_config MEDIUMTEXT,
         seo_title VARCHAR(180),
         seo_keywords VARCHAR(255),
         seo_description TEXT,
@@ -4453,6 +4454,7 @@ function ensure_pages_table(PDO $pdo): void
         INDEX idx_status (status),
         INDEX idx_published_at (published_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    ensure_column($pdo, 'pages', 'module_config', 'MEDIUMTEXT NULL AFTER content');
 }
 
 function reserved_page_slugs(): array
@@ -4475,6 +4477,172 @@ function assert_page_slug_available(PDO $pdo, string $slug, ?int $ignoreId = nul
     if ($id > 0 && (!$ignoreId || $id !== $ignoreId)) {
         fail('页面 slug 已存在', 'VALIDATION_ERROR', 422);
     }
+}
+
+function normalize_page_item(array $item): array
+{
+    if (array_key_exists('module_config', $item)) {
+        $decoded = [];
+        if (is_string($item['module_config']) && trim($item['module_config']) !== '') {
+            try {
+                $decoded = json_decode($item['module_config'], true, 512, JSON_THROW_ON_ERROR);
+            } catch (Throwable $error) {
+                $decoded = [];
+            }
+        } elseif (is_array($item['module_config'])) {
+            $decoded = $item['module_config'];
+        }
+        $item['module_config'] = is_array($decoded) ? $decoded : [];
+    }
+    return $item;
+}
+
+function normalize_page_items(array $items): array
+{
+    return array_map(fn($item) => normalize_page_item($item), $items);
+}
+
+function page_module_registry_keys(): array
+{
+    $registry = read_config_json('module-registry.json');
+    $keys = [];
+    foreach (($registry['modules'] ?? []) as $module) {
+        $key = (string)($module['key'] ?? '');
+        if ($key !== '') {
+            $keys[$key] = $module;
+        }
+    }
+    return $keys;
+}
+
+function sanitize_page_modules(array $data): array
+{
+    $modules = $data['modules'] ?? $data['module_config'] ?? $data;
+    if (isset($modules['modules']) && is_array($modules['modules'])) {
+        $modules = $modules['modules'];
+    }
+    if (!is_array($modules)) {
+        fail('页面模块必须是数组', 'VALIDATION_ERROR', 422);
+    }
+    $registry = page_module_registry_keys();
+    $items = [];
+    foreach ($modules as $index => $module) {
+        if (!is_array($module)) {
+            continue;
+        }
+        $key = trim((string)($module['key'] ?? $module['module'] ?? ''));
+        if ($key === '') {
+            continue;
+        }
+        $settings = $module['settings'] ?? $module['content'] ?? [];
+        if (!is_array($settings)) {
+            $settings = ['body' => (string)$settings];
+        }
+        $items[] = [
+            'id' => (string)($module['id'] ?? ('module-' . ($index + 1))),
+            'key' => $key,
+            'title' => (string)($module['title'] ?? ($registry[$key]['title'] ?? $key)),
+            'enabled' => ($module['enabled'] ?? true) ? true : false,
+            'sort_order' => (int)($module['sort_order'] ?? (($index + 1) * 10)),
+            'settings' => $settings,
+        ];
+    }
+    usort($items, fn($a, $b) => (int)$a['sort_order'] <=> (int)$b['sort_order']);
+    return $items;
+}
+
+function page_module_text(array $settings, array $keys): string
+{
+    foreach ($keys as $key) {
+        $value = $settings[$key] ?? '';
+        if (is_string($value) && trim($value) !== '') {
+            return trim($value);
+        }
+    }
+    return '';
+}
+
+function render_page_modules_html(array $modules): string
+{
+    $html = [];
+    foreach ($modules as $module) {
+        if (empty($module['enabled'])) {
+            continue;
+        }
+        $key = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)$module['key']);
+        $settings = is_array($module['settings'] ?? null) ? $module['settings'] : [];
+        $title = page_module_text($settings, ['title', 'heading']) ?: (string)($module['title'] ?? $key);
+        $subtitle = page_module_text($settings, ['subtitle', 'summary', 'description']);
+        $body = page_module_text($settings, ['body', 'content', 'text']);
+        $html[] = '<section class="page-module page-module-' . htmlspecialchars($key, ENT_QUOTES, 'UTF-8') . '">';
+        $html[] = '<div class="section-head"><h2>' . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '</h2>';
+        if ($subtitle !== '') {
+            $html[] = '<p>' . htmlspecialchars($subtitle, ENT_QUOTES, 'UTF-8') . '</p>';
+        }
+        $html[] = '</div>';
+        if ($body !== '') {
+            $html[] = '<div class="module-body">' . nl2br(htmlspecialchars($body, ENT_QUOTES, 'UTF-8')) . '</div>';
+        }
+        $items = $settings['items'] ?? $settings['cards'] ?? $settings['list'] ?? [];
+        if (is_array($items) && $items) {
+            $html[] = '<div class="module-card-grid">';
+            foreach ($items as $item) {
+                if (is_string($item)) {
+                    $html[] = '<article><strong>' . htmlspecialchars($item, ENT_QUOTES, 'UTF-8') . '</strong></article>';
+                    continue;
+                }
+                if (!is_array($item)) {
+                    continue;
+                }
+                $itemTitle = (string)($item['title'] ?? $item['name'] ?? '');
+                $itemDesc = (string)($item['description'] ?? $item['summary'] ?? $item['text'] ?? '');
+                $html[] = '<article>';
+                if ($itemTitle !== '') {
+                    $html[] = '<strong>' . htmlspecialchars($itemTitle, ENT_QUOTES, 'UTF-8') . '</strong>';
+                }
+                if ($itemDesc !== '') {
+                    $html[] = '<p>' . htmlspecialchars($itemDesc, ENT_QUOTES, 'UTF-8') . '</p>';
+                }
+                $html[] = '</article>';
+            }
+            $html[] = '</div>';
+        }
+        $html[] = '</section>';
+    }
+    return implode(PHP_EOL, $html);
+}
+
+function preview_page_modules(array $data): array
+{
+    $modules = sanitize_page_modules($data);
+    $html = render_page_modules_html($modules);
+    return [
+        'modules' => $modules,
+        'html' => $html,
+        'content' => $html,
+        'count' => count($modules),
+    ];
+}
+
+function save_page_modules(PDO $pdo, int $id, array $data): array
+{
+    ensure_pages_table($pdo);
+    $item = fetch_one($pdo, 'pages', $id);
+    if (!$item) {
+        fail('页面不存在', 'NOT_FOUND', 404);
+    }
+    $preview = preview_page_modules($data);
+    $stmt = $pdo->prepare('UPDATE pages SET module_config = :module_config, content = :content, updated_at = :updated_at WHERE id = :id');
+    $stmt->execute([
+        'id' => $id,
+        'module_config' => json_encode($preview['modules'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'content' => $preview['content'],
+        'updated_at' => now(),
+    ]);
+    return normalize_page_item(fetch_one($pdo, 'pages', $id)) + [
+        'preview_html' => $preview['html'],
+        'module_count' => $preview['count'],
+    ];
 }
 
 function seed_content_distribution(PDO $pdo, string $type, string $table): void
@@ -5996,8 +6164,15 @@ function insert_page(PDO $pdo, array $data): int
     ensure_pages_table($pdo);
     require_fields($data, ['title', 'slug']);
     assert_page_slug_available($pdo, (string)$data['slug']);
-    $stmt = $pdo->prepare("INSERT INTO pages (title, slug, cover, summary, content, seo_title, seo_keywords, seo_description, status, published_at, created_at, updated_at)
-        VALUES (:title, :slug, :cover, :summary, :content, :seo_title, :seo_keywords, :seo_description, :status, :published_at, :created_at, :updated_at)");
+    $moduleConfig = [];
+    if (isset($data['modules']) || isset($data['module_config'])) {
+        $moduleConfig = sanitize_page_modules($data);
+        if (trim((string)($data['content'] ?? '')) === '') {
+            $data['content'] = render_page_modules_html($moduleConfig);
+        }
+    }
+    $stmt = $pdo->prepare("INSERT INTO pages (title, slug, cover, summary, content, module_config, seo_title, seo_keywords, seo_description, status, published_at, created_at, updated_at)
+        VALUES (:title, :slug, :cover, :summary, :content, :module_config, :seo_title, :seo_keywords, :seo_description, :status, :published_at, :created_at, :updated_at)");
     $time = now();
     $stmt->execute([
         'title' => $data['title'],
@@ -6005,6 +6180,7 @@ function insert_page(PDO $pdo, array $data): int
         'cover' => $data['cover'] ?? '',
         'summary' => $data['summary'] ?? '',
         'content' => $data['content'] ?? '',
+        'module_config' => $moduleConfig ? json_encode($moduleConfig, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
         'seo_title' => $data['seo_title'] ?? $data['title'],
         'seo_keywords' => $data['seo_keywords'] ?? '',
         'seo_description' => $data['seo_description'] ?? ($data['summary'] ?? ''),
@@ -6013,9 +6189,7 @@ function insert_page(PDO $pdo, array $data): int
         'created_at' => $time,
         'updated_at' => $time,
     ]);
-    $id = (int)$pdo->lastInsertId();
-    sync_article_tags($pdo, $id, $data['tags'] ?? $data['tag_names'] ?? '');
-    return $id;
+    return (int)$pdo->lastInsertId();
 }
 
 function publish_content_item(PDO $pdo, string $type, int $id, array $data = []): array
@@ -8646,6 +8820,7 @@ try {
         $where = $distributionWhere ? [$distributionWhere] : [];
         $result = paginate($pdo, 'pages', $where, 'id DESC', 'title', $distributionParams);
         $result['items'] = attach_distribution($pdo, 'page', $result['items']);
+        $result['items'] = normalize_page_items($result['items']);
         ok($result);
     }
 
@@ -8663,13 +8838,28 @@ try {
         }
     }
 
+    if ($params = route_param('/pages/{id}/modules/preview', $path)) {
+        if ($method === 'POST') {
+            ensure_pages_table($pdo);
+            $item = fetch_one($pdo, 'pages', (int)$params['id']);
+            $item ? ok(preview_page_modules(body_json()), '页面模块预览已生成') : fail('页面不存在', 'NOT_FOUND', 404);
+        }
+    }
+
+    if ($params = route_param('/pages/{id}/modules', $path)) {
+        if ($method === 'PUT') {
+            $item = save_page_modules($pdo, (int)$params['id'], body_json());
+            ok($item, '页面模块已保存');
+        }
+    }
+
     if ($params = route_param('/pages/{id}', $path)) {
         ensure_pages_table($pdo);
         $id = (int)$params['id'];
         if ($method === 'GET') {
             $item = fetch_one($pdo, 'pages', $id);
             if ($item) {
-                $item = attach_distribution($pdo, 'page', [$item])[0];
+                $item = normalize_page_item(attach_distribution($pdo, 'page', [$item])[0]);
             }
             $item ? ok($item) : fail('页面不存在', 'NOT_FOUND', 404);
         }
@@ -8677,7 +8867,20 @@ try {
             $data = body_json();
             require_fields($data, ['title', 'slug']);
             assert_page_slug_available($pdo, (string)$data['slug'], $id);
-            $stmt = $pdo->prepare("UPDATE pages SET title=:title, slug=:slug, cover=:cover, summary=:summary, content=:content, seo_title=:seo_title, seo_keywords=:seo_keywords, seo_description=:seo_description, status=:status, published_at=:published_at, updated_at=:updated_at WHERE id=:id");
+            $currentPage = fetch_one($pdo, 'pages', $id);
+            if (!$currentPage) {
+                fail('页面不存在', 'NOT_FOUND', 404);
+            }
+            $moduleConfig = [];
+            $moduleConfigJson = $currentPage['module_config'] ?? null;
+            if (isset($data['modules']) || isset($data['module_config'])) {
+                $moduleConfig = sanitize_page_modules($data);
+                $moduleConfigJson = json_encode($moduleConfig, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                if (trim((string)($data['content'] ?? '')) === '') {
+                    $data['content'] = render_page_modules_html($moduleConfig);
+                }
+            }
+            $stmt = $pdo->prepare("UPDATE pages SET title=:title, slug=:slug, cover=:cover, summary=:summary, content=:content, module_config=:module_config, seo_title=:seo_title, seo_keywords=:seo_keywords, seo_description=:seo_description, status=:status, published_at=:published_at, updated_at=:updated_at WHERE id=:id");
             $stmt->execute([
                 'id' => $id,
                 'title' => $data['title'],
@@ -8685,6 +8888,7 @@ try {
                 'cover' => $data['cover'] ?? '',
                 'summary' => $data['summary'] ?? '',
                 'content' => $data['content'] ?? '',
+                'module_config' => $moduleConfigJson,
                 'seo_title' => $data['seo_title'] ?? $data['title'],
                 'seo_keywords' => $data['seo_keywords'] ?? '',
                 'seo_description' => $data['seo_description'] ?? ($data['summary'] ?? ''),
@@ -8693,7 +8897,7 @@ try {
                 'updated_at' => now(),
             ]);
             sync_content_distribution($pdo, 'page', $id, normalize_site_ids($data));
-            $item = attach_distribution($pdo, 'page', [fetch_one($pdo, 'pages', $id)])[0];
+            $item = normalize_page_item(attach_distribution($pdo, 'page', [fetch_one($pdo, 'pages', $id)])[0]);
             ok($item, '保存成功');
         }
         if ($method === 'DELETE') {

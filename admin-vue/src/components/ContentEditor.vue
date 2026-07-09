@@ -158,7 +158,21 @@
           <img v-if="form.cover" class="cover-preview" :src="form.cover.startsWith('/') ? form.cover : '/' + form.cover" />
         </el-form-item>
         <el-form-item label="摘要"><el-input v-model="form.summary" type="textarea" :rows="3" /></el-form-item>
+        <el-form-item v-if="type === 'page'" label="页面模块">
+          <div class="module-json-field">
+            <el-input v-model="moduleText" type="textarea" :rows="7" placeholder='[{"key":"about","title":"品牌介绍","settings":{"title":"品牌介绍","body":"页面内容"}}]' />
+            <div class="module-json-actions">
+              <el-button @click="fillModuleSample">填入示例</el-button>
+              <el-button :disabled="!form.id" @click="previewModules">预览模块</el-button>
+              <el-button type="primary" :disabled="!form.id" @click="saveModules">保存模块</el-button>
+            </div>
+            <small>模块保存后会同步生成页面正文，前台静态页直接显示模块化内容。</small>
+          </div>
+        </el-form-item>
         <el-form-item :label="bodyLabel"><el-input v-model="form[bodyField]" type="textarea" :rows="7" /></el-form-item>
+        <el-form-item v-if="type === 'page' && modulePreviewHtml" label="模块预览">
+          <div class="module-preview-box" v-html="modulePreviewHtml"></div>
+        </el-form-item>
         <el-alert type="info" show-icon :closable="false" class="mb16" :title="`保存后前台可见范围：${siteNames(form)}`" />
         <el-row v-if="type === 'product'" :gutter="12">
           <el-col :span="12"><el-form-item label="价格"><el-input-number v-model="form.price" :min="0" /></el-form-item></el-col>
@@ -206,9 +220,11 @@ const props = defineProps<{
   listSiteScope?: string
 }>()
 
-const emit = defineEmits(['new', 'edit', 'save', 'delete', 'ai', 'page-change', 'bulk-distribute', 'bulk-publish', 'publish-status', 'scope-change'])
+const emit = defineEmits(['new', 'edit', 'save', 'delete', 'ai', 'page-change', 'bulk-distribute', 'bulk-publish', 'publish-status', 'scope-change', 'preview-modules', 'save-modules'])
 
 const prompt = ref('')
+const moduleText = ref('')
+const modulePreviewHtml = ref('')
 const drawerVisible = ref(false)
 const mediaDrawerVisible = ref(false)
 const selectedRows = ref<any[]>([])
@@ -221,16 +237,21 @@ const currentSiteName = computed(() => (props.sites || []).find((site: any) => S
 
 function openNew() {
   emit('new')
+  syncModuleText()
+  modulePreviewHtml.value = ''
   drawerVisible.value = true
 }
 
 function openEdit(row: any) {
   emit('edit', row)
+  setTimeout(() => syncModuleText())
+  modulePreviewHtml.value = ''
   drawerVisible.value = true
 }
 
 function saveForm() {
   syncScope()
+  if (!syncModuleConfigToForm()) return
   emit('save')
 }
 
@@ -292,6 +313,65 @@ function applyBulkPublish(action: 'publish' | 'draft') {
     site_scope: bulkForm.value.site_scope,
     site_ids: bulkForm.value.site_ids
   })
+}
+
+function syncModuleText() {
+  if (props.type !== 'page') return
+  const modules = Array.isArray(props.form.module_config) ? props.form.module_config : []
+  moduleText.value = modules.length ? JSON.stringify(modules, null, 2) : ''
+}
+
+function parseModuleText() {
+  if (props.type !== 'page') return []
+  const text = moduleText.value.trim()
+  if (!text) return []
+  try {
+    const parsed = JSON.parse(text)
+    return Array.isArray(parsed) ? parsed : (Array.isArray(parsed.modules) ? parsed.modules : [])
+  } catch {
+    ElMessage.error('页面模块必须是 JSON 数组')
+    return null
+  }
+}
+
+function syncModuleConfigToForm() {
+  if (props.type !== 'page' || !moduleText.value.trim()) return true
+  const modules = parseModuleText()
+  if (modules === null) return false
+  props.form.module_config = modules
+  return true
+}
+
+function fillModuleSample() {
+  moduleText.value = JSON.stringify([
+    {
+      key: 'about',
+      title: '品牌介绍',
+      enabled: true,
+      sort_order: 10,
+      settings: {
+        title: props.form.title || '品牌介绍',
+        subtitle: props.form.summary || '用模块化内容搭建普通静态页面',
+        body: props.form.content || '这里填写页面正文、服务说明、品牌故事或落地页内容。',
+        items: [
+          { title: '静态页面', description: '保存后会生成纯 HTML 页面。' },
+          { title: '模块复用', description: '后续可由 AI 按模块规范自动填充。' }
+        ]
+      }
+    }
+  ], null, 2)
+}
+
+function previewModules() {
+  const modules = parseModuleText()
+  if (modules === null) return
+  emit('preview-modules', { id: props.form.id, modules, setPreview: (html: string) => { modulePreviewHtml.value = html } })
+}
+
+function saveModules() {
+  const modules = parseModuleText()
+  if (modules === null) return
+  emit('save-modules', { id: props.form.id, modules, setPreview: (html: string) => { modulePreviewHtml.value = html } })
 }
 
 function ensureBulkScope() {

@@ -1436,6 +1436,8 @@
             @ai="generatePageDraft"
             @bulk-distribute="bulkDistributePages"
             @bulk-publish="bulkPublishPages"
+            @preview-modules="previewPageModules"
+            @save-modules="savePageModules"
             @publish-status="publishPageStatus"
             @page-change="changePagePage"
             @scope-change="changeContentListScope"
@@ -4468,6 +4470,38 @@ async function bulkDistributePages(payload: any) {
 async function bulkPublishPages(payload: any) {
   await bulkPublishContent('page', payload, loadPages)
   await loadStaticPages()
+}
+async function previewPageModules(payload: any) {
+  if (!payload?.id) {
+    ElMessage.warning('请先保存页面后再预览模块')
+    return
+  }
+  const data = await request(`/api/pages/${payload.id}/modules/preview`, {
+    method: 'POST',
+    data: { modules: payload.modules || [] }
+  })
+  payload.setPreview?.(data.html || data.content || '')
+  ElMessage.success('页面模块预览已生成')
+}
+async function savePageModules(payload: any) {
+  if (!payload?.id) {
+    ElMessage.warning('请先保存页面后再保存模块')
+    return
+  }
+  const data = await request(`/api/pages/${payload.id}/modules`, {
+    method: 'PUT',
+    data: { modules: payload.modules || [] }
+  })
+  payload.setPreview?.(data.preview_html || data.content || '')
+  Object.assign(pageForm, {
+    ...pageForm,
+    content: data.content || pageForm.content,
+    module_config: data.module_config || payload.modules || []
+  })
+  ElMessage.success('页面模块已保存并生成正文')
+  await Promise.all([loadPages(), loadStaticPages(), loadDashboard(), loadSites()])
+  const siteIds = pageForm.site_ids?.length ? pageForm.site_ids : currentSiteIds()
+  await syncGeneratedSitesForContent(siteIds, '页面模块保存后自动生成')
 }
 async function publishPageStatus(item: any, action: 'publish' | 'draft') {
   await publishContentStatus('page', item, action, loadPages)
