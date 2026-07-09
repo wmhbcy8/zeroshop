@@ -96,7 +96,25 @@ body {
 .menu .el-icon {
   color: inherit;
 }
-.menu-badge { margin-left: auto; }
+.menu-item-label {
+  min-width: 0;
+}
+.menu-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  line-height: 1;
+}
+.menu-badge .el-badge__content {
+  position: static;
+  transform: none;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid rgba(255, 255, 255, .82);
+  line-height: 16px;
+  box-shadow: 0 4px 10px rgba(248, 113, 113, .22);
+}
 .topbar {
   height: auto;
   min-height: 78px;

@@ -29,7 +29,7 @@
         <template v-for="group in navGroups" :key="group.key">
           <el-menu-item v-if="group.children.length === 1" :index="group.children[0].key">
             <el-icon><component :is="group.children[0].icon" /></el-icon>
-            <span>{{ group.children[0].label }}</span>
+            <span class="menu-item-label">{{ group.children[0].label }}</span>
             <el-badge v-if="group.children[0].key === 'service' && servicePending" :value="servicePending" class="menu-badge" />
           </el-menu-item>
           <el-sub-menu v-else :index="group.key">
@@ -39,7 +39,7 @@
             </template>
             <el-menu-item v-for="item in group.children" :key="item.key" :index="item.key">
               <el-icon><component :is="item.icon" /></el-icon>
-              <span>{{ item.label }}</span>
+              <span class="menu-item-label">{{ item.label }}</span>
               <el-badge v-if="item.key === 'service' && servicePending" :value="servicePending" class="menu-badge" />
             </el-menu-item>
           </el-sub-menu>
@@ -6076,13 +6076,23 @@ async function loadServices() {
   const data = await request(`/api/support/tickets?${params.toString()}`)
   services.value = data.items || []
   servicePager.total = data.pagination?.total || services.value.length
-  servicePending.value = data.pending || 0
+  await loadServicePending()
   const orderParams = new URLSearchParams()
   orderParams.set('site_id', operationSiteScope.value)
   orderParams.set('page_size', '100')
   orderParams.set('status', 'pending')
   const orderData = await request(`/api/orders/service-requests?${orderParams.toString()}`)
   orderServices.value = orderData.items || []
+}
+
+async function loadServicePending() {
+  const params = new URLSearchParams()
+  params.set('site_id', operationSiteScope.value)
+  params.set('page', '1')
+  params.set('page_size', '1')
+  params.set('source', 'all')
+  const data = await request(`/api/support/tickets?${params.toString()}`)
+  servicePending.value = data.pending || 0
 }
 
 function serviceQuery(includePage = true) {
@@ -6110,7 +6120,8 @@ async function resolveSelectedServices() {
   const ids = selectedServiceIds.value.map((id) => String(id).replace(/^order-/, ''))
   const data = await request('/api/orders/service-requests/resolve', { method: 'POST', data: { ids } })
   ElMessage.success(`已处理 ${data.handled || 0} 条服务请求`)
-  await loadServices()
+  selectedServiceIds.value = []
+  await Promise.all([loadServices(), loadDashboard(), loadSites()])
 }
 
 function openSupportForm(id: number) {
@@ -6362,14 +6373,14 @@ async function saveFormSubmission() {
   })
   ElMessage.success('Inquiry saved')
   formDrawerVisible.value = false
-  await Promise.all([loadForms(), loadDashboard(), loadSites()])
+  await Promise.all([loadForms(), loadDashboard(), loadSites(), loadServicePending()])
 }
 async function deleteFormSubmission() {
   await ElMessageBox.confirm('Delete this inquiry?')
   await request(`/api/forms/submissions/${formDetail.id}`, { method: 'DELETE' })
   ElMessage.success('Inquiry deleted')
   formDrawerVisible.value = false
-  await Promise.all([loadForms(), loadDashboard(), loadSites()])
+  await Promise.all([loadForms(), loadDashboard(), loadSites(), loadServicePending()])
 }
 function applyFormFilters() {
   formPager.page = 1
