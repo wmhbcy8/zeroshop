@@ -1932,6 +1932,53 @@
           <el-card class="panel mt16" shadow="never">
             <template #header>
               <div class="card-head">
+                <strong>客户付款凭证</strong>
+                <el-button @click="loadPaymentProofs">刷新凭证</el-button>
+              </div>
+            </template>
+            <el-alert class="mb16" type="info" show-icon :closable="false" title="前台订单页提交的付款流水号或截图编号会进入这里。审核通过后，订单会标记为已支付并写入订单时间线。" />
+            <el-form :inline="true" class="toolbar" @submit.prevent="applyPaymentProofFilters">
+              <el-form-item>
+                <el-select v-model="operationSiteScope" placeholder="站点范围" style="width: 180px" @change="applyPaymentProofFilters">
+                  <el-option label="全部站点" value="all" />
+                  <el-option v-for="item in sites" :key="item.id" :label="item.name" :value="String(item.id)" />
+                </el-select>
+              </el-form-item>
+              <el-form-item><el-input v-model="paymentProofFilters.keyword" placeholder="订单号/手机号/凭证号" clearable /></el-form-item>
+              <el-form-item>
+                <el-select v-model="paymentProofFilters.status" placeholder="审核状态" clearable style="width: 140px">
+                  <el-option label="待审核" value="pending" />
+                  <el-option label="已确认" value="approved" />
+                  <el-option label="已驳回" value="rejected" />
+                </el-select>
+              </el-form-item>
+              <el-button type="primary" @click="applyPaymentProofFilters">筛选</el-button>
+            </el-form>
+            <el-table :data="paymentProofs" height="360" row-key="id">
+              <el-table-column prop="site_name" label="站点" width="150" />
+              <el-table-column prop="order_no" label="订单号" min-width="170" />
+              <el-table-column label="金额" width="140"><template #default="{ row }">{{ row.currency }} {{ row.amount }}</template></el-table-column>
+              <el-table-column prop="reference" label="流水/截图编号" min-width="180" />
+              <el-table-column label="客户" width="130"><template #default="{ row }">{{ row.phone }}</template></el-table-column>
+              <el-table-column label="状态" width="110">
+                <template #default="{ row }">
+                  <el-tag :type="row.status === 'approved' ? 'success' : row.status === 'rejected' ? 'danger' : 'warning'">{{ row.status === 'approved' ? '已确认' : row.status === 'rejected' ? '已驳回' : '待审核' }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="note" label="说明" min-width="180" />
+              <el-table-column prop="created_at" label="提交时间" width="170" />
+              <el-table-column label="操作" width="170">
+                <template #default="{ row }">
+                  <el-button link type="success" :disabled="row.status !== 'pending'" @click="handlePaymentProof(row, 'approve')">确认</el-button>
+                  <el-button link type="danger" :disabled="row.status !== 'pending'" @click="handlePaymentProof(row, 'reject')">驳回</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-pagination class="table-pager" layout="prev, pager, next, total" :current-page="paymentProofPager.page" :page-size="paymentProofPager.page_size" :total="paymentProofPager.total" @current-change="changePaymentProofPage" />
+          </el-card>
+          <el-card class="panel mt16" shadow="never">
+            <template #header>
+              <div class="card-head">
                 <strong>支付事件</strong>
                 <el-button @click="loadPaymentEvents">刷新事件</el-button>
               </div>
@@ -2438,6 +2485,7 @@ const domains = ref<any[]>([])
 const domainApplications = ref<any[]>([])
 const paymentChannels = ref<any[]>([])
 const paymentEvents = ref<any[]>([])
+const paymentProofs = ref<any[]>([])
 const seoAudit = ref<any>({})
 const versions = ref<any[]>([])
 const batchTasks = ref<any[]>([])
@@ -2501,6 +2549,7 @@ const collectorFilters = reactive({ keyword: '', status: '' })
 const mediaFilters = reactive({ keyword: '', file_type: '' })
 const taskFilters = reactive({ action: '', status: '', date: '' })
 const paymentEventFilters = reactive({ keyword: '', payment_status: '' })
+const paymentProofFilters = reactive({ keyword: '', status: 'pending' })
 const logFilters = reactive({ keyword: '', method: '', site_id: 'all' })
 const orderDetail = reactive<any>({})
 const formDetail = reactive<any>({})
@@ -2584,6 +2633,7 @@ const collectorRecordPager = reactive({ page: 1, page_size: 10, total: 0 })
 const aiTaskPager = reactive({ page: 1, page_size: 10, total: 0 })
 const taskPager = reactive({ page: 1, page_size: 10, total: 0 })
 const paymentEventPager = reactive({ page: 1, page_size: 10, total: 0 })
+const paymentProofPager = reactive({ page: 1, page_size: 10, total: 0 })
 const logPager = reactive({ page: 1, page_size: 20, total: 0 })
 const aiDrafts = ref<any[]>([])
 const aiTasks = ref<any[]>([])
@@ -2806,7 +2856,7 @@ function setView(key: string) {
   if (key === 'categories') Promise.all([loadCategories(), loadTags()])
   if (key === 'orders') loadOrders()
   if (key === 'service') loadServices()
-  if (key === 'payments') Promise.all([loadSettings(), loadPaymentChannels(), loadPaymentEvents()])
+  if (key === 'payments') Promise.all([loadSettings(), loadPaymentChannels(), loadPaymentProofs(), loadPaymentEvents()])
   if (key === 'tasks') loadBatchTasks()
   if (key === 'logs') loadOperationLogs()
   if (key === 'media') loadMedia()
@@ -2834,7 +2884,7 @@ function refreshCurrentView() {
     categories: async () => { await Promise.all([loadCategories(), loadTags()]) },
     orders: loadOrders,
     service: loadServices,
-    payments: async () => { await Promise.all([loadSettings(), loadPaymentChannels(), loadPaymentEvents()]) },
+    payments: async () => { await Promise.all([loadSettings(), loadPaymentChannels(), loadPaymentProofs(), loadPaymentEvents()]) },
     tasks: loadBatchTasks,
     logs: loadOperationLogs,
     media: loadMedia,
@@ -2876,6 +2926,7 @@ async function loadAll() {
     loadOrders(),
     loadServices(),
     loadPaymentChannels(),
+    loadPaymentProofs(),
     loadPaymentEvents(),
     loadBatchTasks(),
     loadDeployTasks(),
@@ -4103,6 +4154,7 @@ function applyAiQuickCommand(item: any) {
 function newPage() { Object.assign(pageForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', site_scope: 'current', site_ids: currentSiteIds() }) }
 function editPage(item: any) { Object.assign(pageForm, { ...item, site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds() }) }
 async function savePage() {
+  if (!ensureSelectedSiteScope(pageForm.site_scope, pageForm.site_ids, '页面发布范围')) return
   const method = pageForm.id ? 'PUT' : 'POST'
   const path = pageForm.id ? `/api/pages/${pageForm.id}` : '/api/pages'
   const payload = normalizeDistributionPayload(pageForm)
@@ -4138,6 +4190,7 @@ async function generatePageDraft(prompt: string) {
 function newArticle() { Object.assign(articleForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', tag_names: [], site_scope: 'current', site_ids: currentSiteIds() }) }
 function editArticle(item: any) { Object.assign(articleForm, { ...item, tag_names: item.tag_names || (item.tags || []).map((tag: any) => tag.name), site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds() }) }
 async function saveArticle() {
+  if (!ensureSelectedSiteScope(articleForm.site_scope, articleForm.site_ids, '文章发布范围')) return
   const method = articleForm.id ? 'PUT' : 'POST'
   const path = articleForm.id ? `/api/articles/${articleForm.id}` : '/api/articles'
   const payload = normalizeDistributionPayload(articleForm)
@@ -4168,6 +4221,7 @@ async function generateArticleDraft(prompt: string) {
 function newProduct() { Object.assign(productForm, { id: '', title: '', slug: '', sku: '', cover: '', summary: '', description: '', price: 0, stock: 0, status: 'draft', site_scope: 'current', site_ids: currentSiteIds() }) }
 function editProduct(item: any) { Object.assign(productForm, { ...item, site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds() }) }
 async function saveProduct() {
+  if (!ensureSelectedSiteScope(productForm.site_scope, productForm.site_ids, '商品发布范围')) return
   const method = productForm.id ? 'PUT' : 'POST'
   const path = productForm.id ? `/api/products/${productForm.id}` : '/api/products'
   const payload = normalizeDistributionPayload(productForm)
@@ -4397,6 +4451,7 @@ function applyOperationSiteScope() {
   if (view.value === 'orders') loadOrders()
   if (view.value === 'service') loadServices()
   if (view.value === 'forms') loadForms()
+  if (view.value === 'payments') loadPaymentProofs()
   if (view.value === 'payments') loadPaymentEvents()
   if (view.value === 'operations') refreshOperations()
 }
@@ -4485,6 +4540,41 @@ async function loadPaymentEvents() {
   const data = await request(`/api/payment/events?${params.toString()}`)
   paymentEvents.value = data.items || []
   paymentEventPager.total = data.pagination?.total || paymentEvents.value.length
+}
+
+async function loadPaymentProofs() {
+  const params = new URLSearchParams()
+  params.set('page', String(paymentProofPager.page))
+  params.set('page_size', String(paymentProofPager.page_size))
+  params.set('site_id', operationSiteScope.value)
+  Object.entries(paymentProofFilters).forEach(([key, value]) => value && params.set(key, value))
+  const data = await request(`/api/payment/proofs?${params.toString()}`)
+  paymentProofs.value = data.items || []
+  paymentProofPager.total = data.pagination?.total || paymentProofs.value.length
+}
+
+function applyPaymentProofFilters() {
+  paymentProofPager.page = 1
+  loadPaymentProofs()
+}
+
+function changePaymentProofPage(page: number) {
+  paymentProofPager.page = page
+  loadPaymentProofs()
+}
+
+async function handlePaymentProof(row: any, action: 'approve' | 'reject') {
+  const text = action === 'approve' ? '确认该付款凭证有效，并将订单标记为已支付？' : '确定驳回该付款凭证？'
+  await ElMessageBox.confirm(text)
+  await request(`/api/payment/proofs/${row.id}/handle`, {
+    method: 'POST',
+    data: {
+      action,
+      admin_note: action === 'approve' ? '凭证审核通过' : '凭证信息不完整或未匹配到账'
+    }
+  })
+  ElMessage.success(action === 'approve' ? '已确认收款' : '已驳回付款凭证')
+  await Promise.all([loadPaymentProofs(), loadOrders(), loadDashboard(), loadSites()])
 }
 
 function applyPaymentEventFilters() {

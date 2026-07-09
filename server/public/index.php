@@ -4057,6 +4057,97 @@ function list_payment_webhook_events(PDO $pdo, ?PDO $main = null): array
     ];
 }
 
+function list_payment_proofs(PDO $pdo, ?PDO $main = null): array
+{
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $offset = ($page - 1) * $pageSize;
+    $clauses = [];
+    $params = [];
+    append_site_scope_clause($clauses, $params, 'site_id', 'pay_proof_site');
+    $keyword = trim((string)($_GET['keyword'] ?? ''));
+    if ($keyword !== '') {
+        $clauses[] = '(order_no LIKE :keyword OR reference LIKE :keyword OR phone LIKE :keyword OR note LIKE :keyword)';
+        $params['keyword'] = '%' . $keyword . '%';
+    }
+    $status = trim((string)($_GET['status'] ?? ''));
+    if ($status !== '') {
+        $clauses[] = 'status = :status';
+        $params['status'] = $status;
+    }
+    $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
+    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM payment_proofs{$whereSql}");
+    $countStmt->execute($params);
+    $total = (int)$countStmt->fetchColumn();
+    $stmt = $pdo->prepare("SELECT * FROM payment_proofs{$whereSql} ORDER BY id DESC LIMIT {$pageSize} OFFSET {$offset}");
+    $stmt->execute($params);
+    return [
+        'items' => attach_site_names($stmt->fetchAll(), $main),
+        'pagination' => [
+            'page' => $page,
+            'page_size' => $pageSize,
+            'total' => $total,
+            'total_pages' => (int)ceil($total / $pageSize),
+        ],
+    ];
+}
+
+function handle_payment_proof(PDO $pdo, int $id, array $data): array
+{
+    $proof = fetch_one($pdo, 'payment_proofs', $id);
+    if (!$proof) {
+        fail('付款凭证不存在', 'NOT_FOUND', 404);
+    }
+    assert_site_access((int)($proof['site_id'] ?? 10001), main_pdo());
+    $action = (string)($data['action'] ?? 'approve');
+    if (!in_array($action, ['approve', 'reject'], true)) {
+        fail('处理动作不支持', 'VALIDATION_ERROR', 422);
+    }
+    $adminNote = trim((string)($data['admin_note'] ?? ''));
+    $time = now();
+    $status = $action === 'approve' ? 'approved' : 'rejected';
+    $pdo->prepare('UPDATE payment_proofs SET status=:status, handled_by=:handled_by, handled_at=:handled_at, admin_note=:admin_note, updated_at=:updated_at WHERE id=:id')
+        ->execute([
+            'id' => $id,
+            'status' => $status,
+            'handled_by' => (int)(auth_user()['id'] ?? 0) ?: null,
+            'handled_at' => $time,
+            'admin_note' => $adminNote,
+            'updated_at' => $time,
+        ]);
+
+    $order = fetch_one($pdo, 'orders', (int)($proof['order_id'] ?? 0));
+    if ($order) {
+        $message = $action === 'approve'
+            ? '后台已审核付款凭证并确认收款：金额 ' . number_format((float)$proof['amount'], 2, '.', '') . '，凭证 ' . (string)$proof['reference']
+            : '后台已驳回付款凭证：' . (string)$proof['reference'];
+        if ($adminNote !== '') {
+            $message .= '；备注 ' . $adminNote;
+        }
+        $remark = append_order_note((string)($order['remark'] ?? ''), $message);
+        if ($action === 'approve') {
+            $pdo->prepare("UPDATE orders SET payment_status='paid', paid_at=:paid_at, remark=:remark, updated_at=:updated_at WHERE id=:id")
+                ->execute([
+                    'id' => (int)$order['id'],
+                    'paid_at' => $order['paid_at'] ?: $time,
+                    'remark' => $remark,
+                    'updated_at' => $time,
+                ]);
+        } else {
+            $pdo->prepare('UPDATE orders SET remark=:remark, updated_at=:updated_at WHERE id=:id')
+                ->execute([
+                    'id' => (int)$order['id'],
+                    'remark' => $remark,
+                    'updated_at' => $time,
+                ]);
+        }
+    }
+    return [
+        'proof' => fetch_one($pdo, 'payment_proofs', $id),
+        'order' => $order ? public_order_view(fetch_one($pdo, 'orders', (int)$order['id']) ?: $order) : null,
+    ];
+}
+
 function ensure_content_distribution_table(PDO $pdo): void
 {
     ensure_pages_table($pdo);
@@ -6466,6 +6557,30 @@ function ensure_auth_tables(PDO $pdo): void
     ensure_column($pdo, 'payment_webhook_events', 'provider', "VARCHAR(40) NOT NULL DEFAULT 'manual'");
     ensure_column($pdo, 'payment_webhook_events', 'event_key', 'VARCHAR(180) NOT NULL');
 
+    $pdo->exec("CREATE TABLE IF NOT EXISTS payment_proofs (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        site_id BIGINT UNSIGNED NOT NULL DEFAULT 10001,
+        order_id BIGINT UNSIGNED NOT NULL,
+        order_no VARCHAR(40) NOT NULL,
+        phone VARCHAR(60) NOT NULL,
+        amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        currency VARCHAR(10) NOT NULL DEFAULT 'CNY',
+        reference VARCHAR(120) NOT NULL,
+        note TEXT,
+        status VARCHAR(30) NOT NULL DEFAULT 'pending',
+        handled_by BIGINT UNSIGNED,
+        handled_at DATETIME,
+        admin_note TEXT,
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_site_id (site_id),
+        INDEX idx_order_no (order_no),
+        INDEX idx_status (status),
+        INDEX idx_created_at (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    ensure_column($pdo, 'payment_proofs', 'site_id', 'BIGINT UNSIGNED NOT NULL DEFAULT 10001');
+    ensure_column($pdo, 'payment_proofs', 'status', "VARCHAR(30) NOT NULL DEFAULT 'pending'");
+
     $pdo->exec("CREATE TABLE IF NOT EXISTS form_submissions (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
         site_id BIGINT UNSIGNED NOT NULL DEFAULT 10001,
@@ -7010,14 +7125,33 @@ try {
         if ($note !== '') {
             $proofText .= '；说明 ' . $note;
         }
+        $time = now();
+        $insertProof = $pdo->prepare("INSERT INTO payment_proofs (site_id, order_id, order_no, phone, amount, currency, reference, note, status, created_at, updated_at)
+            VALUES (:site_id, :order_id, :order_no, :phone, :amount, :currency, :reference, :note, 'pending', :created_at, :updated_at)");
+        $insertProof->execute([
+            'site_id' => (int)($order['site_id'] ?? $siteId),
+            'order_id' => (int)$order['id'],
+            'order_no' => (string)$order['order_no'],
+            'phone' => trim((string)$data['phone']),
+            'amount' => round((float)$amount, 2),
+            'currency' => (string)($order['currency'] ?? 'CNY'),
+            'reference' => $reference,
+            'note' => $note,
+            'created_at' => $time,
+            'updated_at' => $time,
+        ]);
+        $proofId = (int)$pdo->lastInsertId();
         $remark = append_order_note((string)($order['remark'] ?? ''), $proofText);
         $update = $pdo->prepare('UPDATE orders SET remark = :remark, updated_at = :updated_at WHERE id = :id');
         $update->execute([
             'id' => (int)$order['id'],
             'remark' => $remark,
-            'updated_at' => now(),
+            'updated_at' => $time,
         ]);
-        ok(public_order_view(fetch_one($pdo, 'orders', (int)$order['id']) ?: $order), '付款凭证已提交');
+        ok([
+            'order' => public_order_view(fetch_one($pdo, 'orders', (int)$order['id']) ?: $order),
+            'proof' => fetch_one($pdo, 'payment_proofs', $proofId),
+        ], '付款凭证已提交');
     }
 
     if ($method === 'POST' && $path === '/orders/service-request') {
@@ -7354,6 +7488,14 @@ try {
 
     if ($method === 'GET' && $path === '/payment/events') {
         ok(list_payment_webhook_events($pdo, main_pdo()));
+    }
+
+    if ($method === 'GET' && $path === '/payment/proofs') {
+        ok(list_payment_proofs($pdo, main_pdo()));
+    }
+
+    if ($method === 'POST' && preg_match('#^/payment/proofs/(\d+)/handle$#', $path, $matches)) {
+        ok(handle_payment_proof($pdo, (int)$matches[1], body_json()), '付款凭证已处理');
     }
 
     if ($method === 'GET' && $path === '/site/domains') {
@@ -8058,6 +8200,7 @@ try {
             $current = fetch_one($pdo, 'orders', $id);
             if ($current) {
                 restore_order_stock($pdo, $current);
+                $pdo->prepare('DELETE FROM payment_proofs WHERE order_id = ?')->execute([$id]);
             }
             $pdo->prepare('DELETE FROM orders WHERE id = ?')->execute([$id]);
             ok([], '订单已删除');
