@@ -5,9 +5,9 @@ $root = dirname(__DIR__);
 $php = $root . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe';
 $generator = $root . DIRECTORY_SEPARATOR . 'worker' . DIRECTORY_SEPARATOR . 'GenerateSite.php';
 $templates = [
-    'clone-www-ld199-com-260709165632-3530' => ['min_length' => 5000, 'min_images' => 5],
-    'clone-www-chuyunai-com-cn-260709165648-a5d6' => ['min_length' => 12000, 'min_images' => 10],
-    'clone-aifuoil-com-260709165929-3207' => ['min_length' => 5000, 'min_images' => 5],
+    'clone-www-ld199-com-260709165632-3530' => ['min_length' => 5000, 'min_images' => 5, 'min_pages' => 5],
+    'clone-www-chuyunai-com-cn-260709165648-a5d6' => ['min_length' => 12000, 'min_images' => 10, 'min_pages' => 5],
+    'clone-aifuoil-com-260709165929-3207' => ['min_length' => 5000, 'min_images' => 5, 'min_pages' => 5],
 ];
 
 if (!is_file($php) || !is_file($generator)) {
@@ -30,12 +30,16 @@ foreach ($templates as $key => $rules) {
     $index = $out . DIRECTORY_SEPARATOR . 'index.html';
     $html = is_file($index) ? (string)file_get_contents($index) : '';
     $assetCheck = verify_local_assets($out);
+    $pageCheck = verify_html_pages($out);
     preg_match('/<title>(.*?)<\/title>/is', $html, $titleMatch);
     $row = [
         'key' => $key,
         'title' => trim(strip_tags($titleMatch[1] ?? '')),
         'length' => strlen($html),
         'images' => preg_match_all('/<img\b/i', $html),
+        'html_pages' => $pageCheck['pages'],
+        'empty_titles' => count($pageCheck['empty_titles']),
+        'dirty_pages' => count($pageCheck['dirty_pages']),
         'asset_refs' => $assetCheck['checked'],
         'missing_assets' => count($assetCheck['missing']),
         'external_refs' => count($assetCheck['external']),
@@ -47,12 +51,17 @@ foreach ($templates as $key => $rules) {
     $row['ok'] = $code === 0
         && $row['length'] >= (int)$rules['min_length']
         && $row['images'] >= (int)$rules['min_images']
+        && $row['html_pages'] >= (int)$rules['min_pages']
+        && $row['empty_titles'] === 0
+        && $row['dirty_pages'] === 0
         && $row['missing_assets'] === 0
         && !$row['redirect']
         && !$row['zeroshop']
         && !$row['test_marker'];
     $row['missing_examples'] = array_slice($assetCheck['missing'], 0, 3);
     $row['external_examples'] = array_slice($assetCheck['external'], 0, 3);
+    $row['empty_title_examples'] = array_slice($pageCheck['empty_titles'], 0, 3);
+    $row['dirty_page_examples'] = array_slice($pageCheck['dirty_pages'], 0, 3);
     $failed = $failed || !$row['ok'];
     $rows[] = $row;
 }
@@ -62,11 +71,14 @@ putenv('HJ_SITE_ID');
 
 foreach ($rows as $row) {
     echo sprintf(
-        "%s\t%s\tlen=%d\timg=%d\tassets=%d\tmissing=%d\texternal=%d\tredirect=%s\tzeroshop=%s\tok=%s\n",
+        "%s\t%s\tlen=%d\timg=%d\tpages=%d\temptyTitle=%d\tdirty=%d\tassets=%d\tmissing=%d\texternal=%d\tredirect=%s\tzeroshop=%s\tok=%s\n",
         $row['key'],
         $row['title'],
         $row['length'],
         $row['images'],
+        $row['html_pages'],
+        $row['empty_titles'],
+        $row['dirty_pages'],
         $row['asset_refs'],
         $row['missing_assets'],
         $row['external_refs'],
@@ -79,6 +91,12 @@ foreach ($rows as $row) {
     }
     foreach ($row['external_examples'] as $external) {
         echo "  external: {$external}\n";
+    }
+    foreach ($row['empty_title_examples'] as $page) {
+        echo "  empty-title: {$page}\n";
+    }
+    foreach ($row['dirty_page_examples'] as $page) {
+        echo "  dirty-page: {$page}\n";
     }
 }
 
@@ -150,6 +168,37 @@ function verify_local_assets(string $root): array
         'checked' => $checked,
         'missing' => array_values(array_unique($missing)),
         'external' => array_values(array_unique($external)),
+    ];
+}
+
+function verify_html_pages(string $root): array
+{
+    $pages = 0;
+    $emptyTitles = [];
+    $dirtyPages = [];
+    $files = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS)
+    );
+    foreach ($files as $file) {
+        if (!$file->isFile() || strtolower($file->getExtension()) !== 'html') {
+            continue;
+        }
+        $pages++;
+        $relative = relative_to_root($root, $file->getPathname());
+        $html = (string)file_get_contents($file->getPathname());
+        preg_match('/<title>(.*?)<\/title>/is', $html, $titleMatch);
+        $title = trim(strip_tags($titleMatch[1] ?? ''));
+        if ($title === '') {
+            $emptyTitles[] = $relative;
+        }
+        if (str_contains($html, 'ZeroShop') || str_contains($html, 'HUJIAN_TEST_STATIC_MIRROR_OVERRIDE_260709')) {
+            $dirtyPages[] = $relative;
+        }
+    }
+    return [
+        'pages' => $pages,
+        'empty_titles' => $emptyTitles,
+        'dirty_pages' => $dirtyPages,
     ];
 }
 
