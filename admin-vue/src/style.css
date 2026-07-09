@@ -52,8 +52,50 @@ body {
 .menu {
   border-right: 0;
   background: transparent;
+  --el-menu-bg-color: transparent;
+  --el-menu-text-color: #cbd5e1;
+  --el-menu-hover-bg-color: rgba(255, 255, 255, .08);
+  --el-menu-hover-text-color: #ffffff;
+  --el-menu-active-color: #67e8f9;
 }
-.menu .el-menu-item { color: #cbd5e1; }
+.menu .el-menu,
+.menu .el-sub-menu .el-menu {
+  background: transparent;
+}
+.menu .el-menu-item,
+.menu .el-sub-menu__title {
+  height: 48px;
+  color: #cbd5e1;
+}
+.menu .el-menu-item:hover,
+.menu .el-sub-menu__title:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, .08);
+}
+.menu .el-menu-item.is-active {
+  color: #67e8f9;
+  background: rgba(103, 232, 249, .12);
+}
+.menu .el-sub-menu.is-active > .el-sub-menu__title {
+  color: #ffffff;
+  background: rgba(255, 255, 255, .08);
+}
+.menu .el-sub-menu .el-menu-item {
+  padding-left: 54px !important;
+  color: #b8c7da;
+  background: rgba(8, 15, 28, .42);
+}
+.menu .el-sub-menu .el-menu-item:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, .08);
+}
+.menu .el-sub-menu .el-menu-item.is-active {
+  color: #67e8f9;
+  background: rgba(103, 232, 249, .14);
+}
+.menu .el-icon {
+  color: inherit;
+}
 .menu-badge { margin-left: auto; }
 .topbar {
   height: auto;
