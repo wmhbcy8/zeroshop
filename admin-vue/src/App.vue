@@ -1820,7 +1820,10 @@
             <template #header>
               <div class="card-head">
                 <strong>订单列表</strong>
-                <el-button @click="loadOrders">刷新</el-button>
+                <div class="head-actions">
+                  <el-button @click="exportOrders">导出当前筛选</el-button>
+                  <el-button @click="loadOrders">刷新</el-button>
+                </div>
               </div>
             </template>
             <el-form :inline="true" class="toolbar" @submit.prevent="applyOrderFilters">
@@ -1866,7 +1869,13 @@
         <section v-if="view === 'service'">
           <el-card class="panel" shadow="never">
             <template #header>
-              <div class="card-head"><strong>服务中心</strong><el-button type="primary" @click="resolveSelectedServices">批量标记订单服务已处理</el-button></div>
+              <div class="card-head">
+                <strong>服务中心</strong>
+                <div class="head-actions">
+                  <el-button @click="exportServices">导出当前筛选</el-button>
+                  <el-button type="primary" @click="resolveSelectedServices">批量标记订单服务已处理</el-button>
+                </div>
+              </div>
             </template>
             <el-form :inline="true" class="toolbar" @submit.prevent="loadServices">
               <el-form-item><el-select v-model="operationSiteScope" placeholder="站点范围" style="width: 180px" @change="applyOperationSiteScope"><el-option label="全部站点" value="all" /><el-option v-for="item in sites" :key="item.id" :label="item.name" :value="String(item.id)" /></el-select></el-form-item>
@@ -1948,7 +1957,15 @@
 
         <section v-if="view === 'forms'">
           <el-card class="panel" shadow="never">
-            <template #header><strong>留言线索</strong></template>
+            <template #header>
+              <div class="card-head">
+                <strong>留言线索</strong>
+                <div class="head-actions">
+                  <el-button @click="exportForms">导出当前筛选</el-button>
+                  <el-button @click="loadForms">刷新</el-button>
+                </div>
+              </div>
+            </template>
             <el-form :inline="true" class="toolbar" @submit.prevent="applyFormFilters">
               <el-form-item><el-select v-model="operationSiteScope" placeholder="站点范围" style="width: 180px" @change="applyOperationSiteScope"><el-option label="全部站点" value="all" /><el-option v-for="item in sites" :key="item.id" :label="item.name" :value="String(item.id)" /></el-select></el-form-item>
               <el-form-item><el-input v-model="formFilters.keyword" placeholder="搜索来源/内容" clearable /></el-form-item>
@@ -5409,15 +5426,28 @@ function clearAiDrafts() {
 }
 
 async function loadOrders() {
-  const params = new URLSearchParams()
-  params.set('page', String(orderPager.page))
-  params.set('page_size', String(orderPager.page_size))
-  params.set('site_id', operationSiteScope.value)
-  Object.entries(orderFilters).forEach(([key, value]) => value && params.set(key, value))
+  const params = orderQuery()
   const data = await request(`/api/orders?${params.toString()}`)
   orders.value = data.items || []
   orderPager.total = data.pagination?.total || orders.value.length
 }
+
+function orderQuery(includePage = true) {
+  const params = new URLSearchParams()
+  if (includePage) {
+    params.set('page', String(orderPager.page))
+    params.set('page_size', String(orderPager.page_size))
+  }
+  params.set('site_id', operationSiteScope.value)
+  Object.entries(orderFilters).forEach(([key, value]) => value && params.set(key, value))
+  return params
+}
+
+async function exportOrders() {
+  const params = orderQuery(false)
+  await downloadCsv(`/api/orders/export?${params.toString()}`, `orders-${dateFileStamp()}.csv`)
+}
+
 function applyOrderFilters() {
   orderPager.page = 1
   loadOrders()
@@ -5470,11 +5500,7 @@ async function openOrder(id: number) {
 }
 
 async function loadServices() {
-  const params = new URLSearchParams()
-  params.set('page', String(servicePager.page))
-  params.set('page_size', String(servicePager.page_size))
-  params.set('site_id', operationSiteScope.value)
-  Object.entries(serviceFilters).forEach(([key, value]) => value && params.set(key, value))
+  const params = serviceQuery()
   const data = await request(`/api/support/tickets?${params.toString()}`)
   services.value = data.items || []
   servicePager.total = data.pagination?.total || services.value.length
@@ -5486,6 +5512,23 @@ async function loadServices() {
   const orderData = await request(`/api/orders/service-requests?${orderParams.toString()}`)
   orderServices.value = orderData.items || []
 }
+
+function serviceQuery(includePage = true) {
+  const params = new URLSearchParams()
+  if (includePage) {
+    params.set('page', String(servicePager.page))
+    params.set('page_size', String(servicePager.page_size))
+  }
+  params.set('site_id', operationSiteScope.value)
+  Object.entries(serviceFilters).forEach(([key, value]) => value && params.set(key, value))
+  return params
+}
+
+async function exportServices() {
+  const params = serviceQuery(false)
+  await downloadCsv(`/api/support/tickets/export?${params.toString()}`, `support-tickets-${dateFileStamp()}.csv`)
+}
+
 function changeServicePage(page: number) {
   servicePager.page = page
   loadServices()
@@ -5687,15 +5730,28 @@ async function deleteMedia(item: any) {
   await Promise.all([loadMedia(), loadDashboard()])
 }
 async function loadForms() {
-  const params = new URLSearchParams()
-  params.set('page', String(formPager.page))
-  params.set('page_size', String(formPager.page_size))
-  params.set('site_id', operationSiteScope.value)
-  Object.entries(formFilters).forEach(([key, value]) => value && params.set(key, value))
+  const params = formQuery()
   const data = await request(`/api/forms/submissions?${params.toString()}`)
   forms.value = data.items || []
   formPager.total = data.pagination?.total || forms.value.length
 }
+
+function formQuery(includePage = true) {
+  const params = new URLSearchParams()
+  if (includePage) {
+    params.set('page', String(formPager.page))
+    params.set('page_size', String(formPager.page_size))
+  }
+  params.set('site_id', operationSiteScope.value)
+  Object.entries(formFilters).forEach(([key, value]) => value && params.set(key, value))
+  return params
+}
+
+async function exportForms() {
+  const params = formQuery(false)
+  await downloadCsv(`/api/forms/submissions/export?${params.toString()}`, `form-submissions-${dateFileStamp()}.csv`)
+}
+
 function openFormSubmission(row: any) {
   Object.assign(formDetail, row)
   formDrawerVisible.value = true
@@ -6112,10 +6168,13 @@ function compactSummary(value: string) {
   }
 }
 
-async function exportBatchTasks() {
-  const query = batchTaskQuery(false)
+function dateFileStamp() {
+  return new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')
+}
+
+async function downloadCsv(url: string, filename: string) {
   const response = await axios({
-    url: `/api/batch/tasks/export${query.toString() ? `?${query.toString()}` : ''}`,
+    url,
     method: 'GET',
     responseType: 'blob',
     headers: token.value ? { Authorization: `Bearer ${token.value}`, 'X-Site-Id': String(currentSiteId.value || 10001) } : undefined
@@ -6123,9 +6182,14 @@ async function exportBatchTasks() {
   const blobUrl = URL.createObjectURL(response.data)
   const link = document.createElement('a')
   link.href = blobUrl
-  link.download = `batch-tasks-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.csv`
+  link.download = filename
   link.click()
   URL.revokeObjectURL(blobUrl)
+}
+
+async function exportBatchTasks() {
+  const query = batchTaskQuery(false)
+  await downloadCsv(`/api/batch/tasks/export${query.toString() ? `?${query.toString()}` : ''}`, `batch-tasks-${dateFileStamp()}.csv`)
 }
 
 function parseSummary(value: any) {

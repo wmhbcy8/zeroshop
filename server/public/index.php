@@ -1302,12 +1302,14 @@ function list_support_tickets(PDO $pdo, ?PDO $main = null): array
 {
     $source = trim((string)($_GET['source'] ?? 'all')) ?: 'all';
     $status = trim((string)($_GET['status'] ?? ''));
+    $type = trim((string)($_GET['type'] ?? ''));
     $keyword = trim((string)($_GET['keyword'] ?? ''));
     $items = [];
 
     if ($source === 'all' || $source === 'order') {
         $originalGet = $_GET;
         $_GET['status'] = $status === 'new' ? 'pending' : $status;
+        $_GET['type'] = $type;
         $_GET['keyword'] = $keyword;
         $_GET['page'] = 1;
         $_GET['page_size'] = 1000;
@@ -1333,7 +1335,7 @@ function list_support_tickets(PDO $pdo, ?PDO $main = null): array
         }
     }
 
-    if ($source === 'all' || $source === 'form') {
+    if (($source === 'all' || $source === 'form') && $type === '') {
         $clauses = [];
         $params = [];
         append_site_scope_clause($clauses, $params);
@@ -5940,6 +5942,86 @@ function list_form_submissions(PDO $pdo, ?PDO $main = null): array
     ];
 }
 
+function export_form_submissions_csv(PDO $pdo, ?PDO $main = null): void
+{
+    $keyword = trim((string)($_GET['keyword'] ?? ''));
+    $status = trim((string)($_GET['status'] ?? ''));
+    $clauses = [];
+    $params = [];
+    if ($keyword !== '') {
+        $clauses[] = '(form_key LIKE :keyword OR source_url LIKE :keyword OR data LIKE :keyword OR remark LIKE :keyword)';
+        $params['keyword'] = '%' . $keyword . '%';
+    }
+    if ($status !== '') {
+        $clauses[] = 'status = :status';
+        $params['status'] = $status;
+    }
+    append_site_scope_clause($clauses, $params);
+    $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
+    $stmt = $pdo->prepare("SELECT * FROM form_submissions{$whereSql} ORDER BY id DESC LIMIT 5000");
+    $stmt->execute($params);
+
+    header_remove('Content-Type');
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="form-submissions-' . date('Ymd-His') . '.csv"');
+    echo "\xEF\xBB\xBF";
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['站点ID', '站点名称', '表单来源', '来源页面', '姓名', '电话', '邮箱', '内容', '状态', '跟进备注', '提交时间', '更新时间']);
+    foreach (attach_site_names($stmt->fetchAll(), $main) as $row) {
+        $data = json_decode((string)($row['data'] ?? ''), true);
+        $data = is_array($data) ? $data : [];
+        fputcsv($out, [
+            $row['site_id'] ?? '',
+            $row['site_name'] ?? '',
+            $row['form_key'] ?? '',
+            $row['source_url'] ?? '',
+            $data['name'] ?? $data['姓名'] ?? '',
+            $data['phone'] ?? $data['tel'] ?? $data['mobile'] ?? $data['电话'] ?? '',
+            $data['email'] ?? $data['邮箱'] ?? '',
+            preg_replace('/\s+/', ' ', json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: ''),
+            $row['status'] ?? '',
+            preg_replace('/\s+/', ' ', (string)($row['remark'] ?? '')),
+            $row['created_at'] ?? '',
+            $row['updated_at'] ?? '',
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
+function export_support_tickets_csv(PDO $pdo, ?PDO $main = null): void
+{
+    $originalGet = $_GET;
+    $_GET['page'] = 1;
+    $_GET['page_size'] = 1000;
+    $result = list_support_tickets($pdo, $main);
+    $_GET = $originalGet;
+
+    header_remove('Content-Type');
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="support-tickets-' . date('Ymd-His') . '.csv"');
+    echo "\xEF\xBB\xBF";
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['站点ID', '站点名称', '来源', '标题/类型', '客户', '电话', '订单号', '内容', '状态', '来源页面', '时间']);
+    foreach (($result['items'] ?? []) as $row) {
+        fputcsv($out, [
+            $row['site_id'] ?? '',
+            $row['site_name'] ?? '',
+            $row['source_label'] ?? $row['source'] ?? '',
+            $row['title'] ?? '',
+            $row['customer_name'] ?? '',
+            $row['phone'] ?? '',
+            $row['order_no'] ?? '',
+            preg_replace('/\s+/', ' ', (string)($row['message'] ?? '')),
+            $row['status'] ?? '',
+            $row['source_url'] ?? '',
+            $row['created_at'] ?? $row['time'] ?? '',
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
 function export_orders_csv(PDO $pdo): void
 {
     $keyword = trim((string)($_GET['keyword'] ?? ''));
@@ -9849,6 +9931,10 @@ try {
         ok(list_support_tickets($pdo, main_pdo()));
     }
 
+    if ($method === 'GET' && $path === '/support/tickets/export') {
+        export_support_tickets_csv($pdo, main_pdo());
+    }
+
     if ($method === 'POST' && $path === '/orders/service-requests/resolve') {
         ok(resolve_order_service_requests($pdo), '服务请求已处理');
     }
@@ -10045,6 +10131,10 @@ try {
 
     if ($method === 'GET' && $path === '/forms/submissions') {
         ok(list_form_submissions($pdo, main_pdo()));
+    }
+
+    if ($method === 'GET' && $path === '/forms/submissions/export') {
+        export_form_submissions_csv($pdo, main_pdo());
     }
 
     if ($params = route_param('/forms/submissions/{id}', $path)) {
