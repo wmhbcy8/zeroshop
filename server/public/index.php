@@ -2895,6 +2895,101 @@ function save_customer_admin_user(PDO $sitePdo, PDO $main, int $customerId, arra
     return $item;
 }
 
+function issue_admin_session(PDO $sitePdo, int $userId, int $ttlSeconds = 604800): array
+{
+    $token = bin2hex(random_bytes(32));
+    $time = now();
+    $expiresAt = date('Y-m-d H:i:s', time() + $ttlSeconds);
+    $sessionStmt = $sitePdo->prepare("INSERT INTO admin_sessions (user_id, token_hash, ip_address, user_agent, expires_at, created_at)
+        VALUES (:user_id, :token_hash, :ip_address, :user_agent, :expires_at, :created_at)");
+    $sessionStmt->execute([
+        'user_id' => $userId,
+        'token_hash' => hash('sha256', $token),
+        'ip_address' => $_SERVER['REMOTE_ADDR'] ?? '',
+        'user_agent' => substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255),
+        'expires_at' => $expiresAt,
+        'created_at' => $time,
+    ]);
+    $sitePdo->prepare('UPDATE admin_users SET last_login_at = ?, updated_at = ? WHERE id = ?')->execute([$time, $time, $userId]);
+    return [
+        'token' => $token,
+        'expires_at' => $expiresAt,
+    ];
+}
+
+function platform_impersonate_site(PDO $sitePdo, PDO $main, int $siteId, array $platformUser): array
+{
+    ensure_center_tables($main);
+    ensure_auth_tables($sitePdo);
+    $stmt = $main->prepare("SELECT s.*, c.name AS customer_name, c.company AS customer_company, c.email AS customer_email, c.phone AS customer_phone
+        FROM sites s
+        LEFT JOIN customers c ON c.id = s.customer_id
+        WHERE s.id = ?
+        LIMIT 1");
+    $stmt->execute([$siteId]);
+    $site = $stmt->fetch();
+    if (!$site || (string)($site['status'] ?? '') === 'archived') {
+        fail('站点不存在或已归档', 'NOT_FOUND', 404);
+    }
+    $customerId = (int)($site['customer_id'] ?? 0);
+    if ($customerId <= 0) {
+        fail('站点未绑定客户，无法进入客户中台', 'SITE_CUSTOMER_MISSING', 422);
+    }
+    $userStmt = $sitePdo->prepare("SELECT * FROM admin_users WHERE customer_id = :customer_id AND role = 'customer_admin' AND status = 'active' ORDER BY id ASC LIMIT 1");
+    $userStmt->execute(['customer_id' => $customerId]);
+    $customerUser = $userStmt->fetch();
+    if (!$customerUser) {
+        $baseUsername = 'customer_' . $customerId . '@huajian.local';
+        $username = $baseUsername;
+        $suffix = 1;
+        while (true) {
+            $exists = $sitePdo->prepare('SELECT COUNT(*) FROM admin_users WHERE username = ?');
+            $exists->execute([$username]);
+            if ((int)$exists->fetchColumn() === 0) {
+                break;
+            }
+            $suffix++;
+            $username = 'customer_' . $customerId . '_' . $suffix . '@huajian.local';
+        }
+        $displayName = trim((string)($site['customer_name'] ?? '')) ?: ('客户 ' . $customerId . ' 管理员');
+        $time = now();
+        $insert = $sitePdo->prepare("INSERT INTO admin_users (username, password_hash, display_name, customer_id, role, status, created_at, updated_at)
+            VALUES (:username, :password_hash, :display_name, :customer_id, 'customer_admin', 'active', :created_at, :updated_at)");
+        $insert->execute([
+            'username' => $username,
+            'password_hash' => password_hash(bin2hex(random_bytes(18)), PASSWORD_DEFAULT),
+            'display_name' => mb_substr($displayName, 0, 100, 'UTF-8'),
+            'customer_id' => $customerId,
+            'created_at' => $time,
+            'updated_at' => $time,
+        ]);
+        $customerUser = fetch_one($sitePdo, 'admin_users', (int)$sitePdo->lastInsertId());
+    }
+    if (!$customerUser) {
+        fail('客户中台账号创建失败', 'CUSTOMER_ADMIN_CREATE_FAILED', 500);
+    }
+    $session = issue_admin_session($sitePdo, (int)$customerUser['id'], 86400);
+    $user = [
+        'id' => (int)$customerUser['id'],
+        'username' => (string)$customerUser['username'],
+        'display_name' => (string)$customerUser['display_name'],
+        'role' => (string)$customerUser['role'],
+        'customer_id' => (int)$customerUser['customer_id'],
+    ];
+    return [
+        'token' => $session['token'],
+        'expires_at' => $session['expires_at'],
+        'current_site_id' => $siteId,
+        'site' => $site,
+        'user' => auth_context_payload($sitePdo, $main, $user),
+        'impersonated_by' => [
+            'id' => (int)$platformUser['id'],
+            'username' => (string)$platformUser['username'],
+            'display_name' => (string)($platformUser['display_name'] ?? $platformUser['username']),
+        ],
+    ];
+}
+
 function deploy_node_payload(array $data, array $current = []): array
 {
     $name = trim((string)($data['name'] ?? ($current['name'] ?? '')));
@@ -8464,6 +8559,12 @@ try {
             LEFT JOIN deploy_nodes n ON n.id = s.deploy_node_id
             ORDER BY s.id DESC");
         ok(['items' => $stmt->fetchAll()]);
+    }
+
+    if ($params = route_param('/platform/sites/{id}/impersonate', $path)) {
+        if ($method === 'POST') {
+            ok(platform_impersonate_site($pdo, main_pdo(), (int)$params['id'], $user), '已进入客户中台');
+        }
     }
 
     if ($params = route_param('/platform/sites/{id}', $path)) {

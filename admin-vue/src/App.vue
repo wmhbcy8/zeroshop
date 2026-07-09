@@ -179,6 +179,12 @@
               <el-table-column prop="deploy_node_name" label="部署节点" width="160" />
               <el-table-column prop="public_path" label="发布目录" min-width="220" />
               <el-table-column prop="status" label="状态" width="100" />
+              <el-table-column label="操作" width="180">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="openSite(row)">查看</el-button>
+                  <el-button link type="success" @click="impersonatePlatformSite(row)">进入中台</el-button>
+                </template>
+              </el-table-column>
             </el-table>
           </el-card>
           <el-card class="panel mt16" shadow="never">
@@ -3671,6 +3677,18 @@ function openSite(item: any) {
   view.value = 'settings'
   ElMessage.success(`已进入：${item.name}`)
   Promise.all([loadSettings(), loadStaticPages()])
+}
+
+async function impersonatePlatformSite(item: any) {
+  const data = await request(`/api/platform/sites/${item.id}/impersonate`, { method: 'POST' })
+  token.value = data.token
+  localStorage.setItem(TOKEN_KEY, data.token)
+  currentUser.value = data.user
+  currentSiteId.value = data.current_site_id || item.id
+  view.value = 'dashboard'
+  syncCurrentScopedWorkflows()
+  ElMessage.success(`已进入客户中台：${data.site?.name || item.name}`)
+  await loadAll()
 }
 
 function resetSiteForm() {

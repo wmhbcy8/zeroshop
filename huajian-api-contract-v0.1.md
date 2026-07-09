@@ -328,6 +328,41 @@ POST /api/platform/sites/{id}/impersonate
 
 平台管理员临时进入某个客户站点后台。
 
+行为：
+
+```text
+仅平台管理员可调用。
+系统查找站点所属客户的 customer_admin 账号。
+如果客户还没有中台账号，自动创建一个平台代管账号。
+签发短期客户中台 Token，并返回当前站点 ID。
+前端拿到 Token 后切换到客户中台视图。
+```
+
+响应：
+
+```json
+{
+  "token": "customer-admin-token",
+  "expires_at": "2026-07-10 12:00:00",
+  "current_site_id": 10001,
+  "site": {
+    "id": 10001,
+    "name": "楚云数航官网",
+    "customer_id": 1
+  },
+  "user": {
+    "role": "customer_admin",
+    "customer_id": 1,
+    "site_scope": "customer",
+    "allowed_site_ids": [10001, 10002]
+  },
+  "impersonated_by": {
+    "id": 1,
+    "username": "admin"
+  }
+}
+```
+
 ## 8.3 模板管理
 
 ```http
