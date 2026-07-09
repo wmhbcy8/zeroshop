@@ -3,83 +3,83 @@
   "scopes": [
     {
       "key": "global",
-      "title": "全站模块",
-      "description": "跨页面生效的基础体验模块，适合导航、客服、询盘、搜索和辅助操作。"
+      "title": "Global modules",
+      "description": "Shared modules used across the whole static site, such as search, inquiry, navigation helpers, and customer-service entry points."
     },
     {
       "key": "home",
-      "title": "首页模块",
-      "description": "用于首页搭积木的内容区块，适合品牌介绍、产品、文章、案例和 FAQ。"
+      "title": "Home modules",
+      "description": "Reusable homepage building blocks for brand introduction, advantages, cases, products, articles, FAQ, and inquiry conversion."
     },
     {
       "key": "detail",
-      "title": "详情页模块",
-      "description": "用于文章详情和商品详情的结构化增强模块，适合 SEO、转化和内部链接。"
+      "title": "Detail modules",
+      "description": "Enhancement modules for article and product detail pages, focused on SEO, conversion, breadcrumbs, and related links."
     }
   ],
   "modules": [
     {
       "key": "search_nav",
-      "title": "搜索入口",
+      "title": "Search entry",
       "scope": "global",
       "enabled_by_default": true,
       "config_path": "global_modules.search_nav",
       "render_slot": "header.nav.after",
-      "description": "在主导航中显示站内搜索入口，读取静态 search.json，不依赖数据库。"
+      "description": "Adds a static-site search entry that reads search.json without querying the database."
     },
     {
       "key": "floating_inquiry",
-      "title": "浮动询盘按钮",
+      "title": "Floating inquiry",
       "scope": "global",
       "enabled_by_default": true,
       "config_path": "global_modules.floating_inquiry",
       "render_slot": "footer.before_scripts",
-      "description": "在前台页面右下角显示联系页、电话、邮箱、WhatsApp 和微信等快捷咨询入口。"
+      "description": "Shows a floating inquiry button with contact page, phone, email, WhatsApp, and WeChat shortcuts."
     },
     {
       "key": "about",
-      "title": "图文介绍",
+      "title": "About intro",
       "scope": "home",
       "enabled_by_default": true,
       "config_path": "home_modules.about",
       "render_slot": "home.content",
-      "description": "展示企业介绍、业务定位、品牌说明和关键能力。"
+      "description": "Presents company positioning, brand story, core capabilities, and business introduction."
     },
     {
       "key": "advantages",
-      "title": "优势卖点",
+      "title": "Advantages",
       "scope": "home",
       "enabled_by_default": true,
       "config_path": "home_modules.advantages",
       "render_slot": "home.content",
-      "description": "用卡片展示服务优势、产品卖点、技术能力或交付能力。"
+      "description": "Displays service strengths, product selling points, technical capabilities, or delivery advantages as cards."
     },
     {
       "key": "cases",
-      "title": "案例展示",
+      "title": "Cases",
       "scope": "home",
       "enabled_by_default": true,
       "config_path": "home_modules.cases",
       "render_slot": "home.content",
-      "description": "展示客户案例、应用场景或解决方案成果。"
+      "description": "Displays customer cases, application scenarios, or solution outcomes."
     },
     {
       "key": "products",
-      "title": "产品模块",
+      "title": "Products",
       "scope": "home",
       "enabled_by_default": true,
       "config_path": "home_modules.products",
       "render_slot": "home.content",
-      "description": "聚合已发布商品，适合企业官网和独立站商城。"
+      "description": "Aggregates published products for company websites and independent storefronts."
     },
     {
       "key": "articles",
-      "title": "文章模块",
+      "title": "Articles",
       "scope": "home",
       "enabled_by_default": true,
       "config_path": "home_modules.articles",
       "render_slot": "home.content",
-      "description": "聚合行业资讯和知识库文章，用于 SEO 内容沉淀。"
+      "description": "Aggregates industry articles and knowledge-base content for SEO growth."
     },
     {
       "key": "faq",
@@ -88,34 +88,34 @@
       "enabled_by_default": true,
       "config_path": "home_modules.faq",
       "render_slot": "home.content",
-      "description": "展示常见问题，降低咨询成本并补充长尾关键词。"
+      "description": "Displays frequently asked questions to reduce inquiry friction and enrich long-tail keywords."
     },
     {
       "key": "inquiry",
-      "title": "询盘表单",
+      "title": "Inquiry form",
       "scope": "home",
       "enabled_by_default": true,
       "config_path": "home_modules.inquiry",
       "render_slot": "home.content",
-      "description": "在首页收集客户姓名、电话、邮箱和需求。"
+      "description": "Collects visitor name, phone, email, and inquiry details on the homepage."
     },
     {
       "key": "breadcrumbs",
-      "title": "面包屑导航",
+      "title": "Breadcrumbs",
       "scope": "detail",
       "enabled_by_default": true,
       "config_path": "global_modules.breadcrumbs",
       "render_slot": "detail.before_content",
-      "description": "在文章和商品详情页展示层级路径，增强 SEO 和用户返回路径。"
+      "description": "Shows hierarchical paths on article and product detail pages for SEO and navigation."
     },
     {
       "key": "related",
-      "title": "相关推荐",
+      "title": "Related content",
       "scope": "detail",
       "enabled_by_default": true,
       "config_path": "global_modules.related",
       "render_slot": "detail.after_content",
-      "description": "在详情页展示相关文章或相关产品，提升内链和继续浏览率。"
+      "description": "Shows related articles or products on detail pages to improve internal linking and browsing depth."
     }
   ]
 }

@@ -1172,10 +1172,32 @@
                     <template #default="{ row }"><el-tag :type="row.enabled_by_default ? 'success' : 'info'">{{ row.enabled_by_default ? '是' : '否' }}</el-tag></template>
                   </el-table-column>
                   <el-table-column prop="description" label="说明" min-width="260" />
+                  <el-table-column label="操作" width="170">
+                    <template #default="{ row }">
+                      <el-button link type="primary" @click="openModuleDetail(row)">详情</el-button>
+                      <el-button v-if="row.scope === 'home'" link type="success" @click="addHomeModuleFromRegistry(row)">加入首页</el-button>
+                    </template>
+                  </el-table-column>
                 </el-table>
               </el-card>
             </el-col>
           </el-row>
+          <el-drawer v-model="moduleDetailDrawerVisible" size="560px" title="模块详情">
+            <el-descriptions :column="1" border>
+              <el-descriptions-item label="模块名称">{{ moduleDetail.title || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="模块Key">{{ moduleDetail.key || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="作用范围">{{ moduleScopeTitle(moduleDetail.scope) }}</el-descriptions-item>
+              <el-descriptions-item label="配置路径">{{ moduleDetail.config_path || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="渲染插槽">{{ moduleDetail.render_slot || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="默认启用">{{ moduleDetail.enabled_by_default ? '是' : '否' }}</el-descriptions-item>
+              <el-descriptions-item label="说明">{{ moduleDetail.description || '-' }}</el-descriptions-item>
+            </el-descriptions>
+            <div class="drawer-actions mt16">
+              <el-button v-if="moduleDetail.scope === 'home'" type="primary" @click="addHomeModuleFromRegistry(moduleDetail)">加入首页模块</el-button>
+              <el-button v-if="moduleDetail.scope === 'global'" @click="setView('templates')">配置全站模块</el-button>
+              <el-button v-if="moduleDetail.scope === 'detail'" @click="setView('templates')">配置详情页增强</el-button>
+            </div>
+          </el-drawer>
         </section>
 
         <section v-if="view === 'templates'">
@@ -2914,6 +2936,7 @@ const domainApplicationDrawerVisible = ref(false)
 const platformDomainApplicationDrawerVisible = ref(false)
 const platformPublishTaskDrawerVisible = ref(false)
 const platformTemplateImportDrawerVisible = ref(false)
+const moduleDetailDrawerVisible = ref(false)
 const publishDrawerVisible = ref(false)
 const deployTaskDrawerVisible = ref(false)
 const siteDrawerVisible = ref(false)
@@ -2961,6 +2984,7 @@ const publishDetail = reactive<any>({})
 const deployTaskDetail = reactive<any>({})
 const platformPublishTaskDetail = reactive<any>({})
 const batchTaskDetail = reactive<any>({})
+const moduleDetail = reactive<any>({})
 const categoryForm = reactive<any>({})
 const categoryType = ref<'article' | 'product'>('article')
 const tagForm = reactive<any>({})
@@ -4348,6 +4372,35 @@ function moduleScopeTitle(scope: string) {
 
 function resetHomeModules() {
   site.home_modules = defaultHomeModules()
+}
+
+function openModuleDetail(row: any) {
+  Object.assign(moduleDetail, row || {})
+  moduleDetailDrawerVisible.value = true
+}
+
+function addHomeModuleFromRegistry(row: any) {
+  if (!row?.key || row.scope !== 'home') {
+    ElMessage.warning('只有首页模块可以加入首页模块列表')
+    return
+  }
+  const existing = (site.home_modules || []).find((item: any) => item.key === row.key)
+  if (existing) {
+    existing.enabled = true
+    ElMessage.success('模块已在首页列表中，已为你启用')
+    return
+  }
+  const maxOrder = Math.max(0, ...(site.home_modules || []).map((item: any) => Number(item.sort_order || 0)))
+  site.home_modules = [
+    ...(site.home_modules || []),
+    {
+      key: row.key,
+      title: row.title || row.key,
+      enabled: true,
+      sort_order: maxOrder + 10
+    }
+  ]
+  ElMessage.success('已加入首页模块列表，保存模板配置后生效')
 }
 
 function addNavItem() {
