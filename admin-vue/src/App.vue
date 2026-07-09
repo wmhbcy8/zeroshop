@@ -326,6 +326,58 @@
           </el-drawer>
         </section>
 
+        <section v-if="view === 'platform-system'">
+          <el-card class="panel mb16" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>平台系统设置</strong>
+                <div class="head-actions">
+                  <el-button @click="loadPlatformSystemSettings">刷新</el-button>
+                  <el-button type="primary" @click="savePlatformSystemSettings">保存设置</el-button>
+                </div>
+              </div>
+            </template>
+            <el-alert class="mb16" type="info" show-icon :closable="false" title="这里维护平台后台的基础信息和新客户默认套餐。客户独立站的站点内容、支付、AI 和部署配置仍在客户中台按站点管理。" />
+            <el-row :gutter="16">
+              <el-col :span="12">
+                <el-form :model="platformSettingsForm.platform" label-width="116px" class="wide-form">
+                  <el-divider content-position="left">平台基础</el-divider>
+                  <el-form-item label="平台名称"><el-input v-model="platformSettingsForm.platform.app_name" placeholder="化简" /></el-form-item>
+                  <el-form-item label="后台标题"><el-input v-model="platformSettingsForm.platform.admin_title" placeholder="化简 SaaS 建站集群" /></el-form-item>
+                  <el-form-item label="默认域名"><el-input v-model="platformSettingsForm.platform.base_domain" placeholder="huajian.local" /></el-form-item>
+                  <el-row :gutter="12">
+                    <el-col :span="12"><el-form-item label="客服电话"><el-input v-model="platformSettingsForm.platform.support_phone" /></el-form-item></el-col>
+                    <el-col :span="12"><el-form-item label="客服邮箱"><el-input v-model="platformSettingsForm.platform.support_email" /></el-form-item></el-col>
+                  </el-row>
+                </el-form>
+              </el-col>
+              <el-col :span="12">
+                <el-form :model="platformSettingsForm.customer_defaults" label-width="116px" class="wide-form">
+                  <el-divider content-position="left">新客户默认套餐</el-divider>
+                  <el-form-item label="默认套餐"><el-select v-model="platformSettingsForm.customer_defaults.plan_key"><el-option label="Starter" value="starter" /><el-option label="Growth" value="growth" /><el-option label="Enterprise" value="enterprise" /></el-select></el-form-item>
+                  <el-row :gutter="12">
+                    <el-col :span="8"><el-form-item label="站点数"><el-input-number v-model="platformSettingsForm.customer_defaults.max_sites" :min="1" /></el-form-item></el-col>
+                    <el-col :span="8"><el-form-item label="AI额度"><el-input-number v-model="platformSettingsForm.customer_defaults.ai_quota" :min="0" /></el-form-item></el-col>
+                    <el-col :span="8"><el-form-item label="存储MB"><el-input-number v-model="platformSettingsForm.customer_defaults.storage_quota_mb" :min="0" /></el-form-item></el-col>
+                  </el-row>
+                  <el-divider content-position="left">新站默认值</el-divider>
+                  <el-row :gutter="12">
+                    <el-col :span="8"><el-form-item label="语言"><el-input v-model="platformSettingsForm.site_defaults.language" /></el-form-item></el-col>
+                    <el-col :span="8"><el-form-item label="模板"><el-input v-model="platformSettingsForm.site_defaults.template_key" /></el-form-item></el-col>
+                    <el-col :span="8"><el-form-item label="子域后缀"><el-input v-model="platformSettingsForm.site_defaults.subdomain_suffix" /></el-form-item></el-col>
+                  </el-row>
+                </el-form>
+              </el-col>
+            </el-row>
+          </el-card>
+          <div class="metric-grid">
+            <MetricCard title="默认站点数" :value="platformSettingsForm.customer_defaults.max_sites || 0" note="新建客户自动带出" icon="Grid" />
+            <MetricCard title="默认AI额度" :value="platformSettingsForm.customer_defaults.ai_quota || 0" note="客户套餐初始额度" icon="Cpu" />
+            <MetricCard title="默认存储" :value="platformSettingsForm.customer_defaults.storage_quota_mb || 0" suffix="MB" note="媒体库容量限制" icon="Folder" />
+            <MetricCard title="默认模板" :value="platformSettingsForm.site_defaults.template_key || '-'" note="新站初始化模板" icon="Brush" />
+          </div>
+        </section>
+
         <section v-if="view === 'dashboard'">
           <div class="metric-grid">
             <MetricCard title="站点总数" :value="centerOverview.sites || sites.length" note="客户名下前台站点" icon="Grid" />
@@ -2576,6 +2628,7 @@ const platformOverview = ref<any>({})
 const platformCustomers = ref<any[]>([])
 const platformSites = ref<any[]>([])
 const platformDomainApplications = ref<any[]>([])
+const platformSettings = ref<any>({})
 const deployNodes = ref<any[]>([])
 const aiProviders = ref<any[]>([])
 const currentSiteId = ref<number | string>(10001)
@@ -2647,6 +2700,11 @@ const platformCustomerForm = reactive<any>({})
 const customerAdminForm = reactive<any>({})
 const deployNodeForm = reactive<any>({})
 const aiProviderForm = reactive<any>({})
+const platformSettingsForm = reactive<any>({
+  platform: { app_name: '化简', admin_title: '化简 SaaS 建站集群', base_domain: 'huajian.local', support_phone: '', support_email: '' },
+  customer_defaults: { plan_key: 'starter', max_sites: 10, ai_quota: 1000, storage_quota_mb: 1024 },
+  site_defaults: { language: 'zh-CN', template_key: 'business-clean', subdomain_suffix: 'huajian.local' }
+})
 const selectedAiProviderId = ref<number | string>('')
 const moduleScopeFilter = ref('all')
 const publishSummary = computed(() => parseSummary(publishDetail.summary))
@@ -2730,6 +2788,7 @@ const manualCollectorRewriting = ref(false)
 
 const navItems = [
   { key: 'platform', label: '平台', hint: '运营方后台：管理客户、套餐、站点和部署节点。', icon: 'Monitor' },
+  { key: 'platform-system', label: '系统', hint: '配置平台名称、默认域名、新客户套餐和新站默认值。', icon: 'Setting' },
   { key: 'dashboard', label: '概览', hint: '查看运营指标、内容数量和站点状态。', icon: 'Odometer' },
   { key: 'operations', label: '运营', hint: '统一处理跨站订单、询盘、内容分发、AI 生成和批量发布。', icon: 'Operation' },
   { key: 'sites', label: '站点', hint: '管理客户名下所有前台站点。', icon: 'Grid' },
@@ -2763,7 +2822,7 @@ const accountScopeText = computed(() => {
   const maxSites = currentUser.value.quota?.max_sites ?? quota.value?.max_sites ?? '-'
   return `客户中台 / ${plan} / ${siteCount}/${maxSites} 站`
 })
-const visibleNavItems = computed(() => navItems.filter((item) => item.key !== 'platform' || isPlatformAdmin.value))
+const visibleNavItems = computed(() => navItems.filter((item) => !['platform', 'platform-system'].includes(item.key) || isPlatformAdmin.value))
 const currentNav = computed(() => visibleNavItems.value.find((item) => item.key === view.value) || visibleNavItems.value[0])
 const currentSite = computed(() => sites.value.find((item: any) => String(item.id) === String(currentSiteId.value)))
 const aiTargetSiteIds = computed(() => siteIdsForScope(aiForm.site_scope, aiForm.site_ids))
@@ -2921,12 +2980,13 @@ async function logout() {
 }
 
 function setView(key: string) {
-  if (key === 'platform' && !isPlatformAdmin.value) {
+  if (['platform', 'platform-system'].includes(key) && !isPlatformAdmin.value) {
     view.value = 'dashboard'
     return
   }
   view.value = key
   if (key === 'platform') loadPlatform()
+  if (key === 'platform-system') loadPlatformSystemSettings()
   if (key === 'dashboard') loadDashboard()
   if (key === 'operations') refreshOperations()
   if (key === 'sites') loadSites()
@@ -2956,6 +3016,7 @@ function refreshCurrentView() {
     dashboard: loadDashboard,
     operations: refreshOperations,
     platform: loadPlatform,
+    'platform-system': loadPlatformSystemSettings,
     sites: loadSites,
     domains: async () => { await Promise.all([loadDomains(), loadDomainApplications()]) },
     settings: async () => { await Promise.all([loadSettings(), loadStaticPages()]) },
@@ -3029,13 +3090,14 @@ async function loadAll() {
 
 async function loadPlatform() {
   if (!isPlatformAdmin.value) return
-  const [overview, customers, siteData, nodes, providers, domainApps] = await Promise.all([
+  const [overview, customers, siteData, nodes, providers, domainApps, systemSettings] = await Promise.all([
     request('/api/platform/overview'),
     request('/api/platform/customers?page_size=100'),
     request('/api/platform/sites'),
     request('/api/platform/deploy-nodes'),
     request('/api/platform/ai-providers'),
-    request('/api/platform/domain-applications?page_size=100')
+    request('/api/platform/domain-applications?page_size=100'),
+    request('/api/platform/system-settings')
   ])
   platformOverview.value = overview || {}
   platformCustomers.value = customers.items || []
@@ -3043,6 +3105,42 @@ async function loadPlatform() {
   deployNodes.value = nodes.items || []
   aiProviders.value = providers.items || []
   platformDomainApplications.value = domainApps.items || []
+  applyPlatformSettings(systemSettings)
+}
+
+function applyPlatformSettings(data: any = {}) {
+  platformSettings.value = data || {}
+  Object.assign(platformSettingsForm.platform, {
+    app_name: data.platform?.app_name || '化简',
+    admin_title: data.platform?.admin_title || '化简 SaaS 建站集群',
+    base_domain: data.platform?.base_domain || 'huajian.local',
+    support_phone: data.platform?.support_phone || '',
+    support_email: data.platform?.support_email || ''
+  })
+  Object.assign(platformSettingsForm.customer_defaults, {
+    plan_key: data.customer_defaults?.plan_key || 'starter',
+    max_sites: Number(data.customer_defaults?.max_sites || 10),
+    ai_quota: Number(data.customer_defaults?.ai_quota || 1000),
+    storage_quota_mb: Number(data.customer_defaults?.storage_quota_mb || 1024)
+  })
+  Object.assign(platformSettingsForm.site_defaults, {
+    language: data.site_defaults?.language || 'zh-CN',
+    template_key: data.site_defaults?.template_key || 'business-clean',
+    subdomain_suffix: data.site_defaults?.subdomain_suffix || data.platform?.base_domain || 'huajian.local'
+  })
+}
+
+async function loadPlatformSystemSettings() {
+  if (!isPlatformAdmin.value) return
+  const data = await request('/api/platform/system-settings')
+  applyPlatformSettings(data)
+}
+
+async function savePlatformSystemSettings() {
+  const data = await request('/api/platform/system-settings', { method: 'PUT', data: platformSettingsForm })
+  applyPlatformSettings(data)
+  ElMessage.success('平台系统设置已保存')
+  await loadPlatform()
 }
 
 async function loadDashboard() {
@@ -3271,16 +3369,17 @@ function domainSslTag(value: string) {
 }
 
 function resetPlatformCustomerForm() {
+  const defaults = platformSettingsForm.customer_defaults || {}
   Object.assign(platformCustomerForm, {
     id: '',
     name: '',
     company: '',
     phone: '',
     email: '',
-    plan_key: 'starter',
-    max_sites: 10,
-    ai_quota: 1000,
-    storage_quota_mb: 1024,
+    plan_key: defaults.plan_key || 'starter',
+    max_sites: Number(defaults.max_sites || 10),
+    ai_quota: Number(defaults.ai_quota || 1000),
+    storage_quota_mb: Number(defaults.storage_quota_mb || 1024),
     expires_at: '',
     status: 'active'
   })

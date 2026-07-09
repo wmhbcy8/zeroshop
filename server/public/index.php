@@ -1567,6 +1567,11 @@ function ensure_center_tables(PDO $main): void
         INDEX idx_domain (domain),
         INDEX idx_status (status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $main->exec("CREATE TABLE IF NOT EXISTS platform_settings (
+        setting_key VARCHAR(120) PRIMARY KEY,
+        setting_value TEXT,
+        updated_at DATETIME NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $main->exec("CREATE TABLE IF NOT EXISTS batch_tasks (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
         task_no VARCHAR(80) NOT NULL UNIQUE,
@@ -2384,8 +2389,88 @@ function list_operation_logs(PDO $main): array
     ];
 }
 
+function platform_system_defaults(): array
+{
+    return [
+        'platform' => [
+            'app_name' => '化简',
+            'admin_title' => '化简 SaaS 建站集群',
+            'base_domain' => 'huajian.local',
+            'support_phone' => '',
+            'support_email' => '',
+        ],
+        'customer_defaults' => [
+            'plan_key' => 'starter',
+            'max_sites' => 10,
+            'ai_quota' => 1000,
+            'storage_quota_mb' => 1024,
+        ],
+        'site_defaults' => [
+            'language' => 'zh-CN',
+            'template_key' => 'business-clean',
+            'subdomain_suffix' => 'huajian.local',
+        ],
+    ];
+}
+
+function platform_system_settings(PDO $main): array
+{
+    ensure_center_tables($main);
+    $defaults = platform_system_defaults();
+    $stmt = $main->query('SELECT setting_key, setting_value, updated_at FROM platform_settings');
+    $settings = $defaults;
+    $updatedAt = '';
+    foreach ($stmt->fetchAll() as $row) {
+        $decoded = json_decode((string)($row['setting_value'] ?? ''), true);
+        if (is_array($decoded)) {
+            $key = (string)$row['setting_key'];
+            $settings[$key] = array_replace_recursive($settings[$key] ?? [], $decoded);
+            $updatedAt = max($updatedAt, (string)($row['updated_at'] ?? ''));
+        }
+    }
+    $settings['updated_at'] = $updatedAt;
+    return $settings;
+}
+
+function save_platform_system_settings(PDO $main, array $data): array
+{
+    ensure_center_tables($main);
+    $current = platform_system_settings($main);
+    $settings = [
+        'platform' => [
+            'app_name' => mb_substr(trim((string)($data['platform']['app_name'] ?? $data['app_name'] ?? $current['platform']['app_name'] ?? '化简')), 0, 80, 'UTF-8') ?: '化简',
+            'admin_title' => mb_substr(trim((string)($data['platform']['admin_title'] ?? $current['platform']['admin_title'] ?? '化简 SaaS 建站集群')), 0, 120, 'UTF-8'),
+            'base_domain' => mb_substr(trim((string)($data['platform']['base_domain'] ?? $current['platform']['base_domain'] ?? '')), 0, 180, 'UTF-8'),
+            'support_phone' => mb_substr(trim((string)($data['platform']['support_phone'] ?? $current['platform']['support_phone'] ?? '')), 0, 60, 'UTF-8'),
+            'support_email' => mb_substr(trim((string)($data['platform']['support_email'] ?? $current['platform']['support_email'] ?? '')), 0, 120, 'UTF-8'),
+        ],
+        'customer_defaults' => [
+            'plan_key' => mb_substr(trim((string)($data['customer_defaults']['plan_key'] ?? $current['customer_defaults']['plan_key'] ?? 'starter')), 0, 60, 'UTF-8') ?: 'starter',
+            'max_sites' => max(1, (int)($data['customer_defaults']['max_sites'] ?? $current['customer_defaults']['max_sites'] ?? 10)),
+            'ai_quota' => max(0, (int)($data['customer_defaults']['ai_quota'] ?? $current['customer_defaults']['ai_quota'] ?? 1000)),
+            'storage_quota_mb' => max(0, (int)($data['customer_defaults']['storage_quota_mb'] ?? $current['customer_defaults']['storage_quota_mb'] ?? 1024)),
+        ],
+        'site_defaults' => [
+            'language' => mb_substr(trim((string)($data['site_defaults']['language'] ?? $current['site_defaults']['language'] ?? 'zh-CN')), 0, 20, 'UTF-8') ?: 'zh-CN',
+            'template_key' => mb_substr(trim((string)($data['site_defaults']['template_key'] ?? $current['site_defaults']['template_key'] ?? 'business-clean')), 0, 100, 'UTF-8') ?: 'business-clean',
+            'subdomain_suffix' => mb_substr(trim((string)($data['site_defaults']['subdomain_suffix'] ?? $current['site_defaults']['subdomain_suffix'] ?? '')), 0, 180, 'UTF-8'),
+        ],
+    ];
+    $now = now();
+    $stmt = $main->prepare('REPLACE INTO platform_settings (setting_key, setting_value, updated_at) VALUES (:setting_key, :setting_value, :updated_at)');
+    foreach ($settings as $key => $value) {
+        $stmt->execute([
+            'setting_key' => $key,
+            'setting_value' => json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'updated_at' => $now,
+        ]);
+    }
+    return platform_system_settings($main);
+}
+
 function platform_customer_payload(array $data, array $current = []): array
 {
+    $defaults = platform_system_settings(main_pdo())['customer_defaults'] ?? [];
     $name = trim((string)($data['name'] ?? ($current['name'] ?? '')));
     if ($name === '') {
         fail('客户名称不能为空', 'VALIDATION_ERROR', 422);
@@ -2401,9 +2486,9 @@ function platform_customer_payload(array $data, array $current = []): array
         'phone' => mb_substr(trim((string)($data['phone'] ?? ($current['phone'] ?? ''))), 0, 50, 'UTF-8'),
         'email' => mb_substr(trim((string)($data['email'] ?? ($current['email'] ?? ''))), 0, 120, 'UTF-8'),
         'plan_key' => mb_substr($plan, 0, 60, 'UTF-8'),
-        'max_sites' => max(1, (int)($data['max_sites'] ?? ($current['max_sites'] ?? 10))),
-        'ai_quota' => max(0, (int)($data['ai_quota'] ?? ($current['ai_quota'] ?? 1000))),
-        'storage_quota_mb' => max(0, (int)($data['storage_quota_mb'] ?? ($current['storage_quota_mb'] ?? 1024))),
+        'max_sites' => max(1, (int)($data['max_sites'] ?? ($current['max_sites'] ?? ($defaults['max_sites'] ?? 10)))),
+        'ai_quota' => max(0, (int)($data['ai_quota'] ?? ($current['ai_quota'] ?? ($defaults['ai_quota'] ?? 1000)))),
+        'storage_quota_mb' => max(0, (int)($data['storage_quota_mb'] ?? ($current['storage_quota_mb'] ?? ($defaults['storage_quota_mb'] ?? 1024)))),
         'expires_at' => trim((string)($data['expires_at'] ?? ($current['expires_at'] ?? ''))) ?: null,
         'status' => $status,
     ];
@@ -7480,6 +7565,14 @@ try {
             'ai_providers' => (int)$main->query('SELECT COUNT(*) FROM ai_providers')->fetchColumn(),
             'active_ai_providers' => (int)$main->query("SELECT COUNT(*) FROM ai_providers WHERE status = 'enabled'")->fetchColumn(),
         ]);
+    }
+
+    if ($method === 'GET' && $path === '/platform/system-settings') {
+        ok(platform_system_settings(main_pdo()));
+    }
+
+    if ($method === 'PUT' && $path === '/platform/system-settings') {
+        ok(save_platform_system_settings(main_pdo(), body_json()), '平台系统设置已保存');
     }
 
     if ($method === 'GET' && $path === '/platform/customers') {
