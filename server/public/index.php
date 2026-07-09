@@ -5280,23 +5280,70 @@ function read_site_settings_key(PDO $pdo, string $key): array
 
 function site_settings_key(int $siteId): string
 {
-    return $siteId === 10001 ? 'site' : 'site_' . $siteId;
+    return 'site_' . $siteId;
+}
+
+function site_default_settings(PDO $pdo): array
+{
+    return read_site_settings_key($pdo, 'site');
+}
+
+function ensure_primary_site_settings_override(PDO $pdo, int $siteId): void
+{
+    if ($siteId !== 10001) {
+        return;
+    }
+    try {
+        $stmt = $pdo->prepare("INSERT IGNORE INTO site_settings (setting_key, setting_value, updated_at)
+            SELECT 'site_10001', setting_value, updated_at FROM site_settings WHERE setting_key = 'site' LIMIT 1");
+        $stmt->execute();
+    } catch (Throwable $error) {
+        // Legacy migration must not interrupt normal settings reads.
+    }
 }
 
 function site_settings(PDO $pdo, ?int $siteId = null): array
 {
     $siteId = $siteId ?: requested_site_id();
-    $base = read_site_settings_key($pdo, 'site');
+    ensure_primary_site_settings_override($pdo, $siteId);
+    $base = site_default_settings($pdo);
     $settings = $base;
-    if ($siteId !== 10001) {
-        $override = read_site_settings_key($pdo, site_settings_key($siteId));
-        if ($override) {
-            $settings = array_replace_recursive($base, $override);
-        }
+    $override = read_site_settings_key($pdo, site_settings_key($siteId));
+    if ($override) {
+        $settings = array_replace_recursive($base, $override);
     }
     $settings['site_id'] = $siteId;
-    $settings['settings_scope'] = $siteId === 10001 ? 'default' : 'site';
-    $settings['has_site_override'] = $siteId === 10001 ? true : (bool)read_site_settings_key($pdo, site_settings_key($siteId));
+    $settings['settings_scope'] = $override ? 'site' : 'default';
+    $settings['has_site_override'] = (bool)$override;
+    return $settings;
+}
+
+function save_site_default_settings(PDO $pdo, array $settings): array
+{
+    unset($settings['settings_scope'], $settings['has_site_override'], $settings['_preserve_service_configs']);
+    $current = site_default_settings($pdo);
+    if (isset($settings['ai']) && is_array($settings['ai'])) {
+        if (array_key_exists('api_key', $settings['ai'])) {
+            $incomingKey = trim((string)$settings['ai']['api_key']);
+            if ($incomingKey === '' && !empty($current['ai']['api_key'])) {
+                $settings['ai']['api_key'] = (string)$current['ai']['api_key'];
+            }
+        } elseif (!empty($current['ai']['api_key'])) {
+            $settings['ai']['api_key'] = (string)$current['ai']['api_key'];
+        }
+        $settings['ai'] = encrypt_secret_array($settings['ai'], ['api_key']);
+    }
+    unset($settings['site_id']);
+    $settings['updated_at'] = now();
+    $stmt = $pdo->prepare("REPLACE INTO site_settings (setting_key, setting_value, updated_at) VALUES (:key, :value, :updated_at)");
+    $stmt->execute([
+        'key' => 'site',
+        'value' => json_encode($settings, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'updated_at' => $settings['updated_at'],
+    ]);
+    $settings = site_default_settings($pdo);
+    $settings['settings_scope'] = 'default';
+    $settings['has_site_override'] = false;
     return $settings;
 }
 
@@ -8123,9 +8170,9 @@ try {
     if ($method === 'PUT' && $path === '/site/settings-default') {
         $data = body_json();
         if (!empty($data['_preserve_service_configs'])) {
-            $data = preserve_service_configs($data, site_settings($pdo, 10001));
+            $data = preserve_service_configs($data, site_default_settings($pdo));
         }
-        ok(sanitize_site_settings_for_response(save_site_settings($pdo, $data, 10001)), '公共默认设置已保存');
+        ok(sanitize_site_settings_for_response(save_site_default_settings($pdo, $data)), '公共默认设置已保存');
     }
 
     if ($method === 'POST' && $path === '/site/settings/apply-all') {

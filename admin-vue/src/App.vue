@@ -2909,7 +2909,6 @@ const serviceConfigCards = computed(() => [
   }
 ])
 const settingsScopeText = computed(() => {
-  if (String(currentSiteId.value) === '10001') return '正在编辑公共默认配置'
   return site.has_site_override ? '当前站点已有独立配置' : '当前站点正在继承公共默认配置'
 })
 const staticPageGroups = computed(() => {
