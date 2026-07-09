@@ -1604,7 +1604,7 @@
               <div class="card-head">
                 <strong>当前站点 AI 配置</strong>
                 <div class="head-actions">
-                  <el-button @click="saveSettings">保存当前站点 AI</el-button>
+                  <el-button @click="saveAiSettings">保存当前站点 AI</el-button>
                   <el-button @click="saveSettingsAsDefault">保存为公共默认</el-button>
                 </div>
               </div>
@@ -2209,7 +2209,7 @@
               <div class="card-head">
                 <strong>当前站点支付配置</strong>
                 <div class="head-actions">
-                  <el-button @click="saveSettings">保存当前站点支付</el-button>
+                  <el-button @click="savePaymentSettings">保存当前站点支付</el-button>
                   <el-button @click="saveSettingsAsDefault">保存为公共默认</el-button>
                 </div>
               </div>
@@ -4031,7 +4031,7 @@ function switchSite() {
   publishResult.value = null
   syncCurrentScopedWorkflows()
   const contentRefresh = contentListSiteScope.value === 'current'
-    ? Promise.all([loadArticles(), loadProducts(), loadPages()])
+    ? refreshContentDistributionViews({ pages: true, tags: true })
     : Promise.resolve()
   Promise.all([loadDomains(), loadStaticPages(), refreshCurrentView(), contentRefresh])
 }
@@ -4296,6 +4296,18 @@ async function saveSettings() {
   const data = await request('/api/site/settings', { method: 'PUT', data: site })
   Object.assign(site, normalizeSite(data))
   ElMessage.success('当前站点设置已保存，生成静态站后前台生效')
+}
+
+async function saveAiSettings() {
+  const data = await request('/api/site/settings', { method: 'PUT', data: site })
+  Object.assign(site, normalizeSite(data))
+  ElMessage.success('当前站点 AI 配置已保存，文章、商品、图片生成会使用这套接口')
+}
+
+async function savePaymentSettings() {
+  const data = await request('/api/site/settings', { method: 'PUT', data: site })
+  Object.assign(site, normalizeSite(data))
+  ElMessage.success('当前站点支付配置已保存，可继续在支付菜单分配通道和处理凭证')
 }
 
 async function savePublishDeploySettings() {
@@ -4860,6 +4872,19 @@ async function syncGeneratedSitesForContent(siteIds: any[] = [], reason = '内�
   await executeSiteBatch('generate', targets, reason)
 }
 
+async function refreshContentDistributionViews(options: { tags?: boolean; tasks?: boolean; pages?: boolean } = {}) {
+  const loaders: Promise<any>[] = [
+    loadArticles(),
+    loadProducts(),
+    loadDashboard(),
+    loadSites()
+  ]
+  if (options.pages) loaders.push(loadPages(), loadStaticPages())
+  if (options.tags) loaders.push(loadTags())
+  if (options.tasks) loaders.push(loadAiTasks(), loadTaskStream())
+  await Promise.all(loaders)
+}
+
 async function bulkDistributeContent(type: 'article' | 'product' | 'page', payload: any, reload: () => Promise<void>) {
   const items = Array.isArray(payload?.items) ? payload.items : []
   if (!items.length) {
@@ -5284,7 +5309,7 @@ async function confirmAiTask(row: any, action: 'save_draft' | 'publish' | 'disca
   const site_scope = inferSiteScope(site_ids)
   await request(`/api/ai/tasks/${row.id}/confirm`, { method: 'POST', data: { action, site_scope, site_ids } })
   ElMessage.success('AI 任务已处理')
-  await Promise.all([loadAiTasks(), loadArticles(), loadProducts(), loadDashboard(), loadSites()])
+  await refreshContentDistributionViews({ tasks: true, tags: true })
   if (action !== 'discard') {
     await syncGeneratedSitesForContent(site_ids, 'AI 任务确认后自动生成')
   }
@@ -5304,7 +5329,7 @@ async function confirmAiTaskWithCurrentScope(row: any, action: 'save_draft' | 'p
     }
   })
   ElMessage.success(`AI 任务已按当前范围${actionText}`)
-  await Promise.all([loadAiTasks(), loadArticles(), loadProducts(), loadDashboard(), loadSites()])
+  await refreshContentDistributionViews({ tasks: true, tags: true })
   await syncGeneratedSitesForContent(site_ids, `AI 任务${actionText}后自动生成`)
 }
 
@@ -5330,13 +5355,11 @@ async function saveAiDraft(item: any, index: number, status: 'draft' | 'publishe
   const payload = { ...item, status, site_scope: aiForm.site_scope, site_ids }
   if (item.type === 'article') {
     await request('/api/articles', { method: 'POST', data: payload })
-    await loadArticles()
   } else {
     await request('/api/products', { method: 'POST', data: payload })
-    await loadProducts()
   }
   aiDrafts.value.splice(index, 1)
-  await Promise.all([loadDashboard(), loadSites()])
+  await refreshContentDistributionViews({ tags: item.type === 'article' })
   ElMessage.success(status === 'published' ? '已发布到选定站点' : '已保存为草稿')
   await syncGeneratedSitesForContent(site_ids, status === 'published' ? 'AI 草稿发布后自动生成' : 'AI 草稿保存后自动生成')
 }
@@ -5350,7 +5373,7 @@ async function batchCreateAiContent() {
     const site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
     const data = await request(path, { method: 'POST', data: { prompt: aiForm.prompt, count: aiForm.count, status: aiForm.status, site_scope: aiForm.site_scope, site_ids } })
     ElMessage.success(`已批量生成 ${data.count || 0} 条内容`)
-    await Promise.all([loadArticles(), loadProducts(), loadAiTasks(), loadTaskStream(), loadDashboard(), loadSites()])
+    await refreshContentDistributionViews({ tasks: true, tags: true })
     await syncGeneratedSitesForContent(site_ids, 'AI 批量入库后自动生成')
   } finally {
     aiBatchLoading.value = false
