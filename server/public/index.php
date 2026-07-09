@@ -7259,6 +7259,7 @@ function create_ai_task(PDO $pdo, array $data): array
     require_fields($data, ['type', 'prompt']);
     $type = in_array(($data['type'] ?? 'article'), ['article', 'product'], true) ? (string)$data['type'] : 'article';
     $count = min(20, max(1, (int)($data['count'] ?? 3)));
+    $targetStatus = in_array(($data['status'] ?? 'draft'), ['draft', 'published'], true) ? (string)$data['status'] : 'draft';
     $siteIds = normalize_site_ids($data);
     consume_ai_quota(main_pdo(), auth_user(), $count);
     $site = site_settings($pdo);
@@ -7274,6 +7275,8 @@ function create_ai_task(PDO $pdo, array $data): array
         if ($type === 'product') {
             $draft['sku'] = (string)($draft['sku'] ?? ('HJ-AI-' . date('His') . '-' . $i));
         }
+        $draft['status'] = $targetStatus;
+        $draft['published_at'] = $targetStatus === 'published' ? now() : null;
         $items[] = $draft;
     }
     $time = now();

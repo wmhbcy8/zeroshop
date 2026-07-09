@@ -4263,10 +4263,11 @@ async function deleteTag(item: any) {
 }
 
 function allSiteIds() {
-  return sites.value
+  const ids = sites.value
     .filter((item: any) => (item.status || 'active') === 'active')
     .map((item: any) => Number(item.id))
     .filter((id) => id > 0)
+  return [...new Set(ids)]
 }
 
 function currentSiteIds() {
@@ -4276,10 +4277,18 @@ function currentSiteIds() {
 function siteIdsForScope(scope: string, selected: any[] = []) {
   if (scope === 'all') return allSiteIds()
   if (scope === 'selected') {
-    const ids = (selected || []).map((id: any) => Number(id)).filter((id) => id > 0)
+    const ids = [...new Set((selected || []).map((id: any) => Number(id)).filter((id) => id > 0))]
     return ids.length ? ids : currentSiteIds()
   }
   return currentSiteIds()
+}
+
+function scopeFromListFilter() {
+  if (contentListSiteScope.value === 'all') return { site_scope: 'all', site_ids: allSiteIds() }
+  if (contentListSiteScope.value === 'current') return { site_scope: 'current', site_ids: currentSiteIds() }
+  const id = Number(contentListSiteScope.value || 0)
+  if (id > 0) return { site_scope: 'selected', site_ids: [id] }
+  return { site_scope: 'current', site_ids: currentSiteIds() }
 }
 
 function ensureSelectedSiteScope(scope: string, selected: any[] = [], label = '发布范围') {
@@ -4484,7 +4493,7 @@ function applyAiQuickCommand(item: any) {
   syncAiSiteScope()
 }
 
-function newPage() { Object.assign(pageForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', site_scope: 'current', site_ids: currentSiteIds() }) }
+function newPage() { Object.assign(pageForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', ...scopeFromListFilter() }) }
 function editPage(item: any) { Object.assign(pageForm, { ...item, site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds() }) }
 async function savePage() {
   if (!ensureSelectedSiteScope(pageForm.site_scope, pageForm.site_ids, '页面发布范围')) return
@@ -4556,7 +4565,7 @@ async function generatePageDraft(prompt: string) {
   mergeDraftIntoContentForm(pageForm, { ...(data.draft || data), content: (data.draft || data).content || '' })
 }
 
-function newArticle() { Object.assign(articleForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', tag_names: [], site_scope: 'current', site_ids: currentSiteIds() }) }
+function newArticle() { Object.assign(articleForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', tag_names: [], ...scopeFromListFilter() }) }
 function editArticle(item: any) { Object.assign(articleForm, { ...item, tag_names: item.tag_names || (item.tags || []).map((tag: any) => tag.name), site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds() }) }
 async function saveArticle() {
   if (!ensureSelectedSiteScope(articleForm.site_scope, articleForm.site_ids, '文章发布范围')) return
@@ -4591,7 +4600,7 @@ async function generateArticleDraft(prompt: string) {
   await generateContentDraft('article', prompt, articleForm)
 }
 
-function newProduct() { Object.assign(productForm, { id: '', title: '', slug: '', sku: '', cover: '', summary: '', description: '', price: 0, stock: 0, status: 'draft', site_scope: 'current', site_ids: currentSiteIds() }) }
+function newProduct() { Object.assign(productForm, { id: '', title: '', slug: '', sku: '', cover: '', summary: '', description: '', price: 0, stock: 0, status: 'draft', ...scopeFromListFilter() }) }
 function editProduct(item: any) { Object.assign(productForm, { ...item, site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds() }) }
 async function saveProduct() {
   if (!ensureSelectedSiteScope(productForm.site_scope, productForm.site_ids, '商品发布范围')) return
@@ -4688,14 +4697,16 @@ async function createAiTask() {
   if (!ensureSelectedSiteScope(aiForm.site_scope, aiForm.site_ids, 'AI 任务')) return
   aiTaskLoading.value = true
   try {
+    const site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
     const task = await request('/api/ai/tasks', {
       method: 'POST',
       data: {
         type: aiForm.type,
         prompt: aiForm.prompt,
         count: aiForm.count,
+        status: aiForm.status,
         site_scope: aiForm.site_scope,
-        site_ids: siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
+        site_ids
       }
     })
     ElMessage.success(task.message || 'AI 任务已创建')
