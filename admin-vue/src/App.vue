@@ -1652,6 +1652,43 @@
               </el-card>
             </el-col>
           </el-row>
+          <el-drawer v-model="templateRegionDrawerVisible" size="520px" title="Template editable regions">
+            <div v-if="templateRegionCurrent" class="template-region-drawer">
+              <div class="region-template-head">
+                <strong>{{ templateRegionCurrent.name || templateRegionCurrent.key }}</strong>
+                <small>{{ templateRegionCurrent.key }}</small>
+              </div>
+              <el-empty v-if="!(templateRegionCurrent.editable_regions || []).length" description="No editable regions yet" />
+              <div v-else class="editable-region-list">
+                <article v-for="region in templateRegionCurrent.editable_regions" :key="region.id || region.selector" class="editable-region-card">
+                  <div class="editable-region-title">
+                    <strong>{{ region.title || region.id }}</strong>
+                    <el-tag size="small" effect="plain">{{ region.module || region.scope || 'page' }}</el-tag>
+                  </div>
+                  <small>{{ region.source_file || 'index.html' }}</small>
+                  <div v-if="region.selector || region.selectors?.length" class="selector-row">
+                    <span v-for="selector in (region.selectors || [region.selector]).filter(Boolean)" :key="selector">{{ selector }}</span>
+                  </div>
+                  <div v-if="region.editable_fields?.length" class="tag-row">
+                    <el-tag v-for="field in region.editable_fields" :key="field" size="small" type="success" effect="plain">{{ field }}</el-tag>
+                  </div>
+                  <p v-if="region.description">{{ region.description }}</p>
+                  <div class="region-override-form">
+                    <el-input v-model="ensureTemplateRegionOverride(region).text" type="textarea" :rows="2" placeholder="Text override: replace this region with plain text" />
+                    <el-input v-model="ensureTemplateRegionOverride(region).html" type="textarea" :rows="2" placeholder="HTML override: advanced, keeps custom markup" />
+                    <div class="region-override-row">
+                      <el-input v-model="ensureTemplateRegionOverride(region).image" placeholder="Image URL override" />
+                      <el-input v-model="ensureTemplateRegionOverride(region).link" placeholder="Link URL override" />
+                    </div>
+                  </div>
+                </article>
+              </div>
+              <div class="drawer-actions">
+                <el-button @click="saveTemplateRegionOverrides">保存区域覆写</el-button>
+                <el-button type="primary" @click="saveTemplateRegionOverridesAndGenerate">保存并生成静态站</el-button>
+              </div>
+            </div>
+          </el-drawer>
         </section>
 
         <section v-if="view === 'ai'">
@@ -1940,31 +1977,6 @@
               <span>公共默认只用于新站继承；当前站点可保留独立 AI 密钥</span>
             </div>
           </el-card>
-          <el-drawer v-model="templateRegionDrawerVisible" size="520px" title="Template editable regions">
-            <div v-if="templateRegionCurrent" class="template-region-drawer">
-              <div class="region-template-head">
-                <strong>{{ templateRegionCurrent.name || templateRegionCurrent.key }}</strong>
-                <small>{{ templateRegionCurrent.key }}</small>
-              </div>
-              <el-empty v-if="!(templateRegionCurrent.editable_regions || []).length" description="No editable regions yet" />
-              <div v-else class="editable-region-list">
-                <article v-for="region in templateRegionCurrent.editable_regions" :key="region.id || region.selector" class="editable-region-card">
-                  <div class="editable-region-title">
-                    <strong>{{ region.title || region.id }}</strong>
-                    <el-tag size="small" effect="plain">{{ region.module || region.scope || 'page' }}</el-tag>
-                  </div>
-                  <small>{{ region.source_file || 'index.html' }}</small>
-                  <div v-if="region.selector || region.selectors?.length" class="selector-row">
-                    <span v-for="selector in (region.selectors || [region.selector]).filter(Boolean)" :key="selector">{{ selector }}</span>
-                  </div>
-                  <div v-if="region.editable_fields?.length" class="tag-row">
-                    <el-tag v-for="field in region.editable_fields" :key="field" size="small" type="success" effect="plain">{{ field }}</el-tag>
-                  </div>
-                  <p v-if="region.description">{{ region.description }}</p>
-                </article>
-              </div>
-            </div>
-          </el-drawer>
         </section>
 
         <section v-if="view === 'pages'">
@@ -4850,6 +4862,7 @@ function normalizeSite(data: any = {}) {
     hero: data.hero || {},
     home_sections: data.home_sections || {},
     home_content: data.home_content || {},
+    template_region_overrides: data.template_region_overrides || {},
     nav: normalizeNavItems(data.nav),
     footer_nav: normalizeNavItems(data.footer_nav || data.menus?.footer || []),
     menus: data.menus || {},
@@ -5068,7 +5081,7 @@ function handleTemplateCardClick(item: any, event: MouseEvent) {
     return
   }
   site.template_key = item.key
-  if (item.editable_region_count) {
+  if (Number(item.editable_region_count || 0) > 0 || item.editable_regions?.length) {
     openTemplateRegions(item)
   }
 }
@@ -5078,6 +5091,7 @@ function openTemplateRegions(item: any) {
   window.setTimeout(() => {
     templateRegionDrawerVisible.value = true
     templateRegionCurrent.value = { ...item, editable_regions: item.editable_regions || [] }
+    ensureTemplateRegionBucket(item.key)
     loadTemplateRegions(item)
   }, 0)
 }
@@ -5092,6 +5106,39 @@ async function loadTemplateRegions(item: any) {
   } finally {
     templateRegionLoading.value = false
   }
+}
+
+function ensureTemplateRegionBucket(templateKey?: string) {
+  const key = templateKey || templateRegionCurrent.value?.key || site.template_key
+  if (!key) return {}
+  if (!site.template_region_overrides || typeof site.template_region_overrides !== 'object') {
+    site.template_region_overrides = {}
+  }
+  if (!site.template_region_overrides[key] || typeof site.template_region_overrides[key] !== 'object') {
+    site.template_region_overrides[key] = {}
+  }
+  return site.template_region_overrides[key]
+}
+
+function ensureTemplateRegionOverride(region: any) {
+  const bucket: any = ensureTemplateRegionBucket()
+  const id = String(region?.id || region?.selector || '')
+  if (!id) return {}
+  if (!bucket[id] || typeof bucket[id] !== 'object') {
+    bucket[id] = { text: '', html: '', image: '', link: '' }
+  }
+  return bucket[id]
+}
+
+async function saveTemplateRegionOverrides() {
+  await saveTemplateSettings()
+  ElMessage.success('模板区域覆写已保存，生成静态站后前台生效')
+}
+
+async function saveTemplateRegionOverridesAndGenerate() {
+  await saveTemplateRegionOverrides()
+  await generateSite()
+  await loadStaticPages()
 }
 
 async function loadTemplateCloneTasks() {

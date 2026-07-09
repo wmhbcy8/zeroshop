@@ -302,6 +302,187 @@ function copy_dir(string $src, string $dst): void
     }
 }
 
+function template_editable_regions(string $templateRoot): array
+{
+    $path = $templateRoot . DIRECTORY_SEPARATOR . 'editable-regions.json';
+    if (!is_file($path)) {
+        return [];
+    }
+    try {
+        $payload = read_json($path);
+        $regions = $payload['regions'] ?? $payload;
+        return is_array($regions) ? $regions : [];
+    } catch (Throwable $error) {
+        return [];
+    }
+}
+
+function css_selector_to_xpath(string $selector): ?string
+{
+    $selector = trim($selector);
+    if ($selector === '' || str_contains($selector, ',') || str_contains($selector, '>')) {
+        return null;
+    }
+    $parts = preg_split('/\s+/', $selector) ?: [];
+    $xpath = '';
+    foreach ($parts as $part) {
+        $part = trim($part);
+        if ($part === '') {
+            continue;
+        }
+        if (preg_match('/^\[class\*=["\']?([^"\']+)["\']?\]$/', $part, $m)) {
+            $xpath .= "//*[contains(concat(' ', normalize-space(@class), ' '), '" . htmlspecialchars($m[1], ENT_QUOTES) . "')]";
+            continue;
+        }
+        if (preg_match('/^#([a-zA-Z0-9_-]+)$/', $part, $m)) {
+            $xpath .= "//*[@id='" . $m[1] . "']";
+            continue;
+        }
+        if (preg_match('/^\.([a-zA-Z0-9_-]+)$/', $part, $m)) {
+            $xpath .= "//*[contains(concat(' ', normalize-space(@class), ' '), ' " . $m[1] . " ')]";
+            continue;
+        }
+        if (preg_match('/^([a-zA-Z][a-zA-Z0-9_-]*)\.([a-zA-Z0-9_-]+)$/', $part, $m)) {
+            $xpath .= '//' . strtolower($m[1]) . "[contains(concat(' ', normalize-space(@class), ' '), ' " . $m[2] . " ')]";
+            continue;
+        }
+        if (preg_match('/^[a-zA-Z][a-zA-Z0-9_-]*$/', $part)) {
+            $xpath .= '//' . strtolower($part);
+            continue;
+        }
+        return null;
+    }
+    return $xpath ?: null;
+}
+
+function dom_set_inner_html(DOMDocument $dom, DOMElement $node, string $html): void
+{
+    while ($node->firstChild) {
+        $node->removeChild($node->firstChild);
+    }
+    if (trim($html) === '') {
+        return;
+    }
+    $fragment = $dom->createDocumentFragment();
+    if (@$fragment->appendXML($html)) {
+        $node->appendChild($fragment);
+        return;
+    }
+    $node->appendChild($dom->createTextNode($html));
+}
+
+function dom_first_descendant(DOMElement $node, string $tag): ?DOMElement
+{
+    if (strtolower($node->tagName) === strtolower($tag)) {
+        return $node;
+    }
+    foreach ($node->getElementsByTagName($tag) as $child) {
+        if ($child instanceof DOMElement) {
+            return $child;
+        }
+    }
+    return null;
+}
+
+function apply_static_mirror_region_overrides(string $templateRoot, string $publicRoot, string $templateKey, array $site): void
+{
+    if (!class_exists('DOMDocument')) {
+        return;
+    }
+    $allOverrides = is_array($site['template_region_overrides'] ?? null) ? $site['template_region_overrides'] : [];
+    $overrides = is_array($allOverrides[$templateKey] ?? null) ? $allOverrides[$templateKey] : [];
+    if (!$overrides) {
+        return;
+    }
+    $regions = template_editable_regions($templateRoot);
+    if (!$regions) {
+        return;
+    }
+    $htmlFiles = [];
+    foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($publicRoot, FilesystemIterator::SKIP_DOTS)) as $file) {
+        if ($file->isFile() && strtolower($file->getExtension()) === 'html') {
+            $htmlFiles[] = $file->getPathname();
+        }
+    }
+    foreach ($regions as $region) {
+        if (!is_array($region)) {
+            continue;
+        }
+        $regionId = (string)($region['id'] ?? $region['selector'] ?? '');
+        $override = is_array($overrides[$regionId] ?? null) ? $overrides[$regionId] : [];
+        $text = trim((string)($override['text'] ?? ''));
+        $html = trim((string)($override['html'] ?? ''));
+        $image = trim((string)($override['image'] ?? ''));
+        $link = trim((string)($override['link'] ?? ''));
+        if ($regionId === '' || ($text === '' && $html === '' && $image === '' && $link === '')) {
+            continue;
+        }
+        $source = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, (string)($region['source_file'] ?? ''));
+        $source = preg_replace('/^mirror[\/\\\\]/', '', $source);
+        $candidateFiles = $source ? [$publicRoot . DIRECTORY_SEPARATOR . $source] : $htmlFiles;
+        $selectors = $region['selectors'] ?? ($region['selector'] ?? []);
+        if (is_string($selectors)) {
+            $selectors = [$selectors];
+        }
+        foreach ($candidateFiles as $filePath) {
+            if (!is_file($filePath)) {
+                continue;
+            }
+            $content = file_get_contents($filePath);
+            if ($content === false || trim($content) === '') {
+                continue;
+            }
+            $dom = new DOMDocument('1.0', 'UTF-8');
+            libxml_use_internal_errors(true);
+            $loaded = $dom->loadHTML('<?xml encoding="UTF-8">' . $content, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+            libxml_clear_errors();
+            if (!$loaded) {
+                continue;
+            }
+            $xpath = new DOMXPath($dom);
+            $changed = false;
+            foreach ($selectors as $selector) {
+                $query = css_selector_to_xpath((string)$selector);
+                if (!$query) {
+                    continue;
+                }
+                $nodes = $xpath->query($query);
+                if (!$nodes || !$nodes->length) {
+                    continue;
+                }
+                $node = $nodes->item(0);
+                if (!$node instanceof DOMElement) {
+                    continue;
+                }
+                if ($html !== '') {
+                    dom_set_inner_html($dom, $node, $html);
+                    $changed = true;
+                } elseif ($text !== '') {
+                    while ($node->firstChild) {
+                        $node->removeChild($node->firstChild);
+                    }
+                    $node->appendChild($dom->createTextNode($text));
+                    $changed = true;
+                }
+                if ($image !== '' && ($img = dom_first_descendant($node, 'img'))) {
+                    $img->setAttribute('src', $image);
+                    $changed = true;
+                }
+                if ($link !== '' && ($anchor = dom_first_descendant($node, 'a'))) {
+                    $anchor->setAttribute('href', $link);
+                    $changed = true;
+                }
+                break;
+            }
+            if ($changed) {
+                $output = $dom->saveHTML();
+                $output = preg_replace('/^<\?xml encoding="UTF-8"\?>\s*/', '', (string)$output);
+                write_file($filePath, $output);
+            }
+        }
+    }
+}
+
 function remove_path(string $path): void
 {
     if (!file_exists($path)) {
@@ -866,6 +1047,7 @@ $templateMeta = read_json($templateRoot . DIRECTORY_SEPARATOR . 'template.json')
 if (($templateMeta['clone_mode'] ?? '') === 'static_mirror' && is_dir($templateRoot . DIRECTORY_SEPARATOR . 'mirror')) {
     reset_generated_output($publicRoot);
     copy_dir($templateRoot . DIRECTORY_SEPARATOR . 'mirror', $publicRoot);
+    apply_static_mirror_region_overrides($templateRoot, $publicRoot, $templateKey, $site);
     echo "Generated static mirror template {$templateKey}: {$publicRoot}\n";
     exit;
 }

@@ -1116,6 +1116,16 @@ html.dark-admin .toolbar-breadcrumb {
   color: var(--hj-muted);
   line-height: 1.6;
 }
+.region-override-form {
+  display: grid;
+  gap: 8px;
+  padding-top: 4px;
+}
+.region-override-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
 .global-module-grid {
   display: grid;
   gap: 12px;
