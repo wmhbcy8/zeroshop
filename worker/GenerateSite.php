@@ -483,6 +483,20 @@ function apply_static_mirror_region_overrides(string $templateRoot, string $publ
     }
 }
 
+function promote_static_mirror_entry(array $templateMeta, string $publicRoot): void
+{
+    $entry = (string)($templateMeta['mirror_entry'] ?? '');
+    $entry = preg_replace('/^mirror[\/\\\\]/', '', str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $entry));
+    if ($entry === '' || $entry === 'index.html' || str_contains($entry, '..')) {
+        return;
+    }
+    $source = $publicRoot . DIRECTORY_SEPARATOR . $entry;
+    $target = $publicRoot . DIRECTORY_SEPARATOR . 'index.html';
+    if (is_file($source)) {
+        write_file($target, (string)file_get_contents($source));
+    }
+}
+
 function remove_path(string $path): void
 {
     if (!file_exists($path)) {
@@ -1047,6 +1061,7 @@ $templateMeta = read_json($templateRoot . DIRECTORY_SEPARATOR . 'template.json')
 if (($templateMeta['clone_mode'] ?? '') === 'static_mirror' && is_dir($templateRoot . DIRECTORY_SEPARATOR . 'mirror')) {
     reset_generated_output($publicRoot);
     copy_dir($templateRoot . DIRECTORY_SEPARATOR . 'mirror', $publicRoot);
+    promote_static_mirror_entry($templateMeta, $publicRoot);
     apply_static_mirror_region_overrides($templateRoot, $publicRoot, $templateKey, $site);
     echo "Generated static mirror template {$templateKey}: {$publicRoot}\n";
     exit;

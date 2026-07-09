@@ -19,7 +19,7 @@
     ],
     "entry": "pages/index.html",
     "clone_mode": "static_mirror",
-    "mirror_entry": "mirror/index.html",
+    "mirror_entry": "mirror/cn.html",
     "source_url": "https://www.chuyunai.com.cn",
     "module_plan": [
         {
@@ -64,4 +64,3 @@
         }
     ]
 }
-
