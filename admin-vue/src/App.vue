@@ -1113,6 +1113,78 @@
           </el-drawer>
         </section>
 
+        <section v-if="view === 'plan'">
+          <div class="metric-grid">
+            <MetricCard title="当前套餐" :value="quota.is_platform_admin ? '平台管理员' : (quota.plan_key || '-')" :note="quota.is_platform_admin ? '不受客户套餐限制' : customerStatusLabel(quota.status)" icon="Tickets" />
+            <MetricCard title="站点额度" :value="quota.is_platform_admin ? '不限' : `${quota.sites_used || 0}/${quota.sites_limit || 0}`" note="客户名下启用/未归档站点" icon="Grid" />
+            <MetricCard title="AI额度" :value="quotaText('ai')" :note="quotaNote('ai')" icon="Cpu" />
+            <MetricCard title="媒体存储" :value="quotaText('storage')" :note="quotaNote('storage')" icon="FolderOpened" />
+          </div>
+          <el-row :gutter="16">
+            <el-col :span="15">
+              <el-card class="panel" shadow="never">
+                <template #header>
+                  <div class="card-head">
+                    <strong>套餐使用情况</strong>
+                    <el-button @click="loadSites">刷新用量</el-button>
+                  </div>
+                </template>
+                <div class="quota-usage-grid">
+                  <article>
+                    <span>站点数量</span>
+                    <strong>{{ quota.sites_used || 0 }} / {{ quota.sites_limit || 0 }}</strong>
+                    <el-progress :percentage="quotaPercent(quota.sites_used, quota.sites_limit)" />
+                  </article>
+                  <article>
+                    <span>AI生成额度</span>
+                    <strong>{{ quota.ai_used || 0 }} / {{ quota.ai_quota || 0 }}</strong>
+                    <el-progress :percentage="quotaPercent(quota.ai_used, quota.ai_quota)" />
+                  </article>
+                  <article>
+                    <span>媒体库容量</span>
+                    <strong>{{ quota.storage_used_mb || 0 }} / {{ quota.storage_quota_mb || 0 }}MB</strong>
+                    <el-progress :percentage="quotaPercent(quota.storage_used_mb, quota.storage_quota_mb)" />
+                  </article>
+                  <article>
+                    <span>套餐到期日</span>
+                    <strong>{{ quota.expires_at || '未设置' }}</strong>
+                    <small>{{ quota.is_platform_admin ? '平台管理员账号' : planExpiryText }}</small>
+                  </article>
+                </div>
+                <el-alert
+                  v-for="item in planWarnings"
+                  :key="item.title"
+                  class="mb12"
+                  :type="item.type"
+                  show-icon
+                  :closable="false"
+                  :title="item.title"
+                  :description="item.desc"
+                />
+              </el-card>
+            </el-col>
+            <el-col :span="9">
+              <el-card class="panel" shadow="never">
+                <template #header><strong>升级建议</strong></template>
+                <div class="content-publish-rule-list">
+                  <article>
+                    <strong>站点数量不足</strong>
+                    <small>需要继续搭建新站时，联系平台管理员增加站点上限或升级套餐。</small>
+                  </article>
+                  <article>
+                    <strong>AI额度不足</strong>
+                    <small>AI文章、商品、图片生成都会消耗额度，可临时追加或按月重置。</small>
+                  </article>
+                  <article>
+                    <strong>存储容量不足</strong>
+                    <small>媒体库图片较多时，可清理旧素材或提升存储容量。</small>
+                  </article>
+                </div>
+              </el-card>
+            </el-col>
+          </el-row>
+        </section>
+
         <section v-if="view === 'settings'">
           <el-card class="panel" shadow="never">
             <template #header>
@@ -3377,6 +3449,7 @@ const navItems = [
   { key: 'platform', label: '平台', hint: '运营方后台：管理客户、套餐、站点和部署节点。', icon: 'Monitor' },
   { key: 'platform-system', label: '系统', hint: '配置平台名称、默认域名、新客户套餐和新站默认值。', icon: 'Setting' },
   { key: 'dashboard', label: '概览', hint: '查看运营指标、内容数量和站点状态。', icon: 'Odometer' },
+  { key: 'plan', label: '套餐', hint: '查看当前客户套餐、站点额度、AI额度、存储容量和到期状态。', icon: 'Tickets' },
   { key: 'operations', label: '运营', hint: '统一处理跨站订单、询盘、内容分发、AI 生成和批量发布。', icon: 'Operation' },
   { key: 'analytics', label: '流量', hint: '按全部站点或单站点查看访问趋势、热门页面、来源和最近访问。', icon: 'DataAnalysis' },
   { key: 'sites', label: '站点', hint: '管理客户名下所有前台站点。', icon: 'Grid' },
@@ -3543,6 +3616,37 @@ function quotaNote(type: 'ai' | 'storage') {
   return `媒体库已用 ${quota.value?.storage_used_mb || 0}MB`
 }
 
+const planExpiryText = computed(() => {
+  if (quota.value?.is_platform_admin) return '平台管理员账号'
+  const expiresAt = String(quota.value?.expires_at || '')
+  if (!expiresAt) return '未设置到期日'
+  const today = new Date()
+  const target = new Date(`${expiresAt}T00:00:00`)
+  const days = Math.ceil((target.getTime() - today.getTime()) / 86400000)
+  if (days < 0) return `已过期 ${Math.abs(days)} 天`
+  if (days === 0) return '今天到期'
+  return `剩余 ${days} 天`
+})
+
+const planWarnings = computed(() => {
+  if (quota.value?.is_platform_admin) return []
+  const items: Array<{ title: string; desc: string; type: 'info' | 'warning' | 'error' | 'success' }> = []
+  const sitePercent = quotaPercent(quota.value?.sites_used, quota.value?.sites_limit)
+  const aiPercent = quotaPercent(quota.value?.ai_used, quota.value?.ai_quota)
+  const storagePercent = quotaPercent(quota.value?.storage_used_mb, quota.value?.storage_quota_mb)
+  if (quota.value?.status !== 'active') {
+    items.push({ type: 'error', title: '套餐状态不可用', desc: '当前账号可能无法创建站点、生成 AI 内容或上传素材，请联系平台管理员处理。' })
+  }
+  if (planExpiryText.value.includes('已过期') || planExpiryText.value === '今天到期') {
+    items.push({ type: 'error', title: '套餐即将或已经到期', desc: '请尽快续期，避免影响站点创建、AI生成和媒体上传。' })
+  }
+  if (sitePercent >= 80) items.push({ type: 'warning', title: '站点额度接近上限', desc: '继续新建站点前，建议升级套餐或停用不再使用的站点。' })
+  if (aiPercent >= 80) items.push({ type: 'warning', title: 'AI额度接近上限', desc: '批量生成文章、商品和图片前，建议追加额度或重置周期用量。' })
+  if (storagePercent >= 80) items.push({ type: 'warning', title: '媒体存储接近上限', desc: '可以清理旧图片，或联系平台管理员增加存储容量。' })
+  if (!items.length) items.push({ type: 'success', title: '套餐状态正常', desc: '当前站点数、AI额度和媒体存储都处于可用范围内。' })
+  return items
+})
+
 function todoPriorityLabel(value: string) {
   return ({ critical: '紧急', high: '高', medium: '中', low: '低' } as any)[value] || value || '-'
 }
@@ -3607,6 +3711,7 @@ function setView(key: string) {
   if (key === 'platform') loadPlatform()
   if (key === 'platform-system') loadPlatformSystemSettings()
   if (key === 'dashboard') loadDashboard()
+  if (key === 'plan') loadSites()
   if (key === 'operations') refreshOperations()
   if (key === 'analytics') loadAnalyticsOverview()
   if (key === 'sites') loadSites()
@@ -3635,6 +3740,7 @@ function setView(key: string) {
 function refreshCurrentView() {
   const loaders: Record<string, () => Promise<void>> = {
     dashboard: loadDashboard,
+    plan: loadSites,
     operations: refreshOperations,
     analytics: loadAnalyticsOverview,
     platform: loadPlatform,
