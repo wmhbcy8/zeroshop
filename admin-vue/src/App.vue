@@ -1493,16 +1493,27 @@
                   </div>
                 </template>
                 <div class="template-grid">
-                  <article v-for="item in templates" :key="item.key" class="template-card" :class="{ active: site.template_key === item.key }" @click="site.template_key = item.key">
+                  <article v-for="item in templates" :key="item.key" class="template-card" :class="{ active: site.template_key === item.key }" @click="handleTemplateCardClick(item, $event)">
                     <div class="template-preview">
                       <span>{{ item.name?.slice(0, 2) || '模' }}</span>
                     </div>
                     <strong>{{ item.name }}</strong>
                     <small>{{ item.key }} · {{ item.version || 'v0.1' }}</small>
+                    <div class="template-meta-row">
+                      <el-tag v-if="item.editable_region_count" size="small" type="success" effect="light">
+                        {{ item.editable_region_count }} editable
+                      </el-tag>
+                      <el-tag v-else size="small" type="info" effect="plain">static</el-tag>
+                    </div>
                     <div class="tag-row">
                       <el-tag v-for="support in item.supports || []" :key="support" size="small" effect="plain">{{ support }}</el-tag>
                     </div>
-                    <el-button size="small" :type="site.template_key === item.key ? 'primary' : 'default'">{{ site.template_key === item.key ? '当前模板' : '选择模板' }}</el-button>
+                    <div class="template-action-row">
+                      <el-button size="small" :type="site.template_key === item.key ? 'primary' : 'default'">{{ site.template_key === item.key ? '当前模板' : '选择模板' }}</el-button>
+                      <button type="button" class="template-region-button">
+                        {{ templateRegionLoading && templateRegionCurrent?.key === item.key ? 'Loading' : 'Regions' }}
+                      </button>
+                    </div>
                   </article>
                 </div>
               </el-card>
@@ -1929,6 +1940,31 @@
               <span>公共默认只用于新站继承；当前站点可保留独立 AI 密钥</span>
             </div>
           </el-card>
+          <el-drawer v-model="templateRegionDrawerVisible" size="520px" title="Template editable regions">
+            <div v-if="templateRegionCurrent" class="template-region-drawer">
+              <div class="region-template-head">
+                <strong>{{ templateRegionCurrent.name || templateRegionCurrent.key }}</strong>
+                <small>{{ templateRegionCurrent.key }}</small>
+              </div>
+              <el-empty v-if="!(templateRegionCurrent.editable_regions || []).length" description="No editable regions yet" />
+              <div v-else class="editable-region-list">
+                <article v-for="region in templateRegionCurrent.editable_regions" :key="region.id || region.selector" class="editable-region-card">
+                  <div class="editable-region-title">
+                    <strong>{{ region.title || region.id }}</strong>
+                    <el-tag size="small" effect="plain">{{ region.module || region.scope || 'page' }}</el-tag>
+                  </div>
+                  <small>{{ region.source_file || 'index.html' }}</small>
+                  <div v-if="region.selector || region.selectors?.length" class="selector-row">
+                    <span v-for="selector in (region.selectors || [region.selector]).filter(Boolean)" :key="selector">{{ selector }}</span>
+                  </div>
+                  <div v-if="region.editable_fields?.length" class="tag-row">
+                    <el-tag v-for="field in region.editable_fields" :key="field" size="small" type="success" effect="plain">{{ field }}</el-tag>
+                  </div>
+                  <p v-if="region.description">{{ region.description }}</p>
+                </article>
+              </div>
+            </div>
+          </el-drawer>
         </section>
 
         <section v-if="view === 'pages'">
@@ -3318,9 +3354,12 @@ const platformDomainApplicationDrawerVisible = ref(false)
 const platformPublishTaskDrawerVisible = ref(false)
 const platformTemplateImportDrawerVisible = ref(false)
 const moduleDetailDrawerVisible = ref(false)
+const templateRegionDrawerVisible = ref(false)
 const publishDrawerVisible = ref(false)
 const deployTaskDrawerVisible = ref(false)
 const siteDrawerVisible = ref(false)
+const templateRegionLoading = ref(false)
+const templateRegionCurrent = ref<any>(null)
 const batchTaskDrawerVisible = ref(false)
 const categoryDrawerVisible = ref(false)
 const tagDrawerVisible = ref(false)
@@ -5020,6 +5059,39 @@ async function saveSiteStructureAndGenerate() {
 async function loadTemplates() {
   const data = await request('/api/site/templates')
   templates.value = data.items || []
+}
+
+function handleTemplateCardClick(item: any, event: MouseEvent) {
+  const target = event.target as HTMLElement | null
+  if (target?.closest?.('.template-region-button')) {
+    openTemplateRegions(item)
+    return
+  }
+  site.template_key = item.key
+  if (item.editable_region_count) {
+    openTemplateRegions(item)
+  }
+}
+
+function openTemplateRegions(item: any) {
+  if (templateRegionDrawerVisible.value && templateRegionCurrent.value?.key === item.key) return
+  window.setTimeout(() => {
+    templateRegionDrawerVisible.value = true
+    templateRegionCurrent.value = { ...item, editable_regions: item.editable_regions || [] }
+    loadTemplateRegions(item)
+  }, 0)
+}
+
+async function loadTemplateRegions(item: any) {
+  templateRegionLoading.value = true
+  try {
+    const data = await request(`/api/templates/${encodeURIComponent(item.key)}`)
+    templateRegionCurrent.value = data.item || data
+  } catch (error: any) {
+    ElMessage.error(error?.message || 'Template regions load failed')
+  } finally {
+    templateRegionLoading.value = false
+  }
 }
 
 async function loadTemplateCloneTasks() {

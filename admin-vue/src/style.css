@@ -1028,10 +1028,93 @@ html.dark-admin .toolbar-breadcrumb {
 .template-card small {
   color: var(--hj-muted);
 }
+.template-meta-row,
+.template-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.template-action-row .el-button {
+  flex: 1;
+  min-width: 0;
+}
+.template-region-button {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 11px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  color: #606266;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 22px;
+}
+.template-region-button:hover {
+  border-color: var(--hj-primary);
+  color: var(--hj-primary);
+}
 .tag-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+.template-region-drawer {
+  display: grid;
+  gap: 14px;
+}
+.region-template-head {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid var(--hj-line);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+.region-template-head small,
+.editable-region-card small {
+  color: var(--hj-muted);
+  word-break: break-all;
+}
+.editable-region-list {
+  display: grid;
+  gap: 12px;
+}
+.editable-region-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--hj-line);
+  border-radius: 10px;
+  background: #fff;
+}
+.editable-region-title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+.selector-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.selector-row span {
+  max-width: 100%;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: #475569;
+  background: #f1f5f9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+.editable-region-card p {
+  margin: 0;
+  color: var(--hj-muted);
+  line-height: 1.6;
 }
 .global-module-grid {
   display: grid;
