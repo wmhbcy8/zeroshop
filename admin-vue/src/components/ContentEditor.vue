@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <el-card class="panel" shadow="never">
       <template #header>
@@ -50,9 +50,9 @@
           <small>内容在中台只保存一份，发布范围决定它同步到哪些前台静态站。</small>
         </div>
         <el-radio-group v-model="bulkForm.site_scope" size="small" @change="syncBulkScope">
-          <el-radio-button label="current">当前站点</el-radio-button>
-          <el-radio-button label="all">全部站点</el-radio-button>
-          <el-radio-button label="selected">指定站点</el-radio-button>
+          <el-radio-button value="current">当前站点</el-radio-button>
+          <el-radio-button value="all">全部站点</el-radio-button>
+          <el-radio-button value="selected">指定站点</el-radio-button>
         </el-radio-group>
         <el-select
           v-if="bulkForm.site_scope === 'selected'"
@@ -118,9 +118,9 @@
         />
         <el-form-item label="发布范围">
           <el-radio-group v-model="form.site_scope" @change="syncScope">
-            <el-radio-button label="current">当前站点</el-radio-button>
-            <el-radio-button label="all">全部站点</el-radio-button>
-            <el-radio-button label="selected">指定站点</el-radio-button>
+            <el-radio-button value="current">当前站点</el-radio-button>
+            <el-radio-button value="all">全部站点</el-radio-button>
+            <el-radio-button value="selected">指定站点</el-radio-button>
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="form.site_scope === 'selected'" label="选择站点">

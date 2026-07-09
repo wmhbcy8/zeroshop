@@ -1809,6 +1809,7 @@ function normalize_site_deploy_config(array $data, array $current = []): array
 
 function normalize_center_site_payload(array $data, array $current = []): array
 {
+    $siteDefaults = platform_system_settings(main_pdo())['site_defaults'] ?? [];
     $name = trim((string)($data['name'] ?? ($current['name'] ?? '')));
     if ($name === '') {
         fail('站点名称不能为空', 'VALIDATION_ERROR', 422);
@@ -1823,8 +1824,8 @@ function normalize_center_site_payload(array $data, array $current = []): array
         'deploy_node_id' => max(0, (int)($data['deploy_node_id'] ?? ($current['deploy_node_id'] ?? 0))),
         'domain' => mb_substr(trim((string)($data['domain'] ?? ($current['domain'] ?? ''))), 0, 180, 'UTF-8'),
         'subdomain' => mb_substr(trim((string)($data['subdomain'] ?? ($current['subdomain'] ?? ''))), 0, 180, 'UTF-8'),
-        'language' => mb_substr(trim((string)($data['language'] ?? ($current['language'] ?? 'zh-CN'))) ?: 'zh-CN', 0, 20, 'UTF-8'),
-        'template_key' => mb_substr(trim((string)($data['template_key'] ?? ($current['template_key'] ?? 'business-clean'))) ?: 'business-clean', 0, 100, 'UTF-8'),
+        'language' => mb_substr(trim((string)($data['language'] ?? ($current['language'] ?? ($siteDefaults['language'] ?? 'zh-CN')))) ?: 'zh-CN', 0, 20, 'UTF-8'),
+        'template_key' => mb_substr(trim((string)($data['template_key'] ?? ($current['template_key'] ?? ($siteDefaults['template_key'] ?? 'business-clean')))) ?: 'business-clean', 0, 100, 'UTF-8'),
         'status' => $status,
         'deploy' => normalize_site_deploy_config($data, $current),
     ];
@@ -6557,9 +6558,15 @@ function confirm_ai_task(PDO $pdo, int $taskId, array $data): array
         }
     }
     $message = '已确认入库：文章 ' . count($articleIds) . ' 条，商品 ' . count($productIds) . ' 条';
-    $stmt = $pdo->prepare("UPDATE ai_tasks SET status='confirmed', message=:message, created_article_ids=:created_article_ids, created_product_ids=:created_product_ids, confirmed_at=:confirmed_at, updated_at=:updated_at WHERE id=:id");
+    if ($action === 'publish') {
+        $message .= '，并发布到 ' . count($siteIds) . ' 个站点';
+    } else {
+        $message .= '，保存为草稿，目标范围 ' . count($siteIds) . ' 个站点';
+    }
+    $stmt = $pdo->prepare("UPDATE ai_tasks SET status='confirmed', site_ids=:site_ids, message=:message, created_article_ids=:created_article_ids, created_product_ids=:created_product_ids, confirmed_at=:confirmed_at, updated_at=:updated_at WHERE id=:id");
     $stmt->execute([
         'id' => $taskId,
+        'site_ids' => json_encode(array_values(array_unique(array_map('intval', $siteIds))), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
         'message' => $message,
         'created_article_ids' => json_encode($articleIds, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
         'created_product_ids' => json_encode($productIds, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
@@ -7747,12 +7754,16 @@ try {
         $id = (int)$main->lastInsertId();
         $siteKey = 'site_' . $id;
         $publicPath = 'sites/' . $siteKey . '/public';
+        $siteDefaults = platform_system_settings($main)['site_defaults'] ?? [];
+        $suffix = trim((string)($siteDefaults['subdomain_suffix'] ?? 'huajian.local')) ?: 'huajian.local';
+        $suffix = preg_replace('/^\.+/', '', $suffix);
+        $generatedSubdomain = $siteKey . '.' . $suffix;
         ensure_dir(dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'sites' . DIRECTORY_SEPARATOR . $siteKey . DIRECTORY_SEPARATOR . 'public');
         $update = $main->prepare('UPDATE sites SET site_key = :site_key, subdomain = :subdomain, public_path = :public_path WHERE id = :id');
         $update->execute([
             'id' => $id,
             'site_key' => $siteKey,
-            'subdomain' => $siteKey . '.huajian.local',
+            'subdomain' => $payload['subdomain'] !== '' ? $payload['subdomain'] : $generatedSubdomain,
             'public_path' => $publicPath,
         ]);
         $items = filter_sites_for_user($main, center_site_items($main, $pdo), $user);

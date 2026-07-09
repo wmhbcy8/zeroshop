@@ -653,6 +653,7 @@
           </el-row>
           <el-drawer v-model="siteDrawerVisible" size="480px" :title="siteEditingId ? '编辑站点' : '新建站点'">
             <el-form :model="siteForm" label-width="92px">
+              <el-alert v-if="!siteEditingId" class="mb16" type="info" show-icon :closable="false" :title="`新站会默认使用 ${platformSettingsForm.site_defaults.template_key || 'business-clean'} 模板、${platformSettingsForm.site_defaults.language || 'zh-CN'} 语言，未填写备用域名时自动生成 site_ID.${platformSettingsForm.site_defaults.subdomain_suffix || 'huajian.local'}`" />
               <el-form-item label="站点名称"><el-input v-model="siteForm.name" placeholder="例如：农业无人机英文站" /></el-form-item>
               <el-form-item label="绑定域名"><el-input v-model="siteForm.domain" placeholder="例如：www.example.com" /></el-form-item>
               <el-form-item label="备用域名"><el-input v-model="siteForm.subdomain" placeholder="例如：site10002.huajian.local" /></el-form-item>
@@ -832,17 +833,9 @@
                 :title="`当前编辑：${currentSite?.name || site.name || '默认站点'}，${settingsScopeText}。这里仅维护基础信息、SEO 和导航；AI、支付、宝塔部署已拆到左侧独立菜单。`"
               />
               <div class="service-shortcuts mb16">
-                <button type="button" @click="setView('ai-settings')">
-                  <strong>AI 配置</strong>
-                  <small>模型、密钥、图片和视频接口</small>
-                </button>
-                <button type="button" @click="setView('payments')">
-                  <strong>支付配置</strong>
-                  <small>收款方式、支付通道、回调密钥</small>
-                </button>
-                <button type="button" @click="setView('publish')">
-                  <strong>宝塔/部署</strong>
-                  <small>站点目录、发布包、本机同步</small>
+                <button v-for="item in serviceConfigCards" :key="item.view" type="button" @click="setView(item.view)">
+                  <strong>{{ item.title }}</strong>
+                  <small>{{ item.desc }}</small>
                 </button>
               </div>
               <el-divider content-position="left">基础信息</el-divider>
@@ -959,8 +952,8 @@
                   <div class="card-head">
                     <strong>模块字典</strong>
                     <el-radio-group v-model="moduleScopeFilter" size="small">
-                      <el-radio-button label="all">全部</el-radio-button>
-                      <el-radio-button v-for="scope in moduleRegistry.scopes || []" :key="scope.key" :label="scope.key">{{ scope.title }}</el-radio-button>
+                      <el-radio-button value="all">全部</el-radio-button>
+                      <el-radio-button v-for="scope in moduleRegistry.scopes || []" :key="scope.key" :value="scope.key">{{ scope.title }}</el-radio-button>
                     </el-radio-group>
                   </div>
                 </template>
@@ -1161,9 +1154,9 @@
                 <el-form :model="aiForm" label-width="96px">
                   <el-form-item label="发布范围">
                     <el-radio-group v-model="aiForm.site_scope" @change="syncAiSiteScope">
-                      <el-radio-button label="current">当前站点</el-radio-button>
-                      <el-radio-button label="all">全部站点</el-radio-button>
-                      <el-radio-button label="selected">指定站点</el-radio-button>
+                      <el-radio-button value="current">当前站点</el-radio-button>
+                      <el-radio-button value="all">全部站点</el-radio-button>
+                      <el-radio-button value="selected">指定站点</el-radio-button>
                     </el-radio-group>
                   </el-form-item>
                   <el-form-item v-if="aiForm.site_scope === 'selected'" label="选择站点">
@@ -1189,8 +1182,8 @@
                   </el-form-item>
                   <el-form-item label="保存状态">
                     <el-radio-group v-model="aiForm.status">
-                      <el-radio-button label="draft">草稿</el-radio-button>
-                      <el-radio-button label="published">发布</el-radio-button>
+                      <el-radio-button value="draft">草稿</el-radio-button>
+                      <el-radio-button value="published">发布</el-radio-button>
                     </el-radio-group>
                   </el-form-item>
                   <el-form-item>
@@ -1302,6 +1295,12 @@
                   :closable="false"
                   title="中台只保存一份内容，发布范围决定它同步到哪些静态站。修改范围后，需要重新生成静态站，前台才会更新。"
                 />
+                <div class="content-publish-rule-list mt16">
+                  <article v-for="item in contentPublishRules" :key="item.title">
+                    <strong>{{ item.title }}</strong>
+                    <small>{{ item.desc }}</small>
+                  </article>
+                </div>
               </el-card>
             </el-col>
           </el-row>
@@ -1778,9 +1777,9 @@
                     <small>手动转草稿或发布时，会按这里绑定到一个站点、全部站点或指定站点。</small>
                   </div>
                   <el-radio-group v-model="collectorPublishScope.site_scope" size="small" @change="syncCollectorPublishScope">
-                    <el-radio-button label="current">当前站点</el-radio-button>
-                    <el-radio-button label="all">全部站点</el-radio-button>
-                    <el-radio-button label="selected">指定站点</el-radio-button>
+                    <el-radio-button value="current">当前站点</el-radio-button>
+                    <el-radio-button value="all">全部站点</el-radio-button>
+                    <el-radio-button value="selected">指定站点</el-radio-button>
                   </el-radio-group>
                   <el-select
                     v-if="collectorPublishScope.site_scope === 'selected'"
@@ -1829,9 +1828,9 @@
               </el-form-item>
               <el-form-item label="发布范围">
                 <el-radio-group v-model="collectorForm.site_scope" @change="syncCollectorSourceScope">
-                  <el-radio-button label="current">当前站点</el-radio-button>
-                  <el-radio-button label="all">全部站点</el-radio-button>
-                  <el-radio-button label="selected">指定站点</el-radio-button>
+                  <el-radio-button value="current">当前站点</el-radio-button>
+                  <el-radio-button value="all">全部站点</el-radio-button>
+                  <el-radio-button value="selected">指定站点</el-radio-button>
                 </el-radio-group>
               </el-form-item>
               <el-form-item v-if="collectorForm.site_scope === 'selected'" label="选择站点">
@@ -1841,8 +1840,8 @@
               </el-form-item>
               <el-form-item label="采集类型">
                 <el-radio-group v-model="collectorForm.source_type">
-                  <el-radio-button label="rss">RSS</el-radio-button>
-                  <el-radio-button label="url">指定 URL</el-radio-button>
+                  <el-radio-button value="rss">RSS</el-radio-button>
+                  <el-radio-button value="url">指定 URL</el-radio-button>
                 </el-radio-group>
               </el-form-item>
               <el-form-item label="采集地址"><el-input v-model="collectorForm.url" placeholder="https://example.com/feed.xml" /></el-form-item>
@@ -1853,8 +1852,8 @@
               </el-form-item>
               <el-form-item label="入库方式">
                 <el-radio-group v-model="collectorForm.rewrite_mode">
-                  <el-radio-button label="draft">转草稿</el-radio-button>
-                  <el-radio-button label="published">直接发布</el-radio-button>
+                  <el-radio-button value="draft">转草稿</el-radio-button>
+                  <el-radio-button value="published">直接发布</el-radio-button>
                 </el-radio-group>
               </el-form-item>
               <el-form-item label="状态">
@@ -1874,9 +1873,9 @@
               <el-alert class="mb16" type="info" show-icon :closable="false" title="粘贴内容先进入采集记录；AI 改写后仍需人工点击转草稿或发布，避免未经审核直接进入前台。" />
               <el-form-item label="发布范围">
                 <el-radio-group v-model="manualCollectorForm.site_scope" @change="syncManualCollectorScope">
-                  <el-radio-button label="current">当前站点</el-radio-button>
-                  <el-radio-button label="all">全部站点</el-radio-button>
-                  <el-radio-button label="selected">指定站点</el-radio-button>
+                  <el-radio-button value="current">当前站点</el-radio-button>
+                  <el-radio-button value="all">全部站点</el-radio-button>
+                  <el-radio-button value="selected">指定站点</el-radio-button>
                 </el-radio-group>
               </el-form-item>
               <el-form-item v-if="manualCollectorForm.site_scope === 'selected'" label="选择站点">
@@ -1970,8 +1969,8 @@
               </el-row>
               <el-form-item label="适用范围">
                 <el-radio-group v-model="paymentForm.scope">
-                  <el-radio-button label="all">全部站点</el-radio-button>
-                  <el-radio-button label="selected">指定站点</el-radio-button>
+                  <el-radio-button value="all">全部站点</el-radio-button>
+                  <el-radio-button value="selected">指定站点</el-radio-button>
                 </el-radio-group>
               </el-form-item>
               <el-form-item v-if="paymentForm.scope === 'selected'" label="选择站点">
@@ -2506,9 +2505,9 @@
               <div class="batch-detail-head">
                 <strong>执行结果</strong>
                 <el-radio-group v-model="batchTaskResultFilter" size="small">
-                  <el-radio-button label="all">全部</el-radio-button>
-                  <el-radio-button label="failed">失败</el-radio-button>
-                  <el-radio-button label="success">成功</el-radio-button>
+                  <el-radio-button value="all">全部</el-radio-button>
+                  <el-radio-button value="failed">失败</el-radio-button>
+                  <el-radio-button value="success">成功</el-radio-button>
                 </el-radio-group>
               </div>
               <span v-for="item in filteredBatchTaskResults(batchTaskDetail)" :key="`${item.site_id}-${item.site_name}`" :class="{ failed: !item.ok }">
@@ -2843,6 +2842,37 @@ const aiWorkflowSteps = computed(() => [
   {
     title: '4. 重新生成静态站',
     desc: '内容确认后，中台会按发布范围自动生成目标静态站，前台文章、商品和导航立即进入新版本。'
+  }
+])
+const contentPublishRules = computed(() => [
+  {
+    title: '文章、商品、页面共用一套发布范围',
+    desc: '当前站点、全部站点、指定站点都会写入同一张分发表，前台只读取分发给自己的内容。'
+  },
+  {
+    title: 'AI 预览、AI 任务、批量入库沿用同一范围',
+    desc: `当前 AI 目标范围：${contentSiteLabel(aiTargetSiteIds.value)}。保存草稿或直接发布时都会绑定这些站点。`
+  },
+  {
+    title: '状态和范围变化后自动生成目标静态站',
+    desc: '发布、转草稿、删除、批量改范围、AI 入库后，系统会按目标站点重新生成静态页面。'
+  }
+])
+const serviceConfigCards = computed(() => [
+  {
+    view: 'ai-settings',
+    title: 'AI 配置',
+    desc: `模型、密钥、图片和视频接口，当前站点：${currentSite.value?.name || site.name || '默认站点'}`
+  },
+  {
+    view: 'payments',
+    title: '支付配置',
+    desc: '收款方式、支付通道、付款凭证和回调事件'
+  },
+  {
+    view: 'publish',
+    title: '宝塔/部署',
+    desc: '站点目录、发布包、本机同步、宝塔 API 与部署记录'
   }
 ])
 const settingsScopeText = computed(() => {
@@ -3591,11 +3621,24 @@ function openSite(item: any) {
 }
 
 function resetSiteForm() {
-  Object.assign(siteForm, { name: '', deploy_node_id: 0, domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active', deploy: emptyDeploy() })
+  const defaults = platformSettingsForm.site_defaults || {}
+  Object.assign(siteForm, {
+    name: '',
+    deploy_node_id: 0,
+    domain: '',
+    subdomain: '',
+    language: defaults.language || 'zh-CN',
+    template_key: defaults.template_key || 'business-clean',
+    status: 'active',
+    deploy: emptyDeploy()
+  })
 }
 
-function newSite() {
+async function newSite() {
   siteEditingId.value = ''
+  if (isPlatformAdmin.value && !platformSettings.value?.site_defaults) {
+    try { await loadPlatformSystemSettings() } catch {}
+  }
   resetSiteForm()
   siteDrawerVisible.value = true
 }
@@ -4558,7 +4601,7 @@ function changeAiTaskPage(page: number) {
 }
 
 function aiTaskTypeLabel(value: string) {
-  return ({ article_generate: '文章生成', product_generate: '商品生成', page_build: '页面搭建' } as any)[value] || value || '-'
+  return ({ article_generate: '文章生成', product_generate: '商品生成', article_batch_publish: 'AI批量文章入库', product_batch_publish: 'AI批量商品入库', page_build: '页面搭建' } as any)[value] || value || '-'
 }
 
 async function saveAiDraft(item: any, index: number, status: 'draft' | 'published' = 'draft') {
@@ -5582,7 +5625,6 @@ onMounted(() => {
   if (token.value) loadAll().catch((error) => ElMessage.error(error.message))
 })
 </script>
-
 <script lang="ts">
 import { defineComponent } from 'vue'
 

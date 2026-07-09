@@ -919,6 +919,25 @@ body {
   font-size: 18px;
   line-height: 1.25;
 }
+.content-publish-rule-list {
+  display: grid;
+  gap: 10px;
+}
+.content-publish-rule-list article {
+  padding: 12px;
+  border: 1px solid var(--hj-line);
+  border-radius: 8px;
+  background: #fff;
+}
+.content-publish-rule-list strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--hj-text);
+}
+.content-publish-rule-list small {
+  color: var(--hj-muted);
+  line-height: 1.55;
+}
 .ai-plan-steps {
   display: grid;
   gap: 10px;
