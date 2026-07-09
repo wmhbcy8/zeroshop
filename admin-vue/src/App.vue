@@ -102,6 +102,7 @@
                   <el-table-column label="操作" width="210">
                     <template #default="{ row }">
                       <el-button link type="primary" @click="editPlatformCustomer(row)">编辑</el-button>
+                      <el-button link type="primary" @click="openCustomerQuota(row)">配额</el-button>
                       <el-button link type="success" @click="openCustomerAdminUser(row)">中台账号</el-button>
                       <el-button link type="danger" @click="deletePlatformCustomer(row)">删除</el-button>
                     </template>
@@ -370,6 +371,85 @@
                 <el-button type="primary" @click="savePlatformCustomer">保存客户</el-button>
               </div>
             </el-form>
+          </el-drawer>
+          <el-drawer v-model="customerQuotaDrawerVisible" size="720px" title="客户套餐与配额">
+            <div v-loading="customerQuotaLoading">
+              <el-alert
+                class="mb16"
+                type="info"
+                show-icon
+                :closable="false"
+                :title="`当前客户：${customerQuotaDetail.customer?.name || '-'}，套餐 ${customerQuotaDetail.usage?.plan_key || '-'}`"
+              />
+              <div class="quota-usage-grid">
+                <article>
+                  <span>站点数量</span>
+                  <strong>{{ customerQuotaDetail.usage?.sites_used || 0 }} / {{ customerQuotaDetail.usage?.sites_limit || 0 }}</strong>
+                  <el-progress :percentage="quotaPercent(customerQuotaDetail.usage?.sites_used, customerQuotaDetail.usage?.sites_limit)" />
+                </article>
+                <article>
+                  <span>AI额度</span>
+                  <strong>{{ customerQuotaDetail.usage?.ai_used || 0 }} / {{ customerQuotaDetail.usage?.ai_quota || 0 }}</strong>
+                  <el-progress :percentage="Number(customerQuotaDetail.usage?.ai_percent || 0)" />
+                </article>
+                <article>
+                  <span>媒体存储</span>
+                  <strong>{{ customerQuotaDetail.usage?.storage_used_mb || 0 }} / {{ customerQuotaDetail.usage?.storage_quota_mb || 0 }}MB</strong>
+                  <el-progress :percentage="Number(customerQuotaDetail.usage?.storage_percent || 0)" />
+                </article>
+                <article>
+                  <span>到期/状态</span>
+                  <strong>{{ customerQuotaDetail.usage?.expires_at || '未设置' }}</strong>
+                  <small>{{ customerStatusLabel(customerQuotaDetail.usage?.status) }}</small>
+                </article>
+              </div>
+              <el-divider content-position="left">套餐调整</el-divider>
+              <el-form :model="customerQuotaForm" label-width="96px">
+                <el-row :gutter="12">
+                  <el-col :span="12">
+                    <el-form-item label="操作类型">
+                      <el-select v-model="customerQuotaForm.action">
+                        <el-option label="更新套餐" value="update_plan" />
+                        <el-option label="追加AI额度" value="add_ai_quota" />
+                        <el-option label="重置AI已用" value="reset_ai_used" />
+                        <el-option label="续期" value="extend_expiry" />
+                        <el-option label="修改状态" value="set_status" />
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12"><el-form-item label="备注"><el-input v-model="customerQuotaForm.note" placeholder="例如 客户续费/临时加量" /></el-form-item></el-col>
+                </el-row>
+                <template v-if="customerQuotaForm.action === 'update_plan'">
+                  <el-row :gutter="12">
+                    <el-col :span="12"><el-form-item label="套餐"><el-select v-model="customerQuotaForm.plan_key"><el-option label="Starter" value="starter" /><el-option label="Growth" value="growth" /><el-option label="Enterprise" value="enterprise" /></el-select></el-form-item></el-col>
+                    <el-col :span="12"><el-form-item label="到期日"><el-date-picker v-model="customerQuotaForm.expires_at" value-format="YYYY-MM-DD" type="date" placeholder="可选" /></el-form-item></el-col>
+                  </el-row>
+                  <el-row :gutter="12">
+                    <el-col :span="8"><el-form-item label="站点数"><el-input-number v-model="customerQuotaForm.max_sites" :min="1" /></el-form-item></el-col>
+                    <el-col :span="8"><el-form-item label="AI额度"><el-input-number v-model="customerQuotaForm.ai_quota" :min="0" /></el-form-item></el-col>
+                    <el-col :span="8"><el-form-item label="存储MB"><el-input-number v-model="customerQuotaForm.storage_quota_mb" :min="0" /></el-form-item></el-col>
+                  </el-row>
+                  <el-form-item label="状态"><el-select v-model="customerQuotaForm.status"><el-option label="启用" value="active" /><el-option label="停用" value="disabled" /><el-option label="过期" value="expired" /></el-select></el-form-item>
+                </template>
+                <el-form-item v-if="customerQuotaForm.action === 'add_ai_quota'" label="追加次数"><el-input-number v-model="customerQuotaForm.units" :min="1" /></el-form-item>
+                <el-form-item v-if="customerQuotaForm.action === 'extend_expiry'" label="续期天数"><el-input-number v-model="customerQuotaForm.days" :min="1" /></el-form-item>
+                <el-form-item v-if="customerQuotaForm.action === 'set_status'" label="状态"><el-select v-model="customerQuotaForm.status"><el-option label="启用" value="active" /><el-option label="停用" value="disabled" /><el-option label="过期" value="expired" /></el-select></el-form-item>
+                <div class="drawer-actions">
+                  <el-button @click="customerQuotaDrawerVisible = false">关闭</el-button>
+                  <el-button type="primary" :loading="customerQuotaSaving" @click="saveCustomerQuotaAdjustment">执行调整</el-button>
+                </div>
+              </el-form>
+              <el-divider content-position="left">操作记录</el-divider>
+              <el-table :data="customerQuotaDetail.logs || []" height="260" row-key="id">
+                <el-table-column prop="created_at" label="时间" width="170" />
+                <el-table-column label="动作" width="130"><template #default="{ row }">{{ planActionLabel(row.action) }}</template></el-table-column>
+                <el-table-column prop="operator_name" label="操作人" width="120" />
+                <el-table-column prop="note" label="备注" min-width="180" />
+                <el-table-column label="变化" min-width="220">
+                  <template #default="{ row }"><small>{{ planChangeSummary(row) }}</small></template>
+                </el-table-column>
+              </el-table>
+            </div>
           </el-drawer>
           <el-drawer v-model="customerAdminDrawerVisible" size="520px" title="客户中台账号">
             <el-form :model="customerAdminForm" label-width="108px">
@@ -3142,6 +3222,7 @@ const batchTaskDrawerVisible = ref(false)
 const categoryDrawerVisible = ref(false)
 const tagDrawerVisible = ref(false)
 const platformCustomerDrawerVisible = ref(false)
+const customerQuotaDrawerVisible = ref(false)
 const customerAdminDrawerVisible = ref(false)
 const deployNodeDrawerVisible = ref(false)
 const aiProviderDrawerVisible = ref(false)
@@ -3187,6 +3268,8 @@ const categoryForm = reactive<any>({})
 const categoryType = ref<'article' | 'product'>('article')
 const tagForm = reactive<any>({})
 const platformCustomerForm = reactive<any>({})
+const customerQuotaDetail = reactive<any>({ customer: {}, usage: {}, logs: [] })
+const customerQuotaForm = reactive<any>({})
 const customerAdminForm = reactive<any>({})
 const deployNodeForm = reactive<any>({})
 const aiProviderForm = reactive<any>({})
@@ -3255,6 +3338,8 @@ const templateCloneForm = reactive({ target_url: '' })
 const templateCloneLoading = ref(false)
 const templateClonePreviewingId = ref<number | string>('')
 const platformTemplateImporting = ref(false)
+const customerQuotaLoading = ref(false)
+const customerQuotaSaving = ref(false)
 const articlePager = reactive({ page: 1, page_size: 10, total: 0 })
 const productPager = reactive({ page: 1, page_size: 10, total: 0 })
 const pagePager = reactive({ page: 1, page_size: 10, total: 0 })
@@ -3989,6 +4074,117 @@ async function savePlatformCustomer() {
   platformCustomerDrawerVisible.value = false
   ElMessage.success('客户已保存')
   await loadPlatform()
+}
+
+function quotaPercent(used: any, total: any) {
+  const limit = Number(total || 0)
+  if (limit <= 0) return 0
+  return Math.min(100, Math.round((Number(used || 0) / limit) * 100))
+}
+
+function customerStatusLabel(value: string) {
+  return ({ active: '启用中', disabled: '已停用', expired: '已过期', unlimited: '不限' } as any)[value] || value || '-'
+}
+
+function planActionLabel(value: string) {
+  return ({
+    update_plan: '更新套餐',
+    add_ai_quota: '追加AI',
+    reset_ai_used: '重置AI',
+    extend_expiry: '续期',
+    set_status: '改状态'
+  } as any)[value] || value || '-'
+}
+
+function planChangeSummary(row: any) {
+  const before = row.before || {}
+  const after = row.after || {}
+  const fields = [
+    ['plan_key', '套餐'],
+    ['max_sites', '站点'],
+    ['ai_quota', 'AI额度'],
+    ['ai_used', 'AI已用'],
+    ['storage_quota_mb', '存储MB'],
+    ['expires_at', '到期'],
+    ['status', '状态']
+  ]
+  const changes = fields
+    .filter(([key]) => String(before[key] ?? '') !== String(after[key] ?? ''))
+    .map(([key, label]) => `${label}: ${before[key] ?? '-'} -> ${after[key] ?? '-'}`)
+  return changes.length ? changes.join('；') : '无字段变化'
+}
+
+function resetCustomerQuotaForm(detail: any = customerQuotaDetail) {
+  const usage = detail.usage || {}
+  Object.assign(customerQuotaForm, {
+    customer_id: detail.customer?.id || '',
+    action: 'update_plan',
+    plan_key: usage.plan_key || 'starter',
+    max_sites: Number(usage.sites_limit || 10),
+    ai_quota: Number(usage.ai_quota || 1000),
+    storage_quota_mb: Number(usage.storage_quota_mb || 1024),
+    expires_at: usage.expires_at || '',
+    status: usage.status || 'active',
+    units: 100,
+    days: 30,
+    note: ''
+  })
+}
+
+async function loadCustomerQuota(customerId: number | string) {
+  customerQuotaLoading.value = true
+  try {
+    const data = await request(`/api/platform/customers/${customerId}/quota`)
+    Object.assign(customerQuotaDetail, {
+      customer: data.customer || {},
+      usage: data.usage || {},
+      logs: data.logs || []
+    })
+    resetCustomerQuotaForm(customerQuotaDetail)
+  } finally {
+    customerQuotaLoading.value = false
+  }
+}
+
+async function openCustomerQuota(row: any) {
+  customerQuotaDrawerVisible.value = true
+  Object.assign(customerQuotaDetail, {
+    customer: row,
+    usage: {
+      plan_key: row.plan_key,
+      sites_used: row.site_count || 0,
+      sites_limit: row.max_sites || 0,
+      ai_used: row.ai_used || 0,
+      ai_quota: row.ai_quota || 0,
+      storage_used_mb: 0,
+      storage_quota_mb: row.storage_quota_mb || 0,
+      expires_at: row.expires_at || '',
+      status: row.status || 'active'
+    },
+    logs: []
+  })
+  resetCustomerQuotaForm(customerQuotaDetail)
+  await loadCustomerQuota(row.id)
+}
+
+async function saveCustomerQuotaAdjustment() {
+  const customerId = customerQuotaForm.customer_id || customerQuotaDetail.customer?.id
+  if (!customerId) return
+  customerQuotaSaving.value = true
+  try {
+    const payload = { ...customerQuotaForm }
+    const data = await request(`/api/platform/customers/${customerId}/plan-adjust`, { method: 'POST', data: payload })
+    Object.assign(customerQuotaDetail, {
+      customer: data.customer || {},
+      usage: data.usage || {},
+      logs: data.logs || []
+    })
+    resetCustomerQuotaForm(customerQuotaDetail)
+    ElMessage.success('客户套餐配额已更新')
+    await loadPlatform()
+  } finally {
+    customerQuotaSaving.value = false
+  }
 }
 
 async function deletePlatformCustomer(row: any) {

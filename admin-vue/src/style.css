@@ -149,6 +149,29 @@ body {
   margin-top: 7px;
   color: var(--hj-muted);
 }
+.quota-usage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.quota-usage-grid article {
+  padding: 14px;
+  border: 1px solid var(--hj-line);
+  border-radius: 8px;
+  background: #fff;
+}
+.quota-usage-grid span,
+.quota-usage-grid small {
+  display: block;
+  color: var(--hj-muted);
+  font-size: 12px;
+}
+.quota-usage-grid strong {
+  display: block;
+  margin: 8px 0 10px;
+  font-size: 20px;
+}
 .panel {
   border-radius: 12px;
   border-color: var(--hj-line);

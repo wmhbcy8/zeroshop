@@ -2123,6 +2123,20 @@ function ensure_center_tables(PDO $main): void
         INDEX idx_path (path(120)),
         INDEX idx_created_at (created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $main->exec("CREATE TABLE IF NOT EXISTS customer_plan_logs (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        customer_id BIGINT UNSIGNED NOT NULL,
+        action VARCHAR(60) NOT NULL,
+        before_json TEXT,
+        after_json TEXT,
+        note VARCHAR(500),
+        operator_id BIGINT UNSIGNED,
+        operator_name VARCHAR(120),
+        created_at DATETIME NOT NULL,
+        INDEX idx_customer_id (customer_id),
+        INDEX idx_action (action),
+        INDEX idx_created_at (created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $now = now();
     $main->exec("INSERT INTO customers (id, name, phone, email, company, status, created_at, updated_at)
         VALUES (1, '默认客户', '', '', '', 'active', '{$now}', '{$now}')
@@ -3071,6 +3085,140 @@ function save_platform_customer(PDO $main, array $data, ?int $id = null): array
         $id = (int)$main->lastInsertId();
     }
     return fetch_one($main, 'customers', (int)$id) ?: [];
+}
+
+function platform_customer_usage(PDO $sitePdo, PDO $main, int $customerId): array
+{
+    $customer = fetch_one($main, 'customers', $customerId);
+    if (!$customer) {
+        fail('客户不存在', 'NOT_FOUND', 404);
+    }
+    $storageBytes = customer_storage_used_bytes($sitePdo, $main, $customerId);
+    $sitesUsed = customer_site_count($main, $customerId);
+    $aiUsed = (int)($customer['ai_used'] ?? 0);
+    $aiQuota = (int)($customer['ai_quota'] ?? 0);
+    $storageQuota = (int)($customer['storage_quota_mb'] ?? 0);
+    return [
+        'customer' => $customer,
+        'usage' => [
+            'sites_used' => $sitesUsed,
+            'sites_limit' => (int)($customer['max_sites'] ?? 0),
+            'ai_used' => $aiUsed,
+            'ai_quota' => $aiQuota,
+            'ai_percent' => $aiQuota > 0 ? min(100, round($aiUsed / $aiQuota * 100, 2)) : 0,
+            'storage_used_bytes' => $storageBytes,
+            'storage_used_mb' => round($storageBytes / 1024 / 1024, 2),
+            'storage_quota_mb' => $storageQuota,
+            'storage_percent' => $storageQuota > 0 ? min(100, round(($storageBytes / 1024 / 1024) / $storageQuota * 100, 2)) : 0,
+            'status' => (string)($customer['status'] ?? 'active'),
+            'expires_at' => $customer['expires_at'] ?? null,
+            'plan_key' => (string)($customer['plan_key'] ?? 'starter'),
+        ],
+    ];
+}
+
+function record_customer_plan_log(PDO $main, int $customerId, string $action, array $before, array $after, string $note = ''): void
+{
+    ensure_center_tables($main);
+    $user = auth_user();
+    $stmt = $main->prepare('INSERT INTO customer_plan_logs (customer_id, action, before_json, after_json, note, operator_id, operator_name, created_at)
+        VALUES (:customer_id, :action, :before_json, :after_json, :note, :operator_id, :operator_name, :created_at)');
+    $stmt->execute([
+        'customer_id' => $customerId,
+        'action' => mb_substr($action, 0, 60, 'UTF-8'),
+        'before_json' => json_encode($before, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'after_json' => json_encode($after, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'note' => mb_substr($note, 0, 500, 'UTF-8'),
+        'operator_id' => $user['id'] ?? null,
+        'operator_name' => $user['username'] ?? '',
+        'created_at' => now(),
+    ]);
+}
+
+function list_customer_plan_logs(PDO $main, int $customerId, int $limit = 20): array
+{
+    ensure_center_tables($main);
+    $limit = min(100, max(1, $limit));
+    $stmt = $main->prepare("SELECT * FROM customer_plan_logs WHERE customer_id = :customer_id ORDER BY id DESC LIMIT {$limit}");
+    $stmt->execute(['customer_id' => $customerId]);
+    return array_map(function (array $row) {
+        $row['before'] = json_decode((string)($row['before_json'] ?? '{}'), true) ?: [];
+        $row['after'] = json_decode((string)($row['after_json'] ?? '{}'), true) ?: [];
+        unset($row['before_json'], $row['after_json']);
+        return $row;
+    }, $stmt->fetchAll());
+}
+
+function customer_plan_snapshot(array $customer): array
+{
+    return [
+        'plan_key' => (string)($customer['plan_key'] ?? 'starter'),
+        'max_sites' => (int)($customer['max_sites'] ?? 0),
+        'ai_quota' => (int)($customer['ai_quota'] ?? 0),
+        'ai_used' => (int)($customer['ai_used'] ?? 0),
+        'storage_quota_mb' => (int)($customer['storage_quota_mb'] ?? 0),
+        'expires_at' => $customer['expires_at'] ?? null,
+        'status' => (string)($customer['status'] ?? 'active'),
+    ];
+}
+
+function platform_customer_quota_detail(PDO $sitePdo, PDO $main, int $customerId): array
+{
+    $detail = platform_customer_usage($sitePdo, $main, $customerId);
+    $detail['logs'] = list_customer_plan_logs($main, $customerId, (int)($_GET['limit'] ?? 20));
+    return $detail;
+}
+
+function adjust_platform_customer_plan(PDO $sitePdo, PDO $main, int $customerId, array $data): array
+{
+    ensure_center_tables($main);
+    $customer = fetch_one($main, 'customers', $customerId);
+    if (!$customer) {
+        fail('客户不存在', 'NOT_FOUND', 404);
+    }
+    $before = customer_plan_snapshot($customer);
+    $action = (string)($data['action'] ?? 'update_plan');
+    $allowedActions = ['update_plan', 'add_ai_quota', 'reset_ai_used', 'extend_expiry', 'set_status'];
+    if (!in_array($action, $allowedActions, true)) {
+        fail('不支持的套餐操作', 'VALIDATION_ERROR', 422);
+    }
+    $after = $before;
+    if ($action === 'update_plan') {
+        $after['plan_key'] = mb_substr(trim((string)($data['plan_key'] ?? $after['plan_key'])), 0, 60, 'UTF-8') ?: 'starter';
+        $after['max_sites'] = max(1, (int)($data['max_sites'] ?? $after['max_sites']));
+        $after['ai_quota'] = max(0, (int)($data['ai_quota'] ?? $after['ai_quota']));
+        $after['storage_quota_mb'] = max(0, (int)($data['storage_quota_mb'] ?? $after['storage_quota_mb']));
+        $after['expires_at'] = trim((string)($data['expires_at'] ?? ($after['expires_at'] ?? ''))) ?: null;
+        $after['status'] = in_array(($data['status'] ?? $after['status']), ['active', 'disabled', 'expired'], true) ? (string)($data['status'] ?? $after['status']) : 'active';
+    } elseif ($action === 'add_ai_quota') {
+        $units = max(1, (int)($data['units'] ?? 0));
+        $after['ai_quota'] = (int)$after['ai_quota'] + $units;
+    } elseif ($action === 'reset_ai_used') {
+        $after['ai_used'] = 0;
+    } elseif ($action === 'extend_expiry') {
+        $days = max(1, (int)($data['days'] ?? 30));
+        $base = trim((string)($after['expires_at'] ?? ''));
+        $baseTime = $base !== '' && $base >= date('Y-m-d') ? strtotime($base) : time();
+        $after['expires_at'] = date('Y-m-d', strtotime("+{$days} days", $baseTime));
+        $after['status'] = 'active';
+    } elseif ($action === 'set_status') {
+        $status = (string)($data['status'] ?? 'active');
+        $after['status'] = in_array($status, ['active', 'disabled', 'expired'], true) ? $status : 'active';
+    }
+    $stmt = $main->prepare('UPDATE customers SET plan_key=:plan_key, max_sites=:max_sites, ai_quota=:ai_quota, ai_used=:ai_used, storage_quota_mb=:storage_quota_mb, expires_at=:expires_at, status=:status, updated_at=:updated_at WHERE id=:id');
+    $stmt->execute([
+        'id' => $customerId,
+        'plan_key' => $after['plan_key'],
+        'max_sites' => $after['max_sites'],
+        'ai_quota' => $after['ai_quota'],
+        'ai_used' => $after['ai_used'],
+        'storage_quota_mb' => $after['storage_quota_mb'],
+        'expires_at' => $after['expires_at'],
+        'status' => $after['status'],
+        'updated_at' => now(),
+    ]);
+    record_customer_plan_log($main, $customerId, $action, $before, $after, (string)($data['note'] ?? ''));
+    return platform_customer_quota_detail($sitePdo, $main, $customerId);
 }
 
 function customer_admin_user_payload(array $data): array
@@ -9012,6 +9160,18 @@ try {
 
     if ($method === 'POST' && $path === '/platform/customers') {
         ok(save_platform_customer(main_pdo(), body_json()), '客户已保存');
+    }
+
+    if ($params = route_param('/platform/customers/{id}/quota', $path)) {
+        if ($method === 'GET') {
+            ok(platform_customer_quota_detail($pdo, main_pdo(), (int)$params['id']));
+        }
+    }
+
+    if ($params = route_param('/platform/customers/{id}/plan-adjust', $path)) {
+        if ($method === 'POST') {
+            ok(adjust_platform_customer_plan($pdo, main_pdo(), (int)$params['id'], body_json()), '客户套餐配额已更新');
+        }
     }
 
     if ($params = route_param('/platform/customers/{id}', $path)) {
