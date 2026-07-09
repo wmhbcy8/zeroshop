@@ -8272,6 +8272,35 @@ try {
         ok(['items' => $stmt->fetchAll()]);
     }
 
+    if ($params = route_param('/platform/sites/{id}', $path)) {
+        $id = (int)$params['id'];
+        $main = main_pdo();
+        ensure_center_tables($main);
+        if ($method === 'GET') {
+            $stmt = $main->prepare("SELECT s.*, c.name AS customer_name, n.name AS deploy_node_name
+                FROM sites s
+                LEFT JOIN customers c ON c.id = s.customer_id
+                LEFT JOIN deploy_nodes n ON n.id = s.deploy_node_id
+                WHERE s.id = ?
+                LIMIT 1");
+            $stmt->execute([$id]);
+            $item = $stmt->fetch();
+            $item ? ok($item) : fail('站点不存在', 'NOT_FOUND', 404);
+        }
+        if ($method === 'PUT') {
+            ok(update_center_site($main, $id, body_json(), $pdo), '站点已保存');
+        }
+        if ($method === 'DELETE') {
+            $item = fetch_one($main, 'sites', $id);
+            if (!$item) {
+                fail('站点不存在', 'NOT_FOUND', 404);
+            }
+            $main->prepare("UPDATE sites SET status = 'archived', updated_at = :updated_at WHERE id = :id")
+                ->execute(['id' => $id, 'updated_at' => now()]);
+            ok(fetch_one($main, 'sites', $id), '站点已归档');
+        }
+    }
+
     if ($method === 'GET' && $path === '/platform/templates') {
         ok(template_registry());
     }
