@@ -25,7 +25,15 @@
           <small>{{ appModeLabel }}</small>
         </div>
       </div>
-      <el-menu :default-active="view" :default-openeds="defaultOpeneds" class="menu" @select="setView">
+      <el-menu
+        :default-active="view"
+        :default-openeds="defaultOpeneds"
+        :collapse="isSidebarCollapsed"
+        :collapse-transition="false"
+        class="menu"
+        popper-class="side-menu-popper"
+        @select="setView"
+      >
         <template v-for="group in navGroups" :key="group.key">
           <el-menu-item v-if="group.children.length === 1" :index="group.children[0].key">
             <el-icon><component :is="group.children[0].icon" /></el-icon>
