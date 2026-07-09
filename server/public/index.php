@@ -269,19 +269,28 @@ function template_registry(): array
         return ['items' => []];
     }
     foreach (glob($root . DIRECTORY_SEPARATOR . '*' . DIRECTORY_SEPARATOR . 'template.json') ?: [] as $path) {
+        $templateDir = dirname($path);
+        if (!template_directory_has_required_files($templateDir)) {
+            continue;
+        }
         $data = json_decode((string)file_get_contents($path), true);
         if (!is_array($data)) {
             continue;
         }
+        $supports = is_array($data['supports'] ?? null) ? $data['supports'] : [];
+        $isLegacyCloneDraft = in_array('clone-draft', $supports, true) && (string)($data['clone_mode'] ?? '') !== 'static_mirror';
+        if ($isLegacyCloneDraft) {
+            continue;
+        }
         $key = (string)($data['key'] ?? basename(dirname($path)));
-        $editableRegions = template_editable_regions_from_dir(dirname($path));
+        $editableRegions = template_editable_regions_from_dir($templateDir);
         $items[] = [
             'key' => $key,
             'name' => (string)($data['name'] ?? $key),
             'version' => (string)($data['version'] ?? ''),
             'author' => (string)($data['author'] ?? ''),
             'type' => $data['type'] ?? [],
-            'supports' => $data['supports'] ?? [],
+            'supports' => $supports,
             'entry' => (string)($data['entry'] ?? ''),
             'path' => 'templates/' . basename(dirname($path)),
             'status' => (string)($states[$key]['status'] ?? 'enabled'),
@@ -291,6 +300,21 @@ function template_registry(): array
     }
     usort($items, fn($a, $b) => strcmp((string)$a['key'], (string)$b['key']));
     return ['items' => $items];
+}
+
+function template_directory_has_required_files(string $dir): bool
+{
+    foreach ([
+        'template.json',
+        'pages' . DIRECTORY_SEPARATOR . 'index.html',
+        'pages' . DIRECTORY_SEPARATOR . 'article.html',
+        'pages' . DIRECTORY_SEPARATOR . 'product.html',
+    ] as $relative) {
+        if (!is_file($dir . DIRECTORY_SEPARATOR . $relative)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 function template_editable_regions_from_dir(string $dir): array
