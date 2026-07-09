@@ -6435,6 +6435,46 @@ function rewrite_manual_collector_record(PDO $pdo, array $data): array
     ];
 }
 
+function rewrite_collector_record(PDO $pdo, int $recordId, array $data = []): array
+{
+    ensure_collector_tables($pdo);
+    $record = fetch_one($pdo, 'collector_records', $recordId);
+    if (!$record) {
+        fail('采集记录不存在', 'NOT_FOUND', 404);
+    }
+    assert_site_access((int)($record['site_id'] ?? requested_site_id()), main_pdo());
+    $title = trim((string)($record['title'] ?? ''));
+    $content = trim((string)($record['content'] ?? $record['summary'] ?? ''));
+    if ($content === '') {
+        fail('采集记录正文为空，无法改写', 'VALIDATION_ERROR', 422);
+    }
+    consume_ai_quota(main_pdo(), auth_user(), 1);
+    $site = site_settings($pdo, (int)($record['site_id'] ?? requested_site_id()));
+    $prompt = implode("\n", [
+        '请把这条采集记录改写成适合企业独立站 SEO 收录的原创文章草稿。',
+        '要求：重写标题、摘要、正文结构，正文使用 p、h2、ul、li HTML。',
+        '原始标题：' . $title,
+        '补充要求：' . trim((string)($data['prompt'] ?? '')),
+        '原文：' . text_limit(strip_tags($content), 2400),
+    ]);
+    $fallback = local_ai_draft('article', $prompt, $site);
+    $remote = remote_ai_draft('article', $prompt, $site);
+    $draft = $remote ? array_replace($fallback, $remote) : $fallback;
+    $stmt = $pdo->prepare("UPDATE collector_records SET title=:title, summary=:summary, content=:content, status='rewritten', updated_at=:updated_at WHERE id=:id");
+    $stmt->execute([
+        'id' => $recordId,
+        'title' => text_limit((string)($draft['title'] ?? $title), 255),
+        'summary' => (string)($draft['summary'] ?? $record['summary'] ?? ''),
+        'content' => (string)($draft['content'] ?? $record['content'] ?? ''),
+        'updated_at' => now(),
+    ]);
+    return [
+        'source' => $remote ? 'remote' : 'local',
+        'draft' => $draft,
+        'record' => fetch_one($pdo, 'collector_records', $recordId) ?: [],
+    ];
+}
+
 function ensure_ai_task_tables(PDO $pdo): void
 {
     $pdo->exec("CREATE TABLE IF NOT EXISTS ai_tasks (
@@ -8216,6 +8256,11 @@ try {
     }
 
     if ($params = route_param('/ai/tasks/{id}', $path)) {
+        if ($method === 'GET') {
+            ensure_ai_task_tables($pdo);
+            $task = fetch_one($pdo, 'ai_tasks', (int)$params['id']);
+            $task ? ok(normalize_ai_task_row($task)) : fail('AI 任务不存在', 'NOT_FOUND', 404);
+        }
         if ($method === 'DELETE') {
             ensure_ai_task_tables($pdo);
             $pdo->prepare('DELETE FROM ai_tasks WHERE id = ?')->execute([(int)$params['id']]);
@@ -9037,12 +9082,22 @@ try {
         ok(list_collector_records($pdo, main_pdo()));
     }
 
+    if ($method === 'GET' && $path === '/collector/items') {
+        ok(list_collector_records($pdo, main_pdo()));
+    }
+
     if ($method === 'POST' && $path === '/collector/records/manual') {
         ok(create_manual_collector_record($pdo, body_json()), '粘贴内容已进入采集记录');
     }
 
     if ($method === 'POST' && $path === '/collector/records/rewrite') {
         ok(rewrite_manual_collector_record($pdo, body_json()), 'AI 改写已生成待审核记录');
+    }
+
+    if ($params = route_param('/collector/items/{id}/rewrite', $path)) {
+        if ($method === 'POST') {
+            ok(rewrite_collector_record($pdo, (int)$params['id'], body_json()), '采集记录已改写');
+        }
     }
 
     if ($params = route_param('/collector/records/{id}', $path)) {
@@ -9054,6 +9109,13 @@ try {
     }
 
     if ($params = route_param('/collector/records/{id}/publish', $path)) {
+        if ($method === 'POST') {
+            $data = body_json();
+            ok(publish_collector_record($pdo, (int)$params['id'], (string)($data['status'] ?? 'draft'), normalize_site_ids($data)), '已转为文章');
+        }
+    }
+
+    if ($params = route_param('/collector/items/{id}/publish', $path)) {
         if ($method === 'POST') {
             $data = body_json();
             ok(publish_collector_record($pdo, (int)$params['id'], (string)($data['status'] ?? 'draft'), normalize_site_ids($data)), '已转为文章');

@@ -216,6 +216,7 @@ PUT/DELETE       /api/media/{id}
 GET              /api/forms/submissions
 GET/PUT/DELETE   /api/forms/submissions/{id}
 POST             /api/ai/chat
+GET              /api/ai/tasks/{id}
 POST             /api/ai/generate
 POST             /api/ai/articles/generate
 POST             /api/ai/products/describe
@@ -233,6 +234,9 @@ GET              /api/site/publish-versions
 GET              /api/orders/export
 GET              /api/orders/service-requests
 POST             /api/orders/service-requests/resolve
+GET              /api/collector/items
+POST             /api/collector/items/{id}/rewrite
+POST             /api/collector/items/{id}/publish
 ```
 
 前台留言提交保持开放：
