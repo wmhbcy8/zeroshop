@@ -10731,6 +10731,11 @@ try {
         }
         $versionNo = (string)$currentSite['site_key'] . '_version_' . date('Ymd_His');
         $summary = create_publish_snapshot($pdo, $currentSite, $versionNo, $publicPath, $output);
+        $summary['message'] = '静态站已生成并创建发布版本。';
+        $summary['mode'] = 'generate';
+        $task = save_deploy_task($main, $currentSite, 'generate', 'success', $summary + ['version_no' => $versionNo]);
+        $summary['task'] = $task;
+        $summary['task_no'] = $task['task_no'] ?? '';
         ok($summary + ['version_no' => $versionNo], '生成成功');
     }
 
