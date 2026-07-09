@@ -261,6 +261,7 @@ POST             /api/collector/items/{id}/publish
 ```text
 POST /api/forms/submit
 POST /api/analytics/visit
+GET /api/search?keyword=关键词&site_id=10001
 POST /api/orders
 POST /api/orders/lookup
 POST /api/orders/customer-note

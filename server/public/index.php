@@ -1326,6 +1326,83 @@ function dashboard_metrics(PDO $pdo): array
     ];
 }
 
+function public_search(PDO $pdo, int $siteId): array
+{
+    ensure_content_distribution_table($pdo);
+    $keyword = trim((string)($_GET['keyword'] ?? $_GET['q'] ?? ''));
+    $type = trim((string)($_GET['type'] ?? 'all'));
+    $limit = min(50, max(1, (int)($_GET['limit'] ?? 20)));
+    if ($keyword === '') {
+        return ['items' => [], 'keyword' => '', 'total' => 0];
+    }
+    assert_public_rate_limit($pdo, $siteId, 'search', [$keyword], 60, 60);
+    $like = '%' . $keyword . '%';
+    $items = [];
+    $addRows = static function (array $rows, string $contentType) use (&$items): void {
+        foreach ($rows as $row) {
+            $slug = (string)($row['slug'] ?? '');
+            $url = match ($contentType) {
+                'product' => '/products/' . $slug . '.html',
+                'page' => '/' . $slug . '.html',
+                default => '/news/' . $slug . '.html',
+            };
+            $items[] = [
+                'type' => $contentType,
+                'title' => (string)($row['title'] ?? ''),
+                'url' => $url,
+                'summary' => text_limit(strip_tags((string)($row['summary'] ?? $row['content'] ?? $row['description'] ?? '')), 180),
+                'cover' => (string)($row['cover'] ?? ''),
+                'published_at' => (string)($row['published_at'] ?? $row['created_at'] ?? ''),
+            ];
+        }
+    };
+
+    if ($type === 'all' || $type === 'article') {
+        $stmt = $pdo->prepare("SELECT a.id, a.title, a.slug, a.cover, a.summary, a.content, a.published_at
+            FROM articles a
+            WHERE a.status = 'published'
+              AND (a.title LIKE :keyword OR a.summary LIKE :keyword OR a.content LIKE :keyword OR a.seo_keywords LIKE :keyword)
+              AND EXISTS (SELECT 1 FROM content_site_relations r WHERE r.content_type = 'article' AND r.content_id = a.id AND r.site_id = :site_id)
+            ORDER BY a.published_at DESC, a.id DESC
+            LIMIT {$limit}");
+        $stmt->execute(['keyword' => $like, 'site_id' => $siteId]);
+        $addRows($stmt->fetchAll(), 'article');
+    }
+
+    if ($type === 'all' || $type === 'product') {
+        $stmt = $pdo->prepare("SELECT p.id, p.title, p.slug, p.cover, p.summary, p.description, p.created_at
+            FROM products p
+            WHERE p.status = 'published'
+              AND (p.title LIKE :keyword OR p.summary LIKE :keyword OR p.description LIKE :keyword OR p.sku LIKE :keyword OR p.seo_keywords LIKE :keyword)
+              AND EXISTS (SELECT 1 FROM content_site_relations r WHERE r.content_type = 'product' AND r.content_id = p.id AND r.site_id = :site_id)
+            ORDER BY p.id DESC
+            LIMIT {$limit}");
+        $stmt->execute(['keyword' => $like, 'site_id' => $siteId]);
+        $addRows($stmt->fetchAll(), 'product');
+    }
+
+    if ($type === 'all' || $type === 'page') {
+        ensure_pages_table($pdo);
+        $stmt = $pdo->prepare("SELECT p.id, p.title, p.slug, p.cover, p.summary, p.content, p.published_at
+            FROM pages p
+            WHERE p.status = 'published'
+              AND (p.title LIKE :keyword OR p.summary LIKE :keyword OR p.content LIKE :keyword OR p.seo_keywords LIKE :keyword)
+              AND EXISTS (SELECT 1 FROM content_site_relations r WHERE r.content_type = 'page' AND r.content_id = p.id AND r.site_id = :site_id)
+            ORDER BY p.id DESC
+            LIMIT {$limit}");
+        $stmt->execute(['keyword' => $like, 'site_id' => $siteId]);
+        $addRows($stmt->fetchAll(), 'page');
+    }
+
+    return [
+        'items' => array_slice($items, 0, $limit),
+        'keyword' => $keyword,
+        'type' => $type,
+        'site_id' => $siteId,
+        'total' => count($items),
+    ];
+}
+
 function dashboard_todos(PDO $pdo, PDO $main): array
 {
     $sites = filter_sites_for_user($main, center_site_items($main, $pdo), current_user($pdo));
@@ -7976,6 +8053,11 @@ try {
             'updated_at' => $time,
         ]);
         ok(['id' => (int)$pdo->lastInsertId()], '提交成功');
+    }
+
+    if ($method === 'GET' && $path === '/search') {
+        $siteId = resolve_request_site_id($_GET);
+        ok(public_search($pdo, $siteId));
     }
 
     if ($method === 'POST' && $path === '/orders') {
