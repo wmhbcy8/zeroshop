@@ -160,16 +160,14 @@ function load_data_from_mysql(PDO $pdo): array
 
     $site = json_decode($setting, true, 512, JSON_THROW_ON_ERROR);
     $hasSiteOverride = false;
-    if ($siteId !== 10001) {
-        $stmt = $pdo->prepare('SELECT setting_value FROM site_settings WHERE setting_key = ? LIMIT 1');
-        $stmt->execute(['site_' . $siteId]);
-        $override = $stmt->fetchColumn();
-        if ($override) {
-            $overrideData = json_decode((string)$override, true, 512, JSON_THROW_ON_ERROR);
-            if (is_array($overrideData)) {
-                $site = array_replace_recursive($site, $overrideData);
-                $hasSiteOverride = true;
-            }
+    $stmt = $pdo->prepare('SELECT setting_value FROM site_settings WHERE setting_key = ? LIMIT 1');
+    $stmt->execute(['site_' . $siteId]);
+    $override = $stmt->fetchColumn();
+    if ($override) {
+        $overrideData = json_decode((string)$override, true, 512, JSON_THROW_ON_ERROR);
+        if (is_array($overrideData)) {
+            $site = array_replace_recursive($site, $overrideData);
+            $hasSiteOverride = true;
         }
     }
     $site['id'] = $siteId;
