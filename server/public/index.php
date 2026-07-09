@@ -4525,6 +4525,7 @@ function retry_deploy_task(PDO $main, PDO $pdo, array $currentSite, int $id): ar
         fail('该任务类型暂不支持重试', 'TASK_RETRY_UNSUPPORTED', 422);
     }
     if ($action === 'package') {
+        $generation = run_static_generator_for_site($currentSite, 'PACKAGE_GENERATE_FAILED');
         $package = create_static_package($currentSite);
         $summary = [
             'site_id' => (int)$currentSite['id'],
@@ -4533,6 +4534,7 @@ function retry_deploy_task(PDO $main, PDO $pdo, array $currentSite, int $id): ar
             'file_count' => $package['file_count'],
             'file_size' => $package['file_size'],
             'package_path' => $package['file_path'],
+            'generation' => $generation,
             'message' => '发布包重试生成成功，可下载后上传到目标站点目录。',
             'retry_from_task_no' => (string)($task['task_no'] ?? ''),
         ];
@@ -4701,11 +4703,41 @@ function publish_readiness(PDO $pdo, PDO $main, array $site): array
     ];
 }
 
+function run_static_generator_for_site(array $site, string $failureCode = 'GENERATE_FAILED'): array
+{
+    $root = dirname(__DIR__, 2);
+    $php = $root . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe';
+    $script = $root . DIRECTORY_SEPARATOR . 'worker' . DIRECTORY_SEPARATOR . 'GenerateSite.php';
+    $publicPath = site_public_root($site);
+    ensure_dir($publicPath);
+    putenv('HJ_SITE_KEY=' . (string)($site['site_key'] ?? 'site_10001'));
+    putenv('HJ_SITE_ID=' . (string)($site['id'] ?? 10001));
+    putenv('HJ_SITE_NAME=' . (string)($site['name'] ?? ''));
+    putenv('HJ_SITE_DOMAIN=' . (string)(($site['domain'] ?? '') ?: ($site['subdomain'] ?? '')));
+    putenv('HJ_SITE_LANGUAGE=' . (string)(($site['language'] ?? '') ?: 'zh-CN'));
+    putenv('HJ_TEMPLATE_KEY=' . (string)(($site['template_key'] ?? '') ?: 'business-clean'));
+    putenv('HJ_PUBLIC_PATH=' . $publicPath);
+    putenv('HJ_PUBLIC_API_BASE=' . (string)($site['api_base'] ?? ''));
+    $command = '"' . $php . '" "' . $script . '"';
+    $output = [];
+    $code = 0;
+    exec($command, $output, $code);
+    if ($code !== 0) {
+        fail('静态站生成失败', $failureCode, 500, ['output' => $output]);
+    }
+    return [
+        'generated_at' => now(),
+        'public_path' => str_replace(DIRECTORY_SEPARATOR, '/', site_public_path($site)),
+        'output' => $output,
+    ];
+}
+
 function execute_site_deploy(PDO $main, PDO $pdo, array $site): array
 {
     $settings = site_settings($pdo);
     [$deploy, $configured] = deploy_config_status($site, $settings);
     $plan = build_deploy_plan($main, $site, $deploy, $configured);
+    $generation = run_static_generator_for_site($site, 'DEPLOY_GENERATE_FAILED');
     $package = create_static_package($site);
     $mode = (string)($deploy['mode'] ?? 'manual');
     $deployResult = [];
@@ -4734,6 +4766,7 @@ function execute_site_deploy(PDO $main, PDO $pdo, array $site): array
         'after_action' => $deploy['after_action'] ?? '',
         'message' => $message,
         'plan' => $plan,
+        'generation' => $generation,
     ] + $deployResult;
     ensure_publish_versions_site_column($pdo);
     $stmt = $pdo->prepare("INSERT INTO publish_versions (site_id, version_no, publish_type, file_path, status, summary, created_at)
@@ -10710,6 +10743,7 @@ try {
             ok(execute_site_deploy($main, $pdo, $currentSite), '部署任务已创建');
         }
         if (in_array($publishType, ['package', 'publish_package'], true)) {
+            $generation = run_static_generator_for_site($currentSite, 'PACKAGE_GENERATE_FAILED');
             $package = create_static_package($currentSite);
             $summary = [
                 'site_id' => (int)$currentSite['id'],
@@ -10718,6 +10752,7 @@ try {
                 'file_count' => $package['file_count'],
                 'file_size' => $package['file_size'],
                 'package_path' => $package['file_path'],
+                'generation' => $generation,
                 'message' => '发布包已生成，可下载后上传到宝塔站点目录解压。',
             ];
             ensure_publish_versions_site_column($pdo);
@@ -10819,6 +10854,7 @@ try {
     if ($method === 'POST' && $path === '/site/package') {
         $main = main_pdo();
         $currentSite = current_site($main, $pdo);
+        $generation = run_static_generator_for_site($currentSite, 'PACKAGE_GENERATE_FAILED');
         $package = create_static_package($currentSite);
         $summary = [
             'site_id' => (int)$currentSite['id'],
@@ -10827,6 +10863,7 @@ try {
             'file_count' => $package['file_count'],
             'file_size' => $package['file_size'],
             'package_path' => $package['file_path'],
+            'generation' => $generation,
             'message' => '发布包已生成，可下载后上传到宝塔站点目录解压。',
         ];
         ensure_publish_versions_site_column($pdo);
