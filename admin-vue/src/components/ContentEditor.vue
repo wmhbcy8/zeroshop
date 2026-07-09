@@ -292,6 +292,18 @@ function siteIdsForScope(scope: string, selected: any[] = []) {
   return currentSiteIds()
 }
 
+function scopeFromListSiteScope() {
+  if (props.listSiteScope === 'all') return { site_scope: 'all', site_ids: allSiteIds() }
+  if (props.listSiteScope === 'current') return { site_scope: 'current', site_ids: currentSiteIds() }
+  const id = Number(props.listSiteScope || 0)
+  if (id > 0) return { site_scope: 'selected', site_ids: [id] }
+  return { site_scope: 'current', site_ids: currentSiteIds() }
+}
+
+function syncBulkFromListScope() {
+  bulkForm.value = scopeFromListSiteScope()
+}
+
 function syncBulkScope() {
   bulkForm.value.site_ids = siteIdsForScope(bulkForm.value.site_scope, bulkForm.value.site_ids)
 }
@@ -303,6 +315,12 @@ watch(
       bulkForm.value.site_ids = currentSiteIds()
     }
   },
+  { immediate: true }
+)
+
+watch(
+  () => props.listSiteScope,
+  () => syncBulkFromListScope(),
   { immediate: true }
 )
 

@@ -4844,6 +4844,10 @@ function normalizeDistributionPayload(form: any) {
   }
 }
 
+function mergeSiteIds(...groups: any[][]) {
+  return [...new Set(groups.flat().map((id: any) => Number(id)).filter((id) => id > 0))]
+}
+
 function mergeDraftIntoContentForm(form: any, draft: any) {
   const currentScope = form.site_scope || 'current'
   const currentSiteIds = siteIdsForScope(currentScope, form.site_ids)
@@ -4905,9 +4909,10 @@ async function bulkDistributeContent(type: 'article' | 'product' | 'page', paylo
     method: 'PUT',
     data: normalizeDistributionPayload({ ...item, site_scope, site_ids })
   })))
+  const changedSiteIds = mergeSiteIds(site_ids, ...items.map((item: any) => item.site_ids || []))
   ElMessage.success(`已更新 ${items.length} 条内容的发布范围`)
   await Promise.all([reload(), loadDashboard(), loadSites()])
-  await syncGeneratedSitesForContent(site_ids, `${items.length} 条内容分发范围更新`)
+  await syncGeneratedSitesForContent(changedSiteIds, `${items.length} 条内容分发范围更新`)
 }
 
 async function bulkPublishContent(type: 'article' | 'product' | 'page', payload: any, reload: () => Promise<void>) {
@@ -5086,7 +5091,7 @@ function openAiForContent(payload: any = {}) {
 }
 
 function newPage() { Object.assign(pageForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', ...scopeFromListFilter() }) }
-function editPage(item: any) { Object.assign(pageForm, { ...item, site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds() }) }
+function editPage(item: any) { Object.assign(pageForm, { ...item, site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds(), _original_site_ids: item.site_ids?.length ? [...item.site_ids] : currentSiteIds() }) }
 async function savePage() {
   if (!ensureSelectedSiteScope(pageForm.site_scope, pageForm.site_ids, '页面发布范围')) return
   const method = pageForm.id ? 'PUT' : 'POST'
@@ -5096,7 +5101,7 @@ async function savePage() {
   ElMessage.success('页面已保存')
   pagePager.page = pageForm.id ? pagePager.page : 1
   await Promise.all([loadPages(), loadStaticPages(), loadDashboard(), loadSites()])
-  await syncGeneratedSitesForContent(payload.site_ids, '页面保存后自动生成')
+  await syncGeneratedSitesForContent(mergeSiteIds(payload.site_ids, pageForm._original_site_ids || []), '页面保存后自动生成')
 }
 async function bulkDistributePages(payload: any) {
   await bulkDistributeContent('page', payload, loadPages)
@@ -5158,7 +5163,7 @@ async function generatePageDraft(prompt: string) {
 }
 
 function newArticle() { Object.assign(articleForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', tag_names: [], ...scopeFromListFilter() }) }
-function editArticle(item: any) { Object.assign(articleForm, { ...item, tag_names: item.tag_names || (item.tags || []).map((tag: any) => tag.name), site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds() }) }
+function editArticle(item: any) { Object.assign(articleForm, { ...item, tag_names: item.tag_names || (item.tags || []).map((tag: any) => tag.name), site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds(), _original_site_ids: item.site_ids?.length ? [...item.site_ids] : currentSiteIds() }) }
 async function saveArticle() {
   if (!ensureSelectedSiteScope(articleForm.site_scope, articleForm.site_ids, '文章发布范围')) return
   const method = articleForm.id ? 'PUT' : 'POST'
@@ -5168,7 +5173,7 @@ async function saveArticle() {
   ElMessage.success('文章已保存')
   articlePager.page = articleForm.id ? articlePager.page : 1
   await Promise.all([loadArticles(), loadTags(), loadDashboard(), loadSites()])
-  await syncGeneratedSitesForContent(payload.site_ids, '文章保存后自动生成')
+  await syncGeneratedSitesForContent(mergeSiteIds(payload.site_ids, articleForm._original_site_ids || []), '文章保存后自动生成')
 }
 async function bulkDistributeArticles(payload: any) {
   await bulkDistributeContent('article', payload, loadArticles)
@@ -5193,7 +5198,7 @@ async function generateArticleDraft(prompt: string) {
 }
 
 function newProduct() { Object.assign(productForm, { id: '', title: '', slug: '', sku: '', cover: '', summary: '', description: '', price: 0, stock: 0, status: 'draft', ...scopeFromListFilter() }) }
-function editProduct(item: any) { Object.assign(productForm, { ...item, site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds() }) }
+function editProduct(item: any) { Object.assign(productForm, { ...item, site_scope: inferSiteScope(item.site_ids || []), site_ids: item.site_ids?.length ? item.site_ids : currentSiteIds(), _original_site_ids: item.site_ids?.length ? [...item.site_ids] : currentSiteIds() }) }
 async function saveProduct() {
   if (!ensureSelectedSiteScope(productForm.site_scope, productForm.site_ids, '商品发布范围')) return
   const method = productForm.id ? 'PUT' : 'POST'
@@ -5203,7 +5208,7 @@ async function saveProduct() {
   ElMessage.success('商品已保存')
   productPager.page = productForm.id ? productPager.page : 1
   await Promise.all([loadProducts(), loadDashboard(), loadSites()])
-  await syncGeneratedSitesForContent(payload.site_ids, '商品保存后自动生成')
+  await syncGeneratedSitesForContent(mergeSiteIds(payload.site_ids, productForm._original_site_ids || []), '商品保存后自动生成')
 }
 async function bulkDistributeProducts(payload: any) {
   await bulkDistributeContent('product', payload, loadProducts)
