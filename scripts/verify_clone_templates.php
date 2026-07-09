@@ -29,12 +29,16 @@ foreach ($templates as $key => $rules) {
     exec($command, $output, $code);
     $index = $out . DIRECTORY_SEPARATOR . 'index.html';
     $html = is_file($index) ? (string)file_get_contents($index) : '';
+    $assetCheck = verify_local_assets($out);
     preg_match('/<title>(.*?)<\/title>/is', $html, $titleMatch);
     $row = [
         'key' => $key,
         'title' => trim(strip_tags($titleMatch[1] ?? '')),
         'length' => strlen($html),
         'images' => preg_match_all('/<img\b/i', $html),
+        'asset_refs' => $assetCheck['checked'],
+        'missing_assets' => count($assetCheck['missing']),
+        'external_refs' => count($assetCheck['external']),
         'redirect' => preg_match('/http-equiv=["\']refresh["\']|window\.location\.(replace|href|assign)\s*\(/i', $html) === 1,
         'zeroshop' => str_contains($html, 'ZeroShop'),
         'test_marker' => str_contains($html, 'HUJIAN_TEST_STATIC_MIRROR_OVERRIDE_260709'),
@@ -43,9 +47,12 @@ foreach ($templates as $key => $rules) {
     $row['ok'] = $code === 0
         && $row['length'] >= (int)$rules['min_length']
         && $row['images'] >= (int)$rules['min_images']
+        && $row['missing_assets'] === 0
         && !$row['redirect']
         && !$row['zeroshop']
         && !$row['test_marker'];
+    $row['missing_examples'] = array_slice($assetCheck['missing'], 0, 3);
+    $row['external_examples'] = array_slice($assetCheck['external'], 0, 3);
     $failed = $failed || !$row['ok'];
     $rows[] = $row;
 }
@@ -55,15 +62,24 @@ putenv('HJ_SITE_ID');
 
 foreach ($rows as $row) {
     echo sprintf(
-        "%s\t%s\tlen=%d\timg=%d\tredirect=%s\tzeroshop=%s\tok=%s\n",
+        "%s\t%s\tlen=%d\timg=%d\tassets=%d\tmissing=%d\texternal=%d\tredirect=%s\tzeroshop=%s\tok=%s\n",
         $row['key'],
         $row['title'],
         $row['length'],
         $row['images'],
+        $row['asset_refs'],
+        $row['missing_assets'],
+        $row['external_refs'],
         $row['redirect'] ? 'yes' : 'no',
         $row['zeroshop'] ? 'yes' : 'no',
         $row['ok'] ? 'yes' : 'no'
     );
+    foreach ($row['missing_examples'] as $missing) {
+        echo "  missing: {$missing}\n";
+    }
+    foreach ($row['external_examples'] as $external) {
+        echo "  external: {$external}\n";
+    }
 }
 
 exit($failed ? 1 : 0);
@@ -85,4 +101,107 @@ function remove_path(string $path): void
         $item->isDir() ? rmdir($item->getPathname()) : unlink($item->getPathname());
     }
     rmdir($path);
+}
+
+function verify_local_assets(string $root): array
+{
+    $checked = 0;
+    $missing = [];
+    $external = [];
+    $files = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS)
+    );
+    foreach ($files as $file) {
+        if (!$file->isFile()) {
+            continue;
+        }
+        $ext = strtolower($file->getExtension());
+        if (!in_array($ext, ['html', 'css'], true)) {
+            continue;
+        }
+        $content = (string)file_get_contents($file->getPathname());
+        $refs = $ext === 'html' ? extract_html_refs($content) : extract_css_refs($content);
+        foreach ($refs as $ref) {
+            $ref = trim(html_entity_decode($ref, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+            if ($ref === '' || preg_match('/^(#|mailto:|tel:|javascript:|data:|blob:)/i', $ref)) {
+                continue;
+            }
+            if (preg_match('#^https?://#i', $ref) || str_starts_with($ref, '//')) {
+                $external[] = relative_to_root($root, $file->getPathname()) . ' -> ' . $ref;
+                continue;
+            }
+            $pathOnly = preg_replace('/[?#].*$/', '', $ref) ?? $ref;
+            if ($pathOnly === '' || str_ends_with($pathOnly, '.html')) {
+                continue;
+            }
+            $checked++;
+            $base = dirname($file->getPathname());
+            $target = str_starts_with($pathOnly, '/')
+                ? $root . DIRECTORY_SEPARATOR . ltrim(str_replace('/', DIRECTORY_SEPARATOR, $pathOnly), DIRECTORY_SEPARATOR)
+                : $base . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $pathOnly);
+            $realRoot = realpath($root);
+            $realTarget = realpath($target);
+            if (!$realRoot || !$realTarget || !str_starts_with($realTarget, $realRoot) || !is_file($realTarget)) {
+                $missing[] = relative_to_root($root, $file->getPathname()) . ' -> ' . $ref;
+            }
+        }
+    }
+    return [
+        'checked' => $checked,
+        'missing' => array_values(array_unique($missing)),
+        'external' => array_values(array_unique($external)),
+    ];
+}
+
+function extract_html_refs(string $html): array
+{
+    $refs = [];
+    if (preg_match_all('/<(?:img|script|source|video|audio|iframe)\b[^>]*\s(?:src|poster|data-src)=["\']([^"\']+)["\']/i', $html, $matches)) {
+        array_push($refs, ...$matches[1]);
+    }
+    if (preg_match_all('/<link\b[^>]*\shref=["\']([^"\']+)["\'][^>]*>/i', $html, $matches)) {
+        foreach ($matches[0] as $index => $tag) {
+            if (preg_match('/\srel=["\']([^"\']+)["\']/i', $tag, $rel) && preg_match('/\b(stylesheet|icon|preload|modulepreload)\b/i', $rel[1])) {
+                $refs[] = $matches[1][$index];
+            }
+        }
+    }
+    if (preg_match_all('/<(?:img|source)\b[^>]*\ssrcset=["\']([^"\']+)["\']/i', $html, $matches)) {
+        foreach ($matches[1] as $srcset) {
+            foreach (explode(',', $srcset) as $part) {
+                $bits = preg_split('/\s+/', trim($part));
+                if (!empty($bits[0])) {
+                    $refs[] = $bits[0];
+                }
+            }
+        }
+    }
+    if (preg_match_all('/<style\b[^>]*>(.*?)<\/style>/is', $html, $styleBlocks)) {
+        foreach ($styleBlocks[1] as $css) {
+            array_push($refs, ...extract_css_refs($css));
+        }
+    }
+    if (preg_match_all('/\sstyle=["\']([^"\']+)["\']/is', $html, $styleAttrs)) {
+        foreach ($styleAttrs[1] as $css) {
+            array_push($refs, ...extract_css_refs($css));
+        }
+    }
+    return $refs;
+}
+
+function extract_css_refs(string $css): array
+{
+    $refs = [];
+    if (preg_match_all('/url\(([^)]+)\)/i', $css, $matches)) {
+        array_push($refs, ...array_map(static fn($value) => trim($value, " \t\n\r\0\x0B'\""), $matches[1]));
+    }
+    if (preg_match_all('/@import\s+["\']([^"\']+)["\']/i', $css, $matches)) {
+        array_push($refs, ...$matches[1]);
+    }
+    return $refs;
+}
+
+function relative_to_root(string $root, string $path): string
+{
+    return str_replace('\\', '/', ltrim(substr($path, strlen($root)), DIRECTORY_SEPARATOR));
 }
