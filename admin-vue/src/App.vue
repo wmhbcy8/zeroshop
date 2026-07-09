@@ -688,6 +688,116 @@
           </el-card>
         </section>
 
+        <section v-if="view === 'analytics'">
+          <el-card class="panel mb16" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>流量分析</strong>
+                <div class="head-actions">
+                  <el-select v-model="operationSiteScope" placeholder="站点范围" style="width: 180px" @change="applyOperationSiteScope">
+                    <el-option label="全部站点" value="all" />
+                    <el-option v-for="item in sites" :key="item.id" :label="item.name" :value="String(item.id)" />
+                  </el-select>
+                  <el-select v-model="analyticsDays" style="width: 130px" @change="loadAnalyticsOverview">
+                    <el-option label="近 7 天" :value="7" />
+                    <el-option label="近 30 天" :value="30" />
+                    <el-option label="近 90 天" :value="90" />
+                  </el-select>
+                  <el-button :loading="analyticsLoading" @click="loadAnalyticsOverview">刷新</el-button>
+                </div>
+              </div>
+            </template>
+            <div class="metric-grid">
+              <MetricCard title="浏览量" :value="analyticsOverview.summary?.views || 0" :note="`${analyticsOverview.days || analyticsDays} 天累计`" icon="View" />
+              <MetricCard title="访客数" :value="analyticsOverview.summary?.visitors || 0" note="按访问标识去重" icon="User" />
+              <MetricCard title="访问深度" :value="analyticsOverview.summary?.depth || 0" note="人均浏览页数" icon="TrendCharts" />
+              <MetricCard title="访问页面" :value="analyticsOverview.summary?.pages || 0" note="去重页面数量" icon="Files" />
+              <MetricCard title="来源数" :value="analyticsOverview.summary?.referrers || 0" note="非直接访问来源" icon="Connection" />
+            </div>
+          </el-card>
+
+          <el-row :gutter="16">
+            <el-col :span="14">
+              <el-card class="panel" shadow="never">
+                <template #header><strong>每日趋势</strong></template>
+                <el-table :data="analyticsOverview.daily || []" height="360" row-key="day">
+                  <el-table-column prop="day" label="日期" width="150" />
+                  <el-table-column prop="views" label="浏览量" width="120" />
+                  <el-table-column prop="visitors" label="访客数" width="120" />
+                  <el-table-column label="访问深度" width="120">
+                    <template #default="{ row }">{{ row.visitors > 0 ? (row.views / row.visitors).toFixed(2) : '0.00' }}</template>
+                  </el-table-column>
+                  <el-table-column label="趋势" min-width="220">
+                    <template #default="{ row }">
+                      <el-progress :percentage="analyticsDailyPercent(row.views)" :show-text="false" />
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </el-card>
+            </el-col>
+            <el-col :span="10">
+              <el-card class="panel" shadow="never">
+                <template #header><strong>站点排行</strong></template>
+                <el-table :data="analyticsOverview.sites || []" height="360" row-key="site_id">
+                  <el-table-column label="站点" min-width="180">
+                    <template #default="{ row }"><strong>{{ row.site_name }}</strong><br /><small>{{ row.site_id }}</small></template>
+                  </el-table-column>
+                  <el-table-column prop="views" label="浏览" width="90" />
+                  <el-table-column prop="visitors" label="访客" width="90" />
+                  <el-table-column prop="pages" label="页面" width="90" />
+                </el-table>
+              </el-card>
+            </el-col>
+          </el-row>
+
+          <el-row :gutter="16" class="mt16">
+            <el-col :span="12">
+              <el-card class="panel" shadow="never">
+                <template #header><strong>热门页面</strong></template>
+                <el-table :data="analyticsOverview.top_paths || []" height="420" row-key="path">
+                  <el-table-column label="页面" min-width="280">
+                    <template #default="{ row }">
+                      <strong>{{ row.title || row.path }}</strong><br />
+                      <small>{{ row.site_name }} / {{ row.path }}</small>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="views" label="浏览" width="90" />
+                  <el-table-column prop="visitors" label="访客" width="90" />
+                </el-table>
+              </el-card>
+            </el-col>
+            <el-col :span="12">
+              <el-card class="panel" shadow="never">
+                <template #header><strong>访问来源</strong></template>
+                <el-table :data="analyticsOverview.referrers || []" height="420" row-key="referrer">
+                  <el-table-column label="来源" min-width="280">
+                    <template #default="{ row }">
+                      <strong>{{ analyticsReferrerLabel(row.referrer) }}</strong><br />
+                      <small>{{ row.site_name }}</small>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="views" label="浏览" width="90" />
+                  <el-table-column prop="visitors" label="访客" width="90" />
+                </el-table>
+              </el-card>
+            </el-col>
+          </el-row>
+
+          <el-card class="panel mt16" shadow="never">
+            <template #header><strong>最近访问</strong></template>
+            <el-table :data="analyticsOverview.recent || []" height="360" row-key="id">
+              <el-table-column prop="created_at" label="时间" width="170" />
+              <el-table-column prop="site_name" label="站点" width="160" />
+              <el-table-column label="页面" min-width="260">
+                <template #default="{ row }"><strong>{{ row.title || row.path }}</strong><br /><small>{{ row.path }}</small></template>
+              </el-table-column>
+              <el-table-column label="来源" min-width="260">
+                <template #default="{ row }"><small>{{ analyticsReferrerLabel(row.referrer || 'direct') }}</small></template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+        </section>
+
         <section v-if="view === 'sites'">
           <el-row :gutter="16">
             <el-col :span="16">
@@ -2987,6 +3097,7 @@ const deployPlan = ref<any>(null)
 const publishReadiness = ref<any>(null)
 const siteBackups = ref<any[]>([])
 const operationLogs = ref<any[]>([])
+const analyticsOverview = ref<any>({ summary: {}, daily: [], sites: [], top_paths: [], referrers: [], recent: [] })
 const batchTaskOverview = ref<any>({})
 const taskStreamOverview = ref<any>({})
 const quota = ref<any>({})
@@ -3002,6 +3113,7 @@ const deployNodes = ref<any[]>([])
 const aiProviders = ref<any[]>([])
 const currentSiteId = ref<number | string>(10001)
 const operationSiteScope = ref('all')
+const analyticsDays = ref(7)
 const contentListSiteScope = ref('all')
 const templates = ref<any[]>([])
 const templateCloneTasks = ref<any[]>([])
@@ -3166,6 +3278,7 @@ const aiBatchLoading = ref(false)
 const aiTaskLoading = ref(false)
 const aiChatLoading = ref(false)
 const seoFixing = ref(false)
+const analyticsLoading = ref(false)
 const aiCoverLoading = ref('')
 const pagePlanLoading = ref(false)
 const pagePlanSaving = ref(false)
@@ -3180,6 +3293,7 @@ const navItems = [
   { key: 'platform-system', label: '系统', hint: '配置平台名称、默认域名、新客户套餐和新站默认值。', icon: 'Setting' },
   { key: 'dashboard', label: '概览', hint: '查看运营指标、内容数量和站点状态。', icon: 'Odometer' },
   { key: 'operations', label: '运营', hint: '统一处理跨站订单、询盘、内容分发、AI 生成和批量发布。', icon: 'Operation' },
+  { key: 'analytics', label: '流量', hint: '按全部站点或单站点查看访问趋势、热门页面、来源和最近访问。', icon: 'DataAnalysis' },
   { key: 'sites', label: '站点', hint: '管理客户名下所有前台站点。', icon: 'Grid' },
   { key: 'domains', label: '域名', hint: '绑定主域名、别名域名并检查 DNS/SSL 状态。', icon: 'Link' },
   { key: 'settings', label: '设置', hint: '维护当前站点基础信息、SEO、导航和全站页面结构。', icon: 'Setting' },
@@ -3409,6 +3523,7 @@ function setView(key: string) {
   if (key === 'platform-system') loadPlatformSystemSettings()
   if (key === 'dashboard') loadDashboard()
   if (key === 'operations') refreshOperations()
+  if (key === 'analytics') loadAnalyticsOverview()
   if (key === 'sites') loadSites()
   if (key === 'domains') Promise.all([loadDomains(), loadDomainApplications()])
   if (key === 'menus') Promise.all([loadMenus(), loadStaticPages()])
@@ -3436,6 +3551,7 @@ function refreshCurrentView() {
   const loaders: Record<string, () => Promise<void>> = {
     dashboard: loadDashboard,
     operations: refreshOperations,
+    analytics: loadAnalyticsOverview,
     platform: loadPlatform,
     'platform-system': loadPlatformSystemSettings,
     sites: loadSites,
@@ -3481,6 +3597,7 @@ async function loadAll() {
     loadDomains(),
     loadDomainApplications(),
     loadDashboard(),
+    loadAnalyticsOverview(),
     loadSettings(),
     loadStaticPages(),
     loadTemplates(),
@@ -5493,6 +5610,35 @@ function changeOrderPage(page: number) {
   orderPager.page = page
   loadOrders()
 }
+
+async function loadAnalyticsOverview() {
+  analyticsLoading.value = true
+  try {
+    const params = new URLSearchParams()
+    params.set('site_id', operationSiteScope.value)
+    params.set('days', String(analyticsDays.value || 7))
+    analyticsOverview.value = await request(`/api/analytics/overview?${params.toString()}`)
+  } finally {
+    analyticsLoading.value = false
+  }
+}
+
+function analyticsDailyPercent(views: number) {
+  const rows = analyticsOverview.value.daily || []
+  const maxViews = Math.max(1, ...rows.map((row: any) => Number(row.views || 0)))
+  return Math.round((Number(views || 0) / maxViews) * 100)
+}
+
+function analyticsReferrerLabel(value: string) {
+  const text = String(value || '').trim()
+  if (!text || text === 'direct') return '直接访问'
+  try {
+    return new URL(text).hostname || text
+  } catch {
+    return text
+  }
+}
+
 function applyOperationSiteScope() {
   orderPager.page = 1
   servicePager.page = 1
@@ -5504,6 +5650,7 @@ function applyOperationSiteScope() {
   if (view.value === 'payments') loadPaymentProofs()
   if (view.value === 'payments') loadPaymentEvents()
   if (view.value === 'operations') refreshOperations()
+  if (view.value === 'analytics') loadAnalyticsOverview()
 }
 
 async function refreshOperations() {

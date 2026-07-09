@@ -1475,6 +1475,105 @@ function dashboard_metrics(PDO $pdo): array
     ];
 }
 
+function analytics_days(): int
+{
+    return min(90, max(1, (int)($_GET['days'] ?? 7)));
+}
+
+function analytics_scope_where(): array
+{
+    $days = analytics_days();
+    $since = date('Y-m-d 00:00:00', strtotime('-' . ($days - 1) . ' days'));
+    $clauses = ['created_at >= :since'];
+    $params = ['since' => $since];
+    append_site_scope_clause($clauses, $params);
+    return [$days, $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '', $params];
+}
+
+function analytics_overview(PDO $pdo, PDO $main): array
+{
+    [$days, $whereSql, $params] = analytics_scope_where();
+
+    $summaryStmt = $pdo->prepare("SELECT
+        COUNT(*) AS views,
+        COUNT(DISTINCT visitor_key) AS visitors,
+        COUNT(DISTINCT CONCAT(site_id, '|', path)) AS pages,
+        COUNT(DISTINCT NULLIF(referrer, '')) AS referrers
+        FROM site_visits{$whereSql}");
+    $summaryStmt->execute($params);
+    $summary = $summaryStmt->fetch() ?: [];
+    $views = (int)($summary['views'] ?? 0);
+    $visitors = (int)($summary['visitors'] ?? 0);
+
+    $dailyStmt = $pdo->prepare("SELECT DATE(created_at) AS day, COUNT(*) AS views, COUNT(DISTINCT visitor_key) AS visitors
+        FROM site_visits{$whereSql}
+        GROUP BY DATE(created_at)
+        ORDER BY day ASC");
+    $dailyStmt->execute($params);
+    $dailyMap = [];
+    foreach ($dailyStmt->fetchAll() as $row) {
+        $dailyMap[(string)$row['day']] = [
+            'day' => (string)$row['day'],
+            'views' => (int)$row['views'],
+            'visitors' => (int)$row['visitors'],
+        ];
+    }
+    $daily = [];
+    for ($index = $days - 1; $index >= 0; $index--) {
+        $day = date('Y-m-d', strtotime('-' . $index . ' days'));
+        $daily[] = $dailyMap[$day] ?? ['day' => $day, 'views' => 0, 'visitors' => 0];
+    }
+
+    $topPathsStmt = $pdo->prepare("SELECT site_id, path, COALESCE(NULLIF(MAX(title), ''), path) AS title,
+        COUNT(*) AS views, COUNT(DISTINCT visitor_key) AS visitors, MAX(created_at) AS last_visited_at
+        FROM site_visits{$whereSql}
+        GROUP BY site_id, path
+        ORDER BY views DESC, visitors DESC
+        LIMIT 20");
+    $topPathsStmt->execute($params);
+    $topPaths = attach_site_names($topPathsStmt->fetchAll(), $main);
+
+    $referrerStmt = $pdo->prepare("SELECT site_id, COALESCE(NULLIF(referrer, ''), 'direct') AS referrer,
+        COUNT(*) AS views, COUNT(DISTINCT visitor_key) AS visitors, MAX(created_at) AS last_visited_at
+        FROM site_visits{$whereSql}
+        GROUP BY site_id, COALESCE(NULLIF(referrer, ''), 'direct')
+        ORDER BY views DESC, visitors DESC
+        LIMIT 20");
+    $referrerStmt->execute($params);
+    $referrers = attach_site_names($referrerStmt->fetchAll(), $main);
+
+    $siteStmt = $pdo->prepare("SELECT site_id, COUNT(*) AS views, COUNT(DISTINCT visitor_key) AS visitors,
+        COUNT(DISTINCT path) AS pages, MAX(created_at) AS last_visited_at
+        FROM site_visits{$whereSql}
+        GROUP BY site_id
+        ORDER BY views DESC, visitors DESC");
+    $siteStmt->execute($params);
+    $siteRows = attach_site_names($siteStmt->fetchAll(), $main);
+
+    $recentStmt = $pdo->prepare("SELECT id, site_id, path, title, referrer, created_at
+        FROM site_visits{$whereSql}
+        ORDER BY id DESC
+        LIMIT 30");
+    $recentStmt->execute($params);
+    $recent = attach_site_names($recentStmt->fetchAll(), $main);
+
+    return [
+        'days' => $days,
+        'summary' => [
+            'views' => $views,
+            'visitors' => $visitors,
+            'depth' => $visitors > 0 ? round($views / $visitors, 2) : 0,
+            'pages' => (int)($summary['pages'] ?? 0),
+            'referrers' => (int)($summary['referrers'] ?? 0),
+        ],
+        'daily' => $daily,
+        'sites' => $siteRows,
+        'top_paths' => $topPaths,
+        'referrers' => $referrers,
+        'recent' => $recent,
+    ];
+}
+
 function public_search(PDO $pdo, int $siteId): array
 {
     ensure_content_distribution_table($pdo);
@@ -8849,6 +8948,10 @@ try {
 
     if ($method === 'GET' && $path === '/dashboard/metrics') {
         ok(dashboard_metrics($pdo));
+    }
+
+    if ($method === 'GET' && $path === '/analytics/overview') {
+        ok(analytics_overview($pdo, main_pdo()));
     }
 
     if ($method === 'GET' && $path === '/dashboard/todos') {
