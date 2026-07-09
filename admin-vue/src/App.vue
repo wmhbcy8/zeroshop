@@ -1715,7 +1715,7 @@
                 <strong>当前站点 AI 配置</strong>
                 <div class="head-actions">
                   <el-button @click="saveAiSettings">保存当前站点 AI</el-button>
-                  <el-button @click="saveSettingsAsDefault">保存为公共默认</el-button>
+                  <el-button @click="saveAiSettingsAsDefault">AI 保存为公共默认</el-button>
                 </div>
               </div>
             </template>
@@ -2320,7 +2320,7 @@
                 <strong>当前站点支付配置</strong>
                 <div class="head-actions">
                   <el-button @click="savePaymentSettings">保存当前站点支付</el-button>
-                  <el-button @click="saveSettingsAsDefault">保存为公共默认</el-button>
+                  <el-button @click="savePaymentSettingsAsDefault">支付保存为公共默认</el-button>
                 </div>
               </div>
             </template>
@@ -2563,7 +2563,7 @@
                 <strong>宝塔面板 / 部署配置</strong>
                 <div class="head-actions">
                   <el-button @click="savePublishDeploySettings">保存部署配置</el-button>
-                  <el-button @click="saveSettingsAsDefault">保存为公共默认</el-button>
+                  <el-button @click="savePublishDeploySettingsAsDefault">部署保存为公共默认</el-button>
                 </div>
               </div>
             </template>
@@ -4422,19 +4422,68 @@ async function saveSettings() {
 }
 
 async function saveAiSettings() {
-  const data = await request('/api/site/settings', { method: 'PUT', data: site })
+  const data = await request('/api/site/settings', {
+    method: 'PUT',
+    data: {
+      ai: site.ai,
+      _service_config_only: true,
+      _service_config_keys: ['ai']
+    }
+  })
   Object.assign(site, normalizeSite(data))
   ElMessage.success('当前站点 AI 配置已保存，文章、商品、图片生成会使用这套接口')
 }
 
+async function saveAiSettingsAsDefault() {
+  const data = await request('/api/site/settings-default', {
+    method: 'PUT',
+    data: {
+      ai: site.ai,
+      _service_config_only: true,
+      _service_config_keys: ['ai']
+    }
+  })
+  Object.assign(site, normalizeSite(data))
+  ElMessage.success('AI 公共默认已保存，新站点会优先继承这套模型配置')
+}
+
 async function savePaymentSettings() {
-  const data = await request('/api/site/settings', { method: 'PUT', data: site })
+  const data = await request('/api/site/settings', {
+    method: 'PUT',
+    data: {
+      payment: site.payment,
+      _service_config_only: true,
+      _service_config_keys: ['payment']
+    }
+  })
   Object.assign(site, normalizeSite(data))
   ElMessage.success('当前站点支付配置已保存，可继续在支付菜单分配通道和处理凭证')
 }
 
+async function savePaymentSettingsAsDefault() {
+  const data = await request('/api/site/settings-default', {
+    method: 'PUT',
+    data: {
+      payment: site.payment,
+      _service_config_only: true,
+      _service_config_keys: ['payment']
+    }
+  })
+  Object.assign(site, normalizeSite(data))
+  ElMessage.success('支付公共默认已保存，新站点会继承这套收款说明')
+}
+
 async function savePublishDeploySettings() {
-  await saveSettings()
+  const data = await request('/api/site/settings', {
+    method: 'PUT',
+    data: {
+      deploy: site.deploy,
+      deploy_node_id: site.deploy_node_id,
+      _service_config_only: true,
+      _service_config_keys: ['deploy', 'deploy_node_id']
+    }
+  })
+  Object.assign(site, normalizeSite(data))
   const current = currentSite.value
   if (current?.id) {
     await request(`/api/sites/${current.id}`, {
@@ -4453,6 +4502,20 @@ async function savePublishDeploySettings() {
   }
   ElMessage.success('发布部署配置已保存到当前站点')
   await Promise.all([loadSites(), loadDeployPlan(), loadPublishReadiness(), loadDashboard()])
+}
+
+async function savePublishDeploySettingsAsDefault() {
+  const data = await request('/api/site/settings-default', {
+    method: 'PUT',
+    data: {
+      deploy: site.deploy,
+      deploy_node_id: site.deploy_node_id,
+      _service_config_only: true,
+      _service_config_keys: ['deploy', 'deploy_node_id']
+    }
+  })
+  Object.assign(site, normalizeSite(data))
+  ElMessage.success('部署公共默认已保存，新站点会继承这套发布配置')
 }
 
 async function saveSettingsAsDefault() {

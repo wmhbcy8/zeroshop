@@ -5,7 +5,7 @@
         <div class="card-head">
           <strong>{{ title }}列表</strong>
           <div class="head-actions">
-            <el-button v-if="type !== 'page'" @click="openAiBatch">AI批量生成</el-button>
+            <el-button v-if="type !== 'page'" @click="openAiBatch">AI批量生成到 {{ siteNames(bulkForm) }}</el-button>
             <el-button type="primary" @click="openNew">新建{{ title }}</el-button>
           </div>
         </div>
@@ -28,6 +28,13 @@
           <small>静态生成时，每个前台只读取分发给自己的文章、页面或商品。</small>
         </article>
       </div>
+      <el-alert
+        class="mb16"
+        type="info"
+        show-icon
+        :closable="false"
+        :title="`${title}发布逻辑：先选择查看范围，再选择批量发布范围；新建、编辑、AI草稿和批量操作都会写入同一张分发关系表，可发布到当前站点、全部站点或指定站点。`"
+      />
 
       <div class="content-distribution-bar">
         <div>

@@ -6517,6 +6517,23 @@ function preserve_service_configs(array $incoming, array $current): array
     return $incoming;
 }
 
+function service_config_only_payload(array $incoming, array $current): array
+{
+    $keys = $incoming['_service_config_keys'] ?? ['ai', 'payment', 'deploy', 'deploy_node_id'];
+    if (!is_array($keys)) {
+        $keys = [$keys];
+    }
+    unset($incoming['_service_config_only'], $incoming['_service_config_keys']);
+    $payload = $current;
+    foreach ($keys as $key) {
+        $key = (string)$key;
+        if (array_key_exists($key, $incoming)) {
+            $payload[$key] = $incoming[$key];
+        }
+    }
+    return $payload;
+}
+
 function apply_site_settings_to_all(PDO $main, PDO $sitePdo, array $settings): array
 {
     ensure_center_tables($main);
@@ -9521,6 +9538,9 @@ try {
 
     if ($method === 'PUT' && $path === '/site/settings') {
         $data = body_json();
+        if (!empty($data['_service_config_only'])) {
+            $data = service_config_only_payload($data, site_settings($pdo, requested_site_id()));
+        }
         if (!empty($data['_preserve_service_configs'])) {
             $data = preserve_service_configs($data, site_settings($pdo, requested_site_id()));
         }
@@ -9529,6 +9549,9 @@ try {
 
     if ($method === 'PUT' && $path === '/site/settings-default') {
         $data = body_json();
+        if (!empty($data['_service_config_only'])) {
+            $data = service_config_only_payload($data, site_default_settings($pdo));
+        }
         if (!empty($data['_preserve_service_configs'])) {
             $data = preserve_service_configs($data, site_default_settings($pdo));
         }
