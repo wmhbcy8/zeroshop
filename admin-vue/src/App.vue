@@ -171,6 +171,32 @@
             </el-table>
           </el-card>
           <el-card class="panel mt16" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>平台模板管理</strong>
+                <div class="head-actions">
+                  <el-button @click="loadTemplates">刷新模板</el-button>
+                  <el-button type="primary" @click="newPlatformTemplateImport">导入模板</el-button>
+                </div>
+              </div>
+            </template>
+            <el-alert class="mb16" type="info" show-icon :closable="false" title="第一版模板导入先从现有标准模板复制生成新模板，并写入新的 template.json；导入后客户中台模板中心可直接选择。" />
+            <el-table :data="templates" height="300" row-key="key">
+              <el-table-column label="模板" min-width="220">
+                <template #default="{ row }">
+                  <strong>{{ row.name }}</strong><br />
+                  <small>{{ row.key }} / {{ row.version || 'v0.1' }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column prop="author" label="作者" width="140" />
+              <el-table-column label="能力" min-width="220">
+                <template #default="{ row }"><el-tag v-for="item in row.supports || []" :key="item" size="small" effect="plain">{{ item }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'enabled' ? 'success' : 'info'">{{ row.status }}</el-tag></template></el-table-column>
+              <el-table-column prop="path" label="目录" min-width="190" />
+            </el-table>
+          </el-card>
+          <el-card class="panel mt16" shadow="never">
             <template #header><strong>平台站点总览</strong></template>
             <el-table :data="platformSites" height="300" row-key="id">
               <el-table-column label="站点" min-width="220"><template #default="{ row }"><strong>{{ row.name }}</strong><br /><small>{{ row.domain || row.subdomain || row.site_key }}</small></template></el-table-column>
@@ -236,6 +262,26 @@
               <div class="drawer-actions">
                 <el-button @click="platformDomainApplicationDrawerVisible = false">取消</el-button>
                 <el-button type="primary" @click="savePlatformDomainApplication">保存处理结果</el-button>
+              </div>
+            </el-form>
+          </el-drawer>
+          <el-drawer v-model="platformTemplateImportDrawerVisible" size="560px" title="导入平台模板">
+            <el-form :model="platformTemplateImportForm" label-width="104px">
+              <el-alert class="mb16" type="info" show-icon :closable="false" title="选择一个现有模板作为基准，复制成新的平台模板。新模板会进入模板中心，后续可分配给任意站点。" />
+              <el-form-item label="源模板">
+                <el-select v-model="platformTemplateImportForm.source_template_key" filterable placeholder="选择源模板">
+                  <el-option v-for="item in templates" :key="item.key" :label="`${item.name} / ${item.key}`" :value="item.key" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="模板 Key"><el-input v-model="platformTemplateImportForm.template_key" placeholder="例如：brand-clean-custom" /></el-form-item>
+              <el-form-item label="模板名称"><el-input v-model="platformTemplateImportForm.name" placeholder="例如：自定义商务官网模板" /></el-form-item>
+              <el-row :gutter="12">
+                <el-col :span="12"><el-form-item label="版本"><el-input v-model="platformTemplateImportForm.version" /></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="作者"><el-input v-model="platformTemplateImportForm.author" /></el-form-item></el-col>
+              </el-row>
+              <div class="drawer-actions">
+                <el-button @click="platformTemplateImportDrawerVisible = false">取消</el-button>
+                <el-button type="primary" :loading="platformTemplateImporting" @click="importPlatformTemplate">导入模板</el-button>
               </div>
             </el-form>
           </el-drawer>
@@ -2693,6 +2739,7 @@ const manualCollectorDrawerVisible = ref(false)
 const domainDrawerVisible = ref(false)
 const domainApplicationDrawerVisible = ref(false)
 const platformDomainApplicationDrawerVisible = ref(false)
+const platformTemplateImportDrawerVisible = ref(false)
 const publishDrawerVisible = ref(false)
 const deployTaskDrawerVisible = ref(false)
 const siteDrawerVisible = ref(false)
@@ -2745,6 +2792,13 @@ const platformCustomerForm = reactive<any>({})
 const customerAdminForm = reactive<any>({})
 const deployNodeForm = reactive<any>({})
 const aiProviderForm = reactive<any>({})
+const platformTemplateImportForm = reactive<any>({
+  source_template_key: 'business-clean',
+  template_key: '',
+  name: '',
+  version: '0.1.0',
+  author: '化简'
+})
 const platformSettingsForm = reactive<any>({
   platform: { app_name: '化简', admin_title: '化简 SaaS 建站集群', base_domain: 'huajian.local', support_phone: '', support_email: '' },
   customer_defaults: { plan_key: 'starter', max_sites: 10, ai_quota: 1000, storage_quota_mb: 1024 },
@@ -2802,6 +2856,7 @@ const pageBuilder = reactive({ prompt: '围绕自主品牌商品、行业解决�
 const templateCloneForm = reactive({ target_url: '' })
 const templateCloneLoading = ref(false)
 const templateClonePreviewingId = ref<number | string>('')
+const platformTemplateImporting = ref(false)
 const articlePager = reactive({ page: 1, page_size: 10, total: 0 })
 const productPager = reactive({ page: 1, page_size: 10, total: 0 })
 const pagePager = reactive({ page: 1, page_size: 10, total: 0 })
@@ -3168,14 +3223,15 @@ async function loadAll() {
 
 async function loadPlatform() {
   if (!isPlatformAdmin.value) return
-  const [overview, customers, siteData, nodes, providers, domainApps, systemSettings] = await Promise.all([
+  const [overview, customers, siteData, nodes, providers, domainApps, systemSettings, templateData] = await Promise.all([
     request('/api/platform/overview'),
     request('/api/platform/customers?page_size=100'),
     request('/api/platform/sites'),
     request('/api/platform/deploy-nodes'),
     request('/api/platform/ai-providers'),
     request('/api/platform/domain-applications?page_size=100'),
-    request('/api/platform/system-settings')
+    request('/api/platform/system-settings'),
+    request('/api/platform/templates')
   ])
   platformOverview.value = overview || {}
   platformCustomers.value = customers.items || []
@@ -3183,6 +3239,7 @@ async function loadPlatform() {
   deployNodes.value = nodes.items || []
   aiProviders.value = providers.items || []
   platformDomainApplications.value = domainApps.items || []
+  templates.value = templateData.items || templates.value
   applyPlatformSettings(systemSettings)
 }
 
@@ -3444,6 +3501,38 @@ function domainDnsTag(value: string) {
 
 function domainSslTag(value: string) {
   return value === 'ready' ? 'success' : (value === 'failed' ? 'danger' : 'warning')
+}
+
+function resetPlatformTemplateImportForm() {
+  const source = templates.value.find((item: any) => item.status === 'enabled')?.key || templates.value[0]?.key || 'business-clean'
+  Object.assign(platformTemplateImportForm, {
+    source_template_key: source,
+    template_key: '',
+    name: '',
+    version: '0.1.0',
+    author: '化简'
+  })
+}
+
+function newPlatformTemplateImport() {
+  resetPlatformTemplateImportForm()
+  platformTemplateImportDrawerVisible.value = true
+}
+
+async function importPlatformTemplate() {
+  platformTemplateImporting.value = true
+  try {
+    await request('/api/platform/templates/upload', {
+      method: 'POST',
+      data: { ...platformTemplateImportForm }
+    })
+    platformTemplateImportDrawerVisible.value = false
+    ElMessage.success('模板已导入，可在客户中台模板中心使用')
+    resetPlatformTemplateImportForm()
+    await loadTemplates()
+  } finally {
+    platformTemplateImporting.value = false
+  }
 }
 
 function resetPlatformCustomerForm() {

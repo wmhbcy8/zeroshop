@@ -374,6 +374,28 @@ POST   /api/platform/templates/{key}/disable
 DELETE /api/platform/templates/{key}
 ```
 
+`POST /api/platform/templates/upload` 第一版支持从现有标准模板复制导入：
+
+```json
+{
+  "source_template_key": "business-clean",
+  "template_key": "brand-clean-custom",
+  "name": "自定义商务官网模板",
+  "version": "0.1.0",
+  "author": "化简",
+  "supports": ["page", "article", "product", "seo", "form"]
+}
+```
+
+导入时必须校验：
+
+```text
+template_key 只能包含小写字母、数字和中横线
+目标模板目录不能已存在
+模板必须包含 template.json、pages/index.html、pages/article.html、pages/product.html
+模板目录中不得包含 php、phtml、phar、exe、bat、cmd、sh 等可执行文件
+```
+
 模板字段：
 
 ```json

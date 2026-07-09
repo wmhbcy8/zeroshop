@@ -291,6 +291,94 @@ function template_registry(): array
     return ['items' => $items];
 }
 
+function template_root_path(): string
+{
+    return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'templates';
+}
+
+function normalize_template_key(string $key): string
+{
+    $key = strtolower(trim($key));
+    if ($key === '' || !preg_match('/^[a-z0-9][a-z0-9-]{1,58}[a-z0-9]$/', $key)) {
+        fail('模板 Key 只能使用小写字母、数字和中横线，长度 3-60 位', 'VALIDATION_ERROR', 422);
+    }
+    return $key;
+}
+
+function validate_template_directory(string $dir): void
+{
+    $required = [
+        'template.json',
+        'pages' . DIRECTORY_SEPARATOR . 'index.html',
+        'pages' . DIRECTORY_SEPARATOR . 'article.html',
+        'pages' . DIRECTORY_SEPARATOR . 'product.html',
+    ];
+    foreach ($required as $relative) {
+        if (!is_file($dir . DIRECTORY_SEPARATOR . $relative)) {
+            fail('模板结构不完整，缺少：' . str_replace(DIRECTORY_SEPARATOR, '/', $relative), 'TEMPLATE_INVALID', 422);
+        }
+    }
+    $blocked = ['php', 'phtml', 'phar', 'exe', 'bat', 'cmd', 'sh'];
+    $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS));
+    foreach ($iterator as $file) {
+        if (!$file->isFile()) {
+            continue;
+        }
+        $relative = str_replace('\\', '/', substr($file->getPathname(), strlen($dir) + 1));
+        if (str_contains($relative, '../') || str_contains($relative, '..\\')) {
+            fail('模板包含不安全路径', 'TEMPLATE_INVALID_PATH', 422);
+        }
+        $extension = strtolower(pathinfo($file->getFilename(), PATHINFO_EXTENSION));
+        if (in_array($extension, $blocked, true)) {
+            fail('模板包含不允许的文件类型：' . $extension, 'TEMPLATE_BLOCKED_FILE', 422);
+        }
+    }
+}
+
+function import_template_from_existing(array $data): array
+{
+    $sourceKey = normalize_template_key((string)($data['source_template_key'] ?? 'business-clean'));
+    $targetKey = normalize_template_key((string)($data['template_key'] ?? $data['key'] ?? ''));
+    if ($sourceKey === $targetKey) {
+        fail('新模板 Key 不能与源模板相同', 'VALIDATION_ERROR', 422);
+    }
+    $root = template_root_path();
+    $sourceDir = $root . DIRECTORY_SEPARATOR . $sourceKey;
+    $targetDir = $root . DIRECTORY_SEPARATOR . $targetKey;
+    if (!is_dir($sourceDir)) {
+        fail('源模板不存在', 'SOURCE_TEMPLATE_NOT_FOUND', 404);
+    }
+    if (is_dir($targetDir)) {
+        fail('目标模板 Key 已存在', 'TEMPLATE_EXISTS', 409);
+    }
+    validate_template_directory($sourceDir);
+    copy_directory($sourceDir, $targetDir);
+    $metaPath = $targetDir . DIRECTORY_SEPARATOR . 'template.json';
+    $meta = json_decode((string)file_get_contents($metaPath), true);
+    if (!is_array($meta)) {
+        $meta = [];
+    }
+    $supports = $data['supports'] ?? ($meta['supports'] ?? ['page', 'article', 'product', 'seo', 'form']);
+    $type = $data['type'] ?? ($meta['type'] ?? ['company', 'blog', 'shop']);
+    $meta = array_replace($meta, [
+        'key' => $targetKey,
+        'name' => mb_substr(trim((string)($data['name'] ?? $meta['name'] ?? $targetKey)), 0, 120, 'UTF-8'),
+        'version' => mb_substr(trim((string)($data['version'] ?? '0.1.0')), 0, 40, 'UTF-8'),
+        'author' => mb_substr(trim((string)($data['author'] ?? '化简')), 0, 80, 'UTF-8'),
+        'type' => is_array($type) ? array_values($type) : [$type],
+        'supports' => is_array($supports) ? array_values($supports) : [$supports],
+        'entry' => (string)($meta['entry'] ?? 'pages/index.html'),
+        'imported_from' => $sourceKey,
+        'imported_at' => now(),
+    ]);
+    file_put_contents($metaPath, json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+    validate_template_directory($targetDir);
+    $states = template_states();
+    $states[$targetKey] = ['status' => 'enabled', 'updated_at' => now()];
+    save_template_states($states);
+    return template_item($targetKey);
+}
+
 function template_state_path(): string
 {
     return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'template_states.json';
@@ -8601,6 +8689,10 @@ try {
 
     if ($method === 'GET' && $path === '/platform/templates') {
         ok(template_registry());
+    }
+
+    if ($method === 'POST' && $path === '/platform/templates/upload') {
+        ok(import_template_from_existing(body_json()), '模板已导入');
     }
 
     if ($params = route_param('/platform/templates/{key}', $path)) {
