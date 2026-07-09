@@ -17,7 +17,7 @@
   </div>
 
   <el-container v-else class="app-shell">
-    <el-aside width="248px" class="side">
+    <el-aside :width="sidebarWidth" class="side" :class="{ collapsed: isSidebarCollapsed }">
       <div class="brand">
         <span>简</span>
         <div>
@@ -49,9 +49,65 @@
 
     <el-container>
       <el-header class="topbar">
-        <div>
-          <h1>{{ currentNav?.label }}</h1>
-          <p>{{ currentNav?.hint }}</p>
+        <div class="toolbar-row">
+          <div class="toolbar-left">
+            <el-button link class="toolbar-icon" @click="toggleSidebar"><el-icon><Fold /></el-icon></el-button>
+            <el-button link class="toolbar-icon" @click="refreshCurrentView"><el-icon><RefreshRight /></el-icon></el-button>
+            <el-dropdown trigger="click">
+              <el-button link class="toolbar-icon"><el-icon><Grid /></el-icon></el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="openLegacyAdmin">旧版后台</el-dropdown-item>
+                  <el-dropdown-item v-if="isSuperAdminApp" @click="openCustomerAdmin">客户中台</el-dropdown-item>
+                  <el-dropdown-item v-else-if="isPlatformAdmin" @click="openSuperAdmin">超级后台</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <el-breadcrumb separator="/" class="toolbar-breadcrumb">
+              <el-breadcrumb-item>{{ isSuperAdminApp ? '超级后台' : '客户中台' }}</el-breadcrumb-item>
+              <el-breadcrumb-item>{{ currentNav?.label || '工作台' }}</el-breadcrumb-item>
+            </el-breadcrumb>
+          </div>
+          <div class="toolbar-right">
+            <el-input
+              v-model="adminSearchKeyword"
+              class="toolbar-search"
+              clearable
+              placeholder="搜索"
+              @keyup.enter="goToolbarSearch"
+            >
+              <template #prefix><el-icon><Search /></el-icon></template>
+              <template #suffix><span class="search-kbd">Ctrl K</span></template>
+            </el-input>
+            <el-button link class="toolbar-icon" @click="toggleFullscreen"><el-icon><FullScreen /></el-icon></el-button>
+            <el-button link class="toolbar-icon" @click="ElMessage.info('语言切换预留：下一步可接入中英文文案包')"><el-icon><Switch /></el-icon></el-button>
+            <el-badge :is-dot="servicePending > 0" class="toolbar-dot">
+              <el-button link class="toolbar-icon" @click="setView('service')"><el-icon><Bell /></el-icon></el-button>
+            </el-badge>
+            <el-badge :is-dot="servicePending > 0" class="toolbar-dot">
+              <el-button link class="toolbar-icon" @click="setView('forms')"><el-icon><ChatDotRound /></el-icon></el-button>
+            </el-badge>
+            <el-button link class="toolbar-icon" @click="setView(isSuperAdminApp ? 'platform-system' : 'settings')"><el-icon><Setting /></el-icon></el-button>
+            <el-button link class="toolbar-icon" @click="toggleThemeMode"><el-icon><Moon /></el-icon></el-button>
+            <el-dropdown trigger="click">
+              <button class="avatar-button" type="button">
+                <span>{{ userInitial }}</span>
+              </button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item disabled>{{ currentUser?.display_name || currentUser?.username || '账号' }}</el-dropdown-item>
+                  <el-dropdown-item disabled>{{ accountScopeText }}</el-dropdown-item>
+                  <el-dropdown-item divided @click="logout">退出登录</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+        </div>
+        <div class="page-head">
+          <div>
+            <h1>{{ currentNav?.label }}</h1>
+            <p>{{ currentNav?.hint }}</p>
+          </div>
           <div class="work-tabs">
             <el-tag effect="plain">{{ currentNav?.label || '工作台' }}</el-tag>
             <el-select v-if="!isSuperAdminApp" v-model="currentSiteId" class="site-switcher" placeholder="选择站点" @change="switchSite">
@@ -60,20 +116,9 @@
                 <small class="option-domain">{{ item.domain || item.subdomain || item.site_key }}</small>
               </el-option>
             </el-select>
-            <el-button link type="primary" @click="refreshCurrentView">刷新当前页</el-button>
-            <el-button v-if="isSuperAdminApp" link type="primary" @click="openCustomerAdmin">客户中台</el-button>
-            <el-button v-else-if="isPlatformAdmin" link type="primary" @click="openSuperAdmin">超级后台</el-button>
-            <el-button link @click="openLegacyAdmin">旧版后台</el-button>
+            <el-button v-if="!isSuperAdminApp" @click="previewSite">预览站点</el-button>
+            <el-button v-if="!isSuperAdminApp" type="primary" :loading="generating" @click="generateSite">生成静态站</el-button>
           </div>
-        </div>
-        <div class="top-actions">
-          <div class="account-pill">
-            <strong>{{ currentUser?.display_name || currentUser?.username || '账号' }}</strong>
-            <small>{{ accountScopeText }}</small>
-          </div>
-          <el-button v-if="!isSuperAdminApp" @click="previewSite">预览站点</el-button>
-          <el-button v-if="!isSuperAdminApp" type="primary" :loading="generating" @click="generateSite">生成静态站</el-button>
-          <el-button @click="logout">退出</el-button>
         </div>
       </el-header>
 
@@ -3175,7 +3220,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 import ContentEditor from './components/ContentEditor.vue'
@@ -3189,6 +3234,9 @@ const token = ref(localStorage.getItem(TOKEN_KEY) || '')
 const currentUser = ref<any>(null)
 const loading = ref(false)
 const generating = ref(false)
+const isSidebarCollapsed = ref(false)
+const isDarkMode = ref(false)
+const adminSearchKeyword = ref('')
 const view = ref(isSuperAdminApp ? platformHomeView : customerHomeView)
 const templateTab = ref('home')
 
@@ -3488,6 +3536,12 @@ const navGroups = computed(() => {
 const defaultOpeneds = computed(() => navGroups.value.map((group) => group.key))
 const currentNav = computed(() => visibleNavItems.value.find((item) => item.key === view.value) || visibleNavItems.value[0])
 const currentSite = computed(() => sites.value.find((item: any) => String(item.id) === String(currentSiteId.value)))
+const sidebarWidth = computed(() => isSidebarCollapsed.value ? '76px' : '248px')
+const userInitial = computed(() => {
+  const name = String(currentUser.value?.display_name || currentUser.value?.username || 'U').trim()
+  return name.slice(0, 1).toUpperCase()
+})
+const searchableNavItems = computed(() => visibleNavItems.value.filter((item: any) => !platformViewKeys.has(item.key) || isSuperAdminApp))
 const aiTargetSiteIds = computed(() => siteIdsForScope(aiForm.site_scope, aiForm.site_ids))
 const aiEstimatedQuota = computed(() => Math.max(1, Number(aiForm.count || 1)))
 const aiWorkflowSteps = computed(() => [
@@ -3786,6 +3840,51 @@ function refreshCurrentView() {
 
 function openLegacyAdmin() {
   window.open('/admin.html', '_blank')
+}
+
+function toggleSidebar() {
+  isSidebarCollapsed.value = !isSidebarCollapsed.value
+}
+
+function goToolbarSearch() {
+  const keyword = adminSearchKeyword.value.trim().toLowerCase()
+  if (!keyword) return
+  const target = searchableNavItems.value.find((item: any) => {
+    return String(item.label || '').toLowerCase().includes(keyword)
+      || String(item.hint || '').toLowerCase().includes(keyword)
+      || String(item.key || '').toLowerCase().includes(keyword)
+  })
+  if (!target) {
+    ElMessage.warning('没有找到匹配的功能页')
+    return
+  }
+  setView(target.key)
+  adminSearchKeyword.value = ''
+}
+
+async function toggleFullscreen() {
+  try {
+    if (!document.fullscreenElement) {
+      await document.documentElement.requestFullscreen()
+    } else {
+      await document.exitFullscreen()
+    }
+  } catch {
+    ElMessage.warning('当前浏览器不支持全屏切换')
+  }
+}
+
+function toggleThemeMode() {
+  isDarkMode.value = !isDarkMode.value
+  document.documentElement.classList.toggle('dark-admin', isDarkMode.value)
+}
+
+function handleToolbarShortcut(event: KeyboardEvent) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault()
+    const input = document.querySelector<HTMLInputElement>('.toolbar-search input')
+    input?.focus()
+  }
 }
 
 function openCustomerAdmin() {
@@ -7105,7 +7204,12 @@ function pretty(value: string) {
 }
 
 onMounted(() => {
+  window.addEventListener('keydown', handleToolbarShortcut)
   if (token.value) loadAll().catch((error) => ElMessage.error(error.message))
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleToolbarShortcut)
 })
 </script>
 <script lang="ts">
