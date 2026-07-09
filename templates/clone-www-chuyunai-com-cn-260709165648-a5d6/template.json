@@ -1,8 +1,8 @@
 {
-    "name": "静态克隆 - 楚云数航",
+    "name": "Static Clone - Chuyun AI",
     "key": "clone-www-chuyunai-com-cn-260709165648-a5d6",
     "version": "0.1.0",
-    "author": "化简模板克隆",
+    "author": "Huajian Template Clone",
     "type": [
         "company",
         "blog",
@@ -24,43 +24,44 @@
     "module_plan": [
         {
             "module": "header",
-            "title": "导航菜单",
-            "description": "保留品牌、导航、咨询入口的标准头部。"
+            "title": "Brand navigation",
+            "description": "Keep the cloned navigation, language switch, and cooperation entry."
         },
         {
             "module": "hero",
-            "title": "楚云数航",
-            "description": "将目标网站首屏改造成可编辑标题、副标题、按钮和背景图。"
+            "title": "Home hero",
+            "description": "Keep the AI platform hero structure and call-to-action buttons."
         },
         {
             "module": "advantages",
-            "title": "核心优势",
-            "description": "用卡片模块承载服务优势、产品卖点和企业能力。"
+            "title": "Platform capabilities",
+            "description": "Reusable sections for AI content, cross-border commerce, OPC park, and compute operation."
         },
         {
             "module": "products",
-            "title": "产品展示",
-            "description": "对接中台商品库，自动输出商品列表和详情页。"
+            "title": "Business map",
+            "description": "Can later bind to solution/product records in the center platform."
         },
         {
             "module": "articles",
-            "title": "内容与新闻",
-            "description": "对接文章库和采集中心，沉淀 SEO 内容。"
+            "title": "News and progress",
+            "description": "Can later bind to article library and collection center."
         },
         {
             "module": "contact",
-            "title": "询盘转化",
-            "description": "保留联系表单、悬浮咨询和订单/询盘入口。"
+            "title": "Cooperation conversion",
+            "description": "Keep contact and cooperation intent entry."
         },
         {
             "module": "footer",
-            "title": "页脚信息",
-            "description": "沉淀联系方式、备案/版权、友情链接和站点地图入口。"
+            "title": "Footer",
+            "description": "Keep brand, copyright, and link groups."
         },
         {
             "module": "source",
-            "title": "已读取目标 HTML",
+            "title": "Static mirror source",
             "description": "https://www.chuyunai.com.cn"
         }
     ]
 }
+
