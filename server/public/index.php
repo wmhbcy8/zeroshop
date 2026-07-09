@@ -73,6 +73,36 @@ if (!str_starts_with($requestPath, '/api')) {
         }
     }
 
+    if (preg_match('#^/template-previews/([a-zA-Z0-9_-]+)/([a-zA-Z0-9_-]+)(?:/(.*))?$#', $requestPath, $templatePreviewMatch)) {
+        $siteKey = $templatePreviewMatch[1];
+        $templateKey = $templatePreviewMatch[2];
+        $previewRelativePath = trim((string)($templatePreviewMatch[3] ?? ''), '/');
+        $previewRelativePath = $previewRelativePath === '' ? 'index.html' : $previewRelativePath;
+        $previewRoot = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'template_previews' . DIRECTORY_SEPARATOR . $siteKey . DIRECTORY_SEPARATOR . $templateKey;
+        $previewTargetPath = realpath($previewRoot . DIRECTORY_SEPARATOR . str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $previewRelativePath));
+        $previewBase = realpath($previewRoot);
+        if ($previewTargetPath && $previewBase && str_starts_with($previewTargetPath, $previewBase) && is_file($previewTargetPath)) {
+            $ext = strtolower(pathinfo($previewTargetPath, PATHINFO_EXTENSION));
+            $types = [
+                'html' => 'text/html; charset=utf-8',
+                'css' => 'text/css; charset=utf-8',
+                'js' => 'application/javascript; charset=utf-8',
+                'json' => 'application/json; charset=utf-8',
+                'xml' => 'application/xml; charset=utf-8',
+                'txt' => 'text/plain; charset=utf-8',
+                'svg' => 'image/svg+xml',
+                'png' => 'image/png',
+                'jpg' => 'image/jpeg',
+                'jpeg' => 'image/jpeg',
+                'webp' => 'image/webp',
+                'gif' => 'image/gif',
+            ];
+            header('Content-Type: ' . ($types[$ext] ?? 'application/octet-stream'));
+            readfile($previewTargetPath);
+            exit;
+        }
+    }
+
     $staticRoot = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'sites' . DIRECTORY_SEPARATOR . 'site_10001' . DIRECTORY_SEPARATOR . 'public';
     $relativePath = $requestPath === '/' ? 'index.html' : ltrim($requestPath, '/');
     $targetPath = realpath($staticRoot . DIRECTORY_SEPARATOR . str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $relativePath));
@@ -3217,6 +3247,57 @@ function apply_template_clone_task(PDO $main, PDO $sitePdo, int $taskId): array
     ];
 }
 
+function preview_template_clone_task(PDO $main, PDO $sitePdo, int $taskId): array
+{
+    ensure_center_tables($main);
+    $task = fetch_one($main, 'template_clone_tasks', $taskId);
+    if (!$task) {
+        fail('模板克隆任务不存在', 'NOT_FOUND', 404);
+    }
+    $task = normalize_template_clone_task($task);
+    $key = (string)($task['template_key'] ?? '');
+    $root = dirname(__DIR__, 2);
+    $templateDir = $root . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . $key;
+    if ($key === '' || !is_dir($templateDir) || !is_file($templateDir . DIRECTORY_SEPARATOR . 'template.json')) {
+        fail('模板草稿目录不存在', 'TEMPLATE_NOT_FOUND', 404);
+    }
+    $siteId = requested_site_id();
+    $site = current_site($main, $sitePdo);
+    $siteKey = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($site['site_key'] ?? ('site_' . $siteId)));
+    $previewRoot = $root . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'template_previews' . DIRECTORY_SEPARATOR . $siteKey . DIRECTORY_SEPARATOR . $key;
+    ensure_dir($previewRoot);
+    $php = $root . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe';
+    $script = $root . DIRECTORY_SEPARATOR . 'worker' . DIRECTORY_SEPARATOR . 'GenerateSite.php';
+    putenv('HJ_SITE_KEY=' . $siteKey);
+    putenv('HJ_SITE_ID=' . (string)$siteId);
+    putenv('HJ_SITE_NAME=' . (string)($site['name'] ?? '模板预览站点'));
+    putenv('HJ_SITE_DOMAIN=' . (string)($site['domain'] ?: ($site['subdomain'] ?? '')));
+    putenv('HJ_SITE_LANGUAGE=' . (string)($site['language'] ?: 'zh-CN'));
+    putenv('HJ_TEMPLATE_KEY=' . $key);
+    putenv('HJ_PUBLIC_PATH=' . $previewRoot);
+    $command = '"' . $php . '" "' . $script . '"';
+    $output = [];
+    $code = 0;
+    exec($command, $output, $code);
+    if ($code !== 0) {
+        fail('模板预览生成失败', 'TEMPLATE_PREVIEW_FAILED', 500, ['output' => $output]);
+    }
+    $main->prepare('UPDATE template_clone_tasks SET message = :message, updated_at = :updated_at WHERE id = :id')
+        ->execute([
+            'id' => $taskId,
+            'message' => '模板草稿预览已生成',
+            'updated_at' => now(),
+        ]);
+    return [
+        'task' => normalize_template_clone_task(fetch_one($main, 'template_clone_tasks', $taskId) ?: $task),
+        'site_id' => $siteId,
+        'site_key' => $siteKey,
+        'template_key' => $key,
+        'preview_url' => '/template-previews/' . rawurlencode($siteKey) . '/' . rawurlencode($key) . '/',
+        'output' => $output,
+    ];
+}
+
 function delete_template_clone_task(PDO $main, int $taskId): void
 {
     ensure_center_tables($main);
@@ -3226,10 +3307,24 @@ function delete_template_clone_task(PDO $main, int $taskId): void
     }
     $key = (string)($task['template_key'] ?? '');
     if (str_starts_with($key, 'clone-')) {
-        $dir = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . $key;
+        $root = dirname(__DIR__, 2);
+        $dir = $root . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . $key;
         if (is_dir($dir)) {
             remove_dir_contents($dir);
             rmdir($dir);
+        }
+        $previewRoot = $root . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'template_previews';
+        if (is_dir($previewRoot)) {
+            foreach (new DirectoryIterator($previewRoot) as $siteDir) {
+                if ($siteDir->isDot() || !$siteDir->isDir()) {
+                    continue;
+                }
+                $previewDir = $siteDir->getPathname() . DIRECTORY_SEPARATOR . $key;
+                if (is_dir($previewDir)) {
+                    remove_dir_contents($previewDir);
+                    rmdir($previewDir);
+                }
+            }
         }
     }
     $main->prepare('DELETE FROM template_clone_tasks WHERE id = ?')->execute([$taskId]);
@@ -7161,6 +7256,12 @@ try {
     if ($params = route_param('/template-clone/tasks/{id}/apply', $path)) {
         if ($method === 'POST') {
             ok(apply_template_clone_task(main_pdo(), $pdo, (int)$params['id']), '模板草稿已应用到当前站点');
+        }
+    }
+
+    if ($params = route_param('/template-clone/tasks/{id}/preview', $path)) {
+        if ($method === 'POST') {
+            ok(preview_template_clone_task(main_pdo(), $pdo, (int)$params['id']), '模板草稿预览已生成');
         }
     }
 

@@ -975,6 +975,9 @@
                       <span>{{ item.message || '-' }}</span>
                     </div>
                     <div class="clone-task-actions">
+                      <el-button size="small" type="primary" plain :loading="templateClonePreviewingId === item.id" @click="previewTemplateCloneTask(item)">
+                        预览
+                      </el-button>
                       <el-button size="small" :type="site.template_key === item.template_key ? 'primary' : 'default'" @click="applyTemplateCloneTask(item)">
                         {{ site.template_key === item.template_key ? '当前模板' : '应用' }}
                       </el-button>
@@ -2534,6 +2537,7 @@ const aiQuickCommands = [
 const pageBuilder = reactive({ prompt: '围绕自主品牌商品、行业解决方案、SEO 内容沉淀和询盘转化，生成一个企业官网 + 博客知识库 + 独立站商城首页方案' })
 const templateCloneForm = reactive({ target_url: '' })
 const templateCloneLoading = ref(false)
+const templateClonePreviewingId = ref<number | string>('')
 const articlePager = reactive({ page: 1, page_size: 10, total: 0 })
 const productPager = reactive({ page: 1, page_size: 10, total: 0 })
 const pagePager = reactive({ page: 1, page_size: 10, total: 0 })
@@ -3544,6 +3548,18 @@ async function applyTemplateCloneTask(item: any) {
   await Promise.all([loadTemplates(), loadTemplateCloneTasks(), loadSettings(), loadSites()])
   await generateSite()
   await loadStaticPages()
+}
+
+async function previewTemplateCloneTask(item: any) {
+  templateClonePreviewingId.value = item.id
+  try {
+    const data = await request(`/api/template-clone/tasks/${item.id}/preview`, { method: 'POST' })
+    ElMessage.success('模板草稿预览已生成')
+    window.open(data.preview_url || `/template-previews/site_${currentSiteId.value}/${item.template_key}/`, '_blank')
+    await loadTemplateCloneTasks()
+  } finally {
+    templateClonePreviewingId.value = ''
+  }
 }
 
 async function deleteTemplateCloneTask(item: any) {
