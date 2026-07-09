@@ -1441,6 +1441,13 @@
                 </div>
                 <el-form class="ai-chat-form" @submit.prevent="submitAiChat">
                   <el-input v-model="aiChatForm.message" type="textarea" :rows="3" placeholder="请输入你的 AI 指令，例如：给当前站点生成 5 篇低空经济 SEO 文章，先存草稿" />
+                  <el-alert
+                    class="mt12"
+                    type="info"
+                    show-icon
+                    :closable="false"
+                    title="AI 指令会自动识别文章/商品、数量、草稿/发布，以及全部站点、当前站点或站点名称；识别后仍统一写入内容分发表。"
+                  />
                   <div class="drawer-actions">
                     <el-button :loading="aiChatLoading" type="primary" @click="submitAiChat">发送指令</el-button>
                   </div>
@@ -4916,6 +4923,59 @@ function syncAiSiteScope() {
   aiForm.site_ids = currentSiteIds()
 }
 
+function applyAiCommandHints(message: string) {
+  const text = String(message || '').trim()
+  if (!text) return
+
+  if (/商品|产品|SKU|库存|价格|上架/.test(text)) {
+    aiForm.type = 'product'
+  } else if (/文章|新闻|资讯|博客|知识库|SEO|关键词/.test(text)) {
+    aiForm.type = 'article'
+  }
+
+  const numberMatch = text.match(/(\d+)\s*(篇|个|条|款|组)?/)
+  const cnNumberMap: Record<string, number> = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 }
+  if (numberMatch) {
+    aiForm.count = Math.min(20, Math.max(1, Number(numberMatch[1])))
+  } else {
+    const cnMatch = text.match(/([一二两三四五六七八九十])\s*(篇|个|条|款|组)/)
+    if (cnMatch && cnNumberMap[cnMatch[1]]) {
+      aiForm.count = cnNumberMap[cnMatch[1]]
+    }
+  }
+
+  if (/发布|上线|同步到前台|直接上架/.test(text)) {
+    aiForm.status = 'published'
+  } else if (/草稿|先存|待审核|不要发布/.test(text)) {
+    aiForm.status = 'draft'
+  }
+
+  if (/全部站点|所有站点|全站点|每个站点|所有子站|全部子站/.test(text)) {
+    aiForm.site_scope = 'all'
+    aiForm.site_ids = allSiteIds()
+    return
+  }
+  if (/当前站点|当前子站|这个站点|本站/.test(text)) {
+    aiForm.site_scope = 'current'
+    aiForm.site_ids = currentSiteIds()
+    return
+  }
+
+  const matchedSites = sites.value
+    .filter((site: any) => {
+      const candidates = [site.name, site.domain, site.subdomain, site.site_key]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+      return candidates.some((value) => text.includes(value))
+    })
+    .map((site: any) => Number(site.id))
+    .filter((id: number) => id > 0)
+  if (matchedSites.length) {
+    aiForm.site_scope = 'selected'
+    aiForm.site_ids = [...new Set(matchedSites)]
+  }
+}
+
 function syncCollectorSourceScope() {
   if (collectorForm.site_scope === 'all') {
     collectorForm.site_ids = allSiteIds()
@@ -5283,6 +5343,7 @@ async function submitAiChat() {
     ElMessage.warning('请先输入 AI 指令')
     return
   }
+  applyAiCommandHints(message)
   syncAiSiteScope()
   if (!ensureSelectedSiteScope(aiForm.site_scope, aiForm.site_ids, 'AI 对话指令')) return
   const site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
@@ -5298,7 +5359,7 @@ async function submitAiChat() {
       data: {
         message,
         count: aiForm.count,
-        site_scope: 'selected',
+        site_scope: aiForm.site_scope,
         site_ids
       }
     })

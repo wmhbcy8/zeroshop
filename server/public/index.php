@@ -7542,7 +7542,7 @@ function create_ai_chat(PDO $pdo, array $data): array
             'type' => $target,
             'prompt' => $message,
             'count' => $count,
-            'site_scope' => 'selected',
+            'site_scope' => $data['site_scope'] ?? 'selected',
             'site_ids' => $siteIds,
         ]);
         $steps = [
