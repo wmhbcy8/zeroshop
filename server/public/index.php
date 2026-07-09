@@ -4957,6 +4957,49 @@ function list_publish_versions(PDO $pdo, int $siteId): array
     ];
 }
 
+function module_registry_response(?string $key = null): array
+{
+    $registry = read_config_json('module-registry.json');
+    if ($key === null || $key === '') {
+        return $registry;
+    }
+    foreach (($registry['modules'] ?? []) as $module) {
+        if ((string)($module['key'] ?? '') === $key) {
+            return $module;
+        }
+    }
+    fail('模块不存在', 'NOT_FOUND', 404);
+}
+
+function site_preview_response(PDO $main, PDO $pdo): array
+{
+    $currentSite = current_site($main, $pdo);
+    $settings = sanitize_site_settings_for_response(site_settings($pdo));
+    $publicRoot = site_public_root($currentSite);
+    $indexPath = $publicRoot . DIRECTORY_SEPARATOR . 'index.html';
+    $latest = null;
+    try {
+        ensure_publish_versions_site_column($pdo);
+        $stmt = $pdo->prepare('SELECT * FROM publish_versions WHERE site_id = ? ORDER BY id DESC LIMIT 1');
+        $stmt->execute([(int)$currentSite['id']]);
+        $latest = $stmt->fetch() ?: null;
+    } catch (Throwable $error) {
+        $latest = null;
+    }
+    return [
+        'site_id' => (int)$currentSite['id'],
+        'site_key' => (string)$currentSite['site_key'],
+        'site_name' => (string)$currentSite['name'],
+        'template_key' => (string)($currentSite['template_key'] ?: ($settings['template_key'] ?? 'business-clean')),
+        'preview_url' => site_preview_url($currentSite),
+        'public_path' => str_replace(DIRECTORY_SEPARATOR, '/', site_public_path($currentSite)),
+        'generated' => is_file($indexPath),
+        'index_updated_at' => is_file($indexPath) ? date('Y-m-d H:i:s', filemtime($indexPath)) : null,
+        'latest_publish' => $latest ? site_publish_summary($currentSite, $latest) : null,
+        'settings' => $settings,
+    ];
+}
+
 function create_publish_snapshot(PDO $pdo, array $site, string $versionNo, string $publicPath, array $output): array
 {
     $snapshotRoot = publish_version_root($site) . DIRECTORY_SEPARATOR . $versionNo;
@@ -8230,8 +8273,14 @@ try {
         ok(site_static_pages($pdo));
     }
 
-    if ($method === 'GET' && $path === '/site/modules') {
-        ok(read_config_json('module-registry.json'));
+    if ($method === 'GET' && ($path === '/site/modules' || $path === '/modules')) {
+        ok(module_registry_response());
+    }
+
+    if ($params = route_param('/modules/{key}', $path)) {
+        if ($method === 'GET') {
+            ok(module_registry_response((string)$params['key']));
+        }
     }
 
     if ($method === 'GET' && $path === '/site/templates') {
@@ -9368,6 +9417,10 @@ try {
         }
     }
 
+    if ($method === 'GET' && $path === '/site/preview') {
+        ok(site_preview_response(main_pdo(), $pdo), '站点预览信息已生成');
+    }
+
     if ($method === 'POST' && $path === '/site/generate') {
         $main = main_pdo();
         $currentSite = current_site($main, $pdo);
@@ -9393,6 +9446,62 @@ try {
         $versionNo = (string)$currentSite['site_key'] . '_version_' . date('Ymd_His');
         $summary = create_publish_snapshot($pdo, $currentSite, $versionNo, $publicPath, $output);
         ok($summary + ['version_no' => $versionNo], '生成成功');
+    }
+
+    if ($method === 'POST' && $path === '/site/publish') {
+        $data = body_json();
+        $publishType = (string)($data['publish_type'] ?? $data['type'] ?? 'generate');
+        $main = main_pdo();
+        $currentSite = current_site($main, $pdo);
+        if (in_array($publishType, ['deploy', 'online', 'bt', 'bt-api'], true)) {
+            ok(execute_site_deploy($main, $pdo, $currentSite), '部署任务已创建');
+        }
+        if (in_array($publishType, ['package', 'publish_package'], true)) {
+            $package = create_static_package($currentSite);
+            $summary = [
+                'site_id' => (int)$currentSite['id'],
+                'site_key' => $currentSite['site_key'],
+                'site_name' => $currentSite['name'],
+                'file_count' => $package['file_count'],
+                'file_size' => $package['file_size'],
+                'package_path' => $package['file_path'],
+                'message' => '发布包已生成，可下载后上传到宝塔站点目录解压。',
+            ];
+            ensure_publish_versions_site_column($pdo);
+            $stmt = $pdo->prepare("INSERT INTO publish_versions (site_id, version_no, publish_type, file_path, status, summary, created_at)
+                VALUES (:site_id, :version_no, 'package', :file_path, 'success', :summary, :created_at)");
+            $stmt->execute([
+                'site_id' => (int)$currentSite['id'],
+                'version_no' => $package['version_no'],
+                'file_path' => $package['file_path'],
+                'summary' => json_encode($summary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'created_at' => now(),
+            ]);
+            save_deploy_task($main, $currentSite, 'package', 'success', $summary + ['version_no' => $package['version_no']]);
+            ok($summary + ['version_no' => $package['version_no']], '发布包已生成');
+        }
+        $root = dirname(__DIR__, 2);
+        $php = $root . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe';
+        $script = $root . DIRECTORY_SEPARATOR . 'worker' . DIRECTORY_SEPARATOR . 'GenerateSite.php';
+        $publicPath = site_public_root($currentSite);
+        ensure_dir($publicPath);
+        putenv('HJ_SITE_KEY=' . (string)$currentSite['site_key']);
+        putenv('HJ_SITE_ID=' . (string)$currentSite['id']);
+        putenv('HJ_SITE_NAME=' . (string)$currentSite['name']);
+        putenv('HJ_SITE_DOMAIN=' . (string)($currentSite['domain'] ?: $currentSite['subdomain']));
+        putenv('HJ_SITE_LANGUAGE=' . (string)($currentSite['language'] ?: 'zh-CN'));
+        putenv('HJ_TEMPLATE_KEY=' . (string)($currentSite['template_key'] ?: 'business-clean'));
+        putenv('HJ_PUBLIC_PATH=' . $publicPath);
+        $command = '"' . $php . '" "' . $script . '"';
+        $output = [];
+        $code = 0;
+        exec($command, $output, $code);
+        if ($code !== 0) {
+            fail('发布失败', 'PUBLISH_FAILED', 500, ['output' => $output]);
+        }
+        $versionNo = (string)$currentSite['site_key'] . '_version_' . date('Ymd_His');
+        $summary = create_publish_snapshot($pdo, $currentSite, $versionNo, $publicPath, $output);
+        ok($summary + ['version_no' => $versionNo, 'preview_url' => site_preview_url($currentSite)], '站点已发布');
     }
 
     if ($method === 'POST' && $path === '/site/deploy-test') {
@@ -9516,7 +9625,7 @@ try {
         exit;
     }
 
-    if ($method === 'GET' && $path === '/site/publish-versions') {
+    if ($method === 'GET' && ($path === '/site/publish-versions' || $path === '/site/publish-log')) {
         $main = main_pdo();
         $currentSite = current_site($main, $pdo);
         ok(list_publish_versions($pdo, (int)$currentSite['id']));

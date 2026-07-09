@@ -199,6 +199,8 @@ POST /api/auth/logout
 ```text
 GET/PUT          /api/site/settings
 GET              /api/site/modules
+GET              /api/modules
+GET              /api/modules/{key}
 GET              /api/dashboard/metrics
 GET/POST         /api/articles
 GET/PUT/DELETE   /api/articles/{id}
@@ -229,8 +231,11 @@ POST             /api/ai/images/generate
 POST             /api/ai/template/clone
 GET              /api/ai/template/clone/{task_id}
 POST             /api/site/generate
+GET              /api/site/preview
+POST             /api/site/publish
 POST             /api/site/deploy-test
 GET              /api/site/publish-versions
+GET              /api/site/publish-log
 GET              /api/orders/export
 GET              /api/orders/service-requests
 POST             /api/orders/service-requests/resolve
