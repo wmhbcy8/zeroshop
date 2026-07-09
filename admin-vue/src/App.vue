@@ -25,12 +25,25 @@
           <small>{{ appModeLabel }}</small>
         </div>
       </div>
-      <el-menu :default-active="view" class="menu" @select="setView">
-        <el-menu-item v-for="item in visibleNavItems" :key="item.key" :index="item.key">
-          <el-icon><component :is="item.icon" /></el-icon>
-          <span>{{ item.label }}</span>
-          <el-badge v-if="item.key === 'service' && servicePending" :value="servicePending" class="menu-badge" />
-        </el-menu-item>
+      <el-menu :default-active="view" :default-openeds="defaultOpeneds" class="menu" @select="setView">
+        <template v-for="group in navGroups" :key="group.key">
+          <el-menu-item v-if="group.children.length === 1" :index="group.children[0].key">
+            <el-icon><component :is="group.children[0].icon" /></el-icon>
+            <span>{{ group.children[0].label }}</span>
+            <el-badge v-if="group.children[0].key === 'service' && servicePending" :value="servicePending" class="menu-badge" />
+          </el-menu-item>
+          <el-sub-menu v-else :index="group.key">
+            <template #title>
+              <el-icon><component :is="group.icon" /></el-icon>
+              <span>{{ group.label }}</span>
+            </template>
+            <el-menu-item v-for="item in group.children" :key="item.key" :index="item.key">
+              <el-icon><component :is="item.icon" /></el-icon>
+              <span>{{ item.label }}</span>
+              <el-badge v-if="item.key === 'service' && servicePending" :value="servicePending" class="menu-badge" />
+            </el-menu-item>
+          </el-sub-menu>
+        </template>
       </el-menu>
     </el-aside>
 
@@ -1208,7 +1221,7 @@
                 type="info"
                 show-icon
                 :closable="false"
-                :title="`当前编辑：${currentSite?.name || site.name || '默认站点'}，${settingsScopeText}。这里仅维护基础信息、SEO 和导航；AI、支付、宝塔部署已拆到左侧独立菜单。`"
+                :title="`当前编辑：${currentSite?.name || site.name || '默认站点'}，${settingsScopeText}。这里仅维护基础信息和 SEO；导航菜单、AI、支付、宝塔部署已拆到左侧独立菜单。`"
               />
               <div class="service-shortcuts mb16">
                 <button v-for="item in serviceConfigCards" :key="item.view" type="button" @click="setView(item.view)">
@@ -1229,55 +1242,6 @@
                 <el-col :span="12"><el-form-item label="邮箱"><el-input v-model="site.email" /></el-form-item></el-col>
               </el-row>
               <el-form-item label="地址"><el-input v-model="site.address" /></el-form-item>
-              <el-divider content-position="left">导航菜单</el-divider>
-              <el-table :data="site.nav" row-key="id" class="mb16">
-                <el-table-column label="标题" min-width="160">
-                  <template #default="{ row }"><el-input v-model="row.title" placeholder="例如：首页" /></template>
-                </el-table-column>
-                <el-table-column label="链接页面" min-width="300">
-                  <template #default="{ row }">
-                    <el-select
-                      v-model="row.url"
-                      filterable
-                      allow-create
-                      clearable
-                      default-first-option
-                      placeholder="选择静态页面或输入外链"
-                      class="nav-page-select"
-                      @change="onNavUrlChange(row)"
-                    >
-                      <el-option-group
-                        v-for="group in staticPageGroups"
-                        :key="group.type"
-                        :label="group.label"
-                      >
-                        <el-option
-                          v-for="page in group.items"
-                          :key="`${group.type}-${page.url}`"
-                          :label="page.title"
-                          :value="page.url"
-                        >
-                          <div class="page-option">
-                            <span>{{ page.title }}</span>
-                            <small>{{ page.url }}</small>
-                          </div>
-                        </el-option>
-                      </el-option-group>
-                    </el-select>
-                  </template>
-                </el-table-column>
-                <el-table-column label="新窗口" width="90">
-                  <template #default="{ row }"><el-switch v-model="row.target_blank" /></template>
-                </el-table-column>
-                <el-table-column label="操作" width="170">
-                  <template #default="{ $index }">
-                    <el-button link type="primary" @click="moveNavItem($index, -1)">上移</el-button>
-                    <el-button link type="primary" @click="moveNavItem($index, 1)">下移</el-button>
-                    <el-button link type="danger" @click="removeNavItem($index)">删除</el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
-              <el-button @click="addNavItem">新增导航</el-button>
             </el-form>
           </el-card>
         </section>
@@ -3465,18 +3429,18 @@ const navItems = [
   { key: 'analytics', label: '流量', hint: '按全部站点或单站点查看访问趋势、热门页面、来源和最近访问。', icon: 'DataAnalysis' },
   { key: 'sites', label: '站点', hint: '管理客户名下所有前台站点。', icon: 'Grid' },
   { key: 'domains', label: '域名', hint: '绑定主域名、别名域名并检查 DNS/SSL 状态。', icon: 'Link' },
-  { key: 'settings', label: '设置', hint: '维护当前站点基础信息、SEO、导航和全站页面结构。', icon: 'Setting' },
+  { key: 'settings', label: '基础设置', hint: '维护当前站点基础信息、品牌文案、联系方式和 SEO 基础资料。', icon: 'Setting' },
   { key: 'menus', label: '菜单', hint: '独立维护当前站点的顶部导航和底部导航，可从静态页面列表直接选择。', icon: 'Menu' },
   { key: 'templates', label: '模板', hint: '选择主题模板，启用首页与全站模块。', icon: 'Grid' },
   { key: 'modules', label: '模块', hint: '查看全站、首页和详情页模块规范，作为 AI 搭积木和模板渲染字典。', icon: 'Operation' },
   { key: 'pages', label: '页面', hint: '管理关于我们、服务介绍、专题落地页等普通静态页面。', icon: 'Files' },
-  { key: 'ai', label: 'AI', hint: '批量生成文章、商品文案和封面素材。', icon: 'MagicStick' },
+  { key: 'ai', label: 'AI生成', hint: '批量生成文章、商品文案和封面素材。', icon: 'MagicStick' },
   { key: 'ai-settings', label: 'AI配置', hint: '配置当前站点的大模型接口、图片模型和视频模型。', icon: 'Cpu' },
   { key: 'articles', label: '文章', hint: '管理 SEO 文章和知识库内容。', icon: 'Document' },
   { key: 'products', label: '商品', hint: '管理独立站商品与商城展示内容。', icon: 'Goods' },
   { key: 'categories', label: '分类', hint: '管理文章分类和商品分类，生成 SEO 分类聚合页。', icon: 'FolderOpened' },
   { key: 'orders', label: '订单', hint: '处理支付、发货和订单跟进。', icon: 'ShoppingCart' },
-  { key: 'service', label: '服务', hint: '集中处理客户服务请求。', icon: 'Service' },
+  { key: 'service', label: '客服', hint: '集中处理客户服务请求。', icon: 'Service' },
   { key: 'payments', label: '支付', hint: '统一配置收款通道并分配到各站点。', icon: 'Money' },
   { key: 'tasks', label: '任务', hint: '统一查看 AI、批量发布、模板克隆和部署检查的执行记录。', icon: 'List' },
   { key: 'logs', label: '日志', hint: '查看后台、中台关键写操作的审计记录。', icon: 'Notebook' },
@@ -3485,6 +3449,16 @@ const navItems = [
   { key: 'collector', label: '采集', hint: '管理 RSS 和指定 URL 采集，沉淀 SEO 文章草稿。', icon: 'Connection' },
   { key: 'seo', label: 'SEO', hint: '检查站点基础信息、内容元信息、sitemap 和搜索索引准备度。', icon: 'TrendCharts' },
   { key: 'publish', label: '发布部署', hint: '配置宝塔面板、生成静态站并查看发布记录。', icon: 'Upload' }
+]
+const customerNavSections = [
+  { key: 'workspace', label: '工作台', icon: 'Odometer', children: ['dashboard', 'plan', 'operations', 'analytics'] },
+  { key: 'site-build', label: '建站配置', icon: 'Grid', children: ['sites', 'domains', 'settings', 'menus', 'templates', 'modules', 'pages'] },
+  { key: 'content-commerce', label: '内容与商品', icon: 'Document', children: ['ai', 'ai-settings', 'articles', 'products', 'categories', 'media', 'collector', 'seo'] },
+  { key: 'trade-service', label: '交易与客服', icon: 'Service', children: ['orders', 'service', 'payments', 'forms'] },
+  { key: 'publish-monitor', label: '发布与记录', icon: 'Upload', children: ['publish', 'tasks'] }
+]
+const platformNavSections = [
+  { key: 'superadmin', label: '超级后台', icon: 'Monitor', children: ['platform', 'platform-system', 'logs'] }
 ]
 const isPlatformAdmin = computed(() => ['admin', 'platform_admin', 'super_admin'].includes(String(currentUser.value?.role || '')))
 const appModeLabel = computed(() => isSuperAdminApp ? '超级管理员后台' : '客户中台')
@@ -3501,6 +3475,17 @@ const visibleNavItems = computed(() => navItems.filter((item) => {
   if (isSuperAdminApp) return platformViewKeys.has(item.key)
   return !platformViewKeys.has(item.key)
 }))
+const navGroups = computed(() => {
+  const itemMap = new Map(visibleNavItems.value.map((item) => [item.key, item]))
+  const sections = isSuperAdminApp ? platformNavSections : customerNavSections
+  return sections
+    .map((section) => ({
+      ...section,
+      children: section.children.map((key) => itemMap.get(key)).filter(Boolean) as any[]
+    }))
+    .filter((section) => section.children.length > 0)
+})
+const defaultOpeneds = computed(() => navGroups.value.map((group) => group.key))
 const currentNav = computed(() => visibleNavItems.value.find((item) => item.key === view.value) || visibleNavItems.value[0])
 const currentSite = computed(() => sites.value.find((item: any) => String(item.id) === String(currentSiteId.value)))
 const aiTargetSiteIds = computed(() => siteIdsForScope(aiForm.site_scope, aiForm.site_ids))
@@ -5061,33 +5046,6 @@ function addHomeModuleFromRegistry(row: any) {
     }
   ]
   ElMessage.success('已加入首页模块列表，保存模板配置后生效')
-}
-
-function addNavItem() {
-  site.nav = [...(site.nav || []), { id: `nav-${Date.now()}`, title: '新导航', url: '', target_blank: false }]
-}
-
-function onNavUrlChange(row: any) {
-  const page = staticPages.value.find((item: any) => item.url === row.url)
-  if (!page) return
-  const title = String(row.title || '').trim()
-  if (!title || title === '新导航') {
-    row.title = page.title
-  }
-}
-
-function removeNavItem(index: number) {
-  site.nav = (site.nav || []).filter((_: any, itemIndex: number) => itemIndex !== index)
-}
-
-function moveNavItem(index: number, direction: number) {
-  const next = index + direction
-  if (!site.nav || next < 0 || next >= site.nav.length) return
-  const items = [...site.nav]
-  const current = items[index]
-  items[index] = items[next]
-  items[next] = current
-  site.nav = items
 }
 
 function moveHomeModule(index: number, direction: number) {
