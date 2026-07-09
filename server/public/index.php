@@ -4155,6 +4155,303 @@ function fetch_template_clone_html(string $url): array
     return ['html' => '', 'message' => trim('目标网页暂未读取成功，已先按 URL 生成标准模板草稿。' . $suffix)];
 }
 
+function clone_fetch_url(string $url, int $timeout = 12): array
+{
+    assert_collect_url($url);
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS => 5,
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_USERAGENT => 'HuajianTemplateClone/0.2',
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => 0,
+            CURLOPT_HEADER => false,
+        ]);
+        $body = curl_exec($ch);
+        $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $contentType = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+        $effectiveUrl = (string)curl_getinfo($ch, CURLINFO_EFFECTIVE_URL) ?: $url;
+        $error = curl_error($ch);
+        curl_close($ch);
+        return [
+            'ok' => is_string($body) && $body !== '' && $status >= 200 && $status < 400,
+            'body' => is_string($body) ? $body : '',
+            'status' => $status,
+            'content_type' => $contentType,
+            'url' => $effectiveUrl,
+            'error' => $error,
+        ];
+    }
+    $context = stream_context_create(['http' => ['timeout' => $timeout, 'user_agent' => 'HuajianTemplateClone/0.2']]);
+    $body = @file_get_contents($url, false, $context);
+    return [
+        'ok' => is_string($body) && $body !== '',
+        'body' => is_string($body) ? $body : '',
+        'status' => is_string($body) ? 200 : 0,
+        'content_type' => '',
+        'url' => $url,
+        'error' => is_string($body) ? '' : 'fetch failed',
+    ];
+}
+
+function clone_url_without_fragment(string $url): string
+{
+    return preg_replace('/#.*$/', '', $url) ?? $url;
+}
+
+function clone_join_url(string $base, string $link): string
+{
+    $link = trim(html_entity_decode($link, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+    if ($link === '' || preg_match('/^(#|mailto:|tel:|javascript:|data:)/i', $link)) {
+        return '';
+    }
+    if (preg_match('#^https?://#i', $link)) {
+        return clone_url_without_fragment($link);
+    }
+    $parts = parse_url($base);
+    if (!$parts || empty($parts['scheme']) || empty($parts['host'])) {
+        return '';
+    }
+    $scheme = $parts['scheme'];
+    $host = $parts['host'];
+    $port = isset($parts['port']) ? ':' . $parts['port'] : '';
+    if (str_starts_with($link, '//')) {
+        return clone_url_without_fragment($scheme . ':' . $link);
+    }
+    if (str_starts_with($link, '/')) {
+        return clone_url_without_fragment($scheme . '://' . $host . $port . $link);
+    }
+    $path = $parts['path'] ?? '/';
+    $dir = preg_replace('#/[^/]*$#', '/', $path) ?: '/';
+    $segments = [];
+    foreach (explode('/', $dir . $link) as $segment) {
+        if ($segment === '' || $segment === '.') {
+            continue;
+        }
+        if ($segment === '..') {
+            array_pop($segments);
+            continue;
+        }
+        $segments[] = $segment;
+    }
+    return clone_url_without_fragment($scheme . '://' . $host . $port . '/' . implode('/', $segments));
+}
+
+function clone_same_host(string $url, string $rootUrl): bool
+{
+    $host = strtolower((string)(parse_url($url, PHP_URL_HOST) ?: ''));
+    $rootHost = strtolower((string)(parse_url($rootUrl, PHP_URL_HOST) ?: ''));
+    return $host !== '' && $rootHost !== '' && ($host === $rootHost || str_ends_with($host, '.' . $rootHost) || str_ends_with($rootHost, '.' . $host));
+}
+
+function clone_safe_relative_path(string $path): string
+{
+    $path = str_replace(['\\', "\0"], ['/', ''], $path);
+    $parts = [];
+    foreach (explode('/', $path) as $part) {
+        $part = preg_replace('/[^a-zA-Z0-9._-]+/', '-', $part) ?: '';
+        $part = trim($part, '-');
+        if ($part === '' || $part === '.' || $part === '..') {
+            continue;
+        }
+        $parts[] = $part;
+    }
+    return $parts ? implode('/', $parts) : 'index.html';
+}
+
+function clone_html_local_path(string $url): string
+{
+    $path = rawurldecode((string)(parse_url($url, PHP_URL_PATH) ?: '/'));
+    $path = trim((preg_replace('#/+#', '/', $path) ?: '/'), '/');
+    if ($path === '') {
+        return 'index.html';
+    }
+    $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+    if ($extension === '') {
+        return clone_safe_relative_path($path . '/index.html');
+    }
+    if (in_array($extension, ['html', 'htm', 'shtml'], true)) {
+        return clone_safe_relative_path((preg_replace('/\.(s?html?)$/i', '.html', $path) ?: $path));
+    }
+    return clone_safe_relative_path($path . '/index.html');
+}
+
+function clone_asset_local_path(string $url, string $contentType = ''): string
+{
+    $path = rawurldecode((string)(parse_url($url, PHP_URL_PATH) ?: 'asset'));
+    $name = basename($path) ?: 'asset';
+    $name = preg_replace('/[^a-zA-Z0-9._-]+/', '-', $name) ?: 'asset';
+    if (!str_contains($name, '.')) {
+        foreach (['text/css' => '.css', 'javascript' => '.js', 'image/svg' => '.svg', 'image/png' => '.png', 'image/jpeg' => '.jpg', 'image/webp' => '.webp', 'font/' => '.woff2'] as $needle => $ext) {
+            if (stripos($contentType, $needle) !== false) {
+                $name .= $ext;
+                break;
+            }
+        }
+    }
+    $hash = substr(sha1($url), 0, 10);
+    $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+    $folder = match (true) {
+        in_array($ext, ['css'], true) => 'css',
+        in_array($ext, ['js'], true) => 'js',
+        in_array($ext, ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'avif'], true) => 'images',
+        in_array($ext, ['woff', 'woff2', 'ttf', 'otf', 'eot'], true) => 'fonts',
+        default => 'files',
+    };
+    return 'assets/cloned/' . $folder . '/' . $hash . '-' . $name;
+}
+
+function clone_relative_url(string $fromFile, string $toFile): string
+{
+    $fromDir = trim(str_replace('\\', '/', dirname($fromFile)), '.');
+    $fromParts = $fromDir === '' || $fromDir === '/' ? [] : explode('/', trim($fromDir, '/'));
+    $toParts = explode('/', trim(str_replace('\\', '/', $toFile), '/'));
+    while ($fromParts && $toParts && $fromParts[0] === $toParts[0]) {
+        array_shift($fromParts);
+        array_shift($toParts);
+    }
+    return str_repeat('../', count($fromParts)) . implode('/', $toParts);
+}
+
+function clone_write_file(string $root, string $relative, string $body): void
+{
+    $target = $root . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, clone_safe_relative_path($relative));
+    ensure_dir(dirname($target));
+    file_put_contents($target, $body);
+}
+
+function clone_download_asset(string $assetUrl, string $rootUrl, string $mirrorRoot, string $fromFile, array &$assetMap, array &$stats): string
+{
+    $assetUrl = clone_url_without_fragment($assetUrl);
+    if ($assetUrl === '' || !preg_match('#^https?://#i', $assetUrl)) {
+        return '';
+    }
+    if (!isset($assetMap[$assetUrl])) {
+        $fetch = clone_fetch_url($assetUrl, 15);
+        if (!($fetch['ok'] ?? false)) {
+            $stats['failed_assets']++;
+            return $assetUrl;
+        }
+        $local = clone_asset_local_path($fetch['url'] ?: $assetUrl, (string)($fetch['content_type'] ?? ''));
+        $body = (string)$fetch['body'];
+        if (str_ends_with(strtolower($local), '.css')) {
+            $body = clone_rewrite_css($body, $fetch['url'] ?: $assetUrl, $rootUrl, $mirrorRoot, $local, $assetMap, $stats);
+        }
+        clone_write_file($mirrorRoot, $local, $body);
+        $assetMap[$assetUrl] = $local;
+        $stats['assets']++;
+    }
+    return clone_relative_url($fromFile, $assetMap[$assetUrl]);
+}
+
+function clone_rewrite_css(string $css, string $cssUrl, string $rootUrl, string $mirrorRoot, string $cssFile, array &$assetMap, array &$stats): string
+{
+    $css = preg_replace_callback('/url\(([^)]+)\)/i', function ($match) use ($cssUrl, $rootUrl, $mirrorRoot, $cssFile, &$assetMap, &$stats) {
+        $raw = trim($match[1], " \t\n\r\0\x0B'\"");
+        $url = clone_join_url($cssUrl, $raw);
+        if ($url === '') {
+            return $match[0];
+        }
+        $local = clone_download_asset($url, $rootUrl, $mirrorRoot, $cssFile, $assetMap, $stats);
+        return $local !== '' ? 'url("' . $local . '")' : $match[0];
+    }, $css);
+    return preg_replace_callback('/@import\s+([\'"])(.*?)\1/i', function ($match) use ($cssUrl, $rootUrl, $mirrorRoot, $cssFile, &$assetMap, &$stats) {
+        $url = clone_join_url($cssUrl, $match[2]);
+        $local = $url ? clone_download_asset($url, $rootUrl, $mirrorRoot, $cssFile, $assetMap, $stats) : '';
+        return $local !== '' ? '@import "' . $local . '"' : $match[0];
+    }, $css);
+}
+
+function clone_rewrite_srcset(string $value, string $pageUrl, string $rootUrl, string $mirrorRoot, string $fromFile, array &$assetMap, array &$stats): string
+{
+    $items = [];
+    foreach (explode(',', $value) as $part) {
+        $bits = preg_split('/\s+/', trim($part));
+        $url = clone_join_url($pageUrl, $bits[0] ?? '');
+        if ($url !== '') {
+            $bits[0] = clone_download_asset($url, $rootUrl, $mirrorRoot, $fromFile, $assetMap, $stats) ?: ($bits[0] ?? '');
+        }
+        $items[] = implode(' ', array_filter($bits, static fn($bit) => $bit !== ''));
+    }
+    return implode(', ', $items);
+}
+
+function clone_rewrite_html(string $html, string $pageUrl, string $rootUrl, string $mirrorRoot, string $localFile, array &$assetMap, array &$pageQueue, array &$seenPages, array &$stats): string
+{
+    $html = preg_replace('/<base\b[^>]*>/i', '', $html);
+    $html = preg_replace_callback('/\s(href|src|poster|data-src)=([\'"])(.*?)\2/i', function ($match) use ($pageUrl, $rootUrl, $mirrorRoot, $localFile, &$assetMap, &$pageQueue, &$seenPages, &$stats) {
+        $attr = strtolower($match[1]);
+        $url = clone_join_url($pageUrl, trim($match[3]));
+        if ($url === '') {
+            return $match[0];
+        }
+        $ext = strtolower(pathinfo((string)(parse_url($url, PHP_URL_PATH) ?: ''), PATHINFO_EXTENSION));
+        $assetExts = ['css', 'js', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'pdf', 'zip', 'rar', '7z', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'woff', 'woff2', 'ttf', 'otf', 'mp4', 'webm'];
+        if ($attr === 'href' && clone_same_host($url, $rootUrl) && !in_array($ext, $assetExts, true)) {
+            $target = clone_html_local_path($url);
+            if (!isset($seenPages[$url]) && count($seenPages) + count($pageQueue) < 30) {
+                $pageQueue[] = $url;
+            }
+            return ' ' . $match[1] . '=' . $match[2] . clone_relative_url($localFile, $target) . $match[2];
+        }
+        $local = clone_download_asset($url, $rootUrl, $mirrorRoot, $localFile, $assetMap, $stats);
+        return $local !== '' ? ' ' . $match[1] . '=' . $match[2] . $local . $match[2] : $match[0];
+    }, $html);
+    return preg_replace_callback('/\s(srcset)=([\'"])(.*?)\2/i', function ($match) use ($pageUrl, $rootUrl, $mirrorRoot, $localFile, &$assetMap, &$stats) {
+        return ' ' . $match[1] . '=' . $match[2] . clone_rewrite_srcset($match[3], $pageUrl, $rootUrl, $mirrorRoot, $localFile, $assetMap, $stats) . $match[2];
+    }, $html);
+}
+
+function build_static_mirror_template(string $url, string $templateDir): array
+{
+    $mirrorRoot = $templateDir . DIRECTORY_SEPARATOR . 'mirror';
+    ensure_dir($mirrorRoot);
+    $assetMap = [];
+    $seenPages = [];
+    $pageQueue = [$url];
+    $stats = ['pages' => 0, 'assets' => 0, 'failed_pages' => 0, 'failed_assets' => 0];
+    $firstHtml = '';
+    $firstTitle = '';
+    while ($pageQueue && $stats['pages'] < 30) {
+        $pageUrl = array_shift($pageQueue);
+        if (!$pageUrl || isset($seenPages[$pageUrl]) || !clone_same_host($pageUrl, $url)) {
+            continue;
+        }
+        $seenPages[$pageUrl] = true;
+        $fetch = clone_fetch_url($pageUrl, 15);
+        if (!($fetch['ok'] ?? false)) {
+            $stats['failed_pages']++;
+            continue;
+        }
+        $effective = (string)($fetch['url'] ?: $pageUrl);
+        $localFile = clone_html_local_path($effective);
+        $html = (string)$fetch['body'];
+        if ($firstHtml === '') {
+            $firstHtml = $html;
+            $firstTitle = extract_html_title($html, (string)(parse_url($url, PHP_URL_HOST) ?: $url));
+        }
+        $rewritten = clone_rewrite_html($html, $effective, $url, $mirrorRoot, $localFile, $assetMap, $pageQueue, $seenPages, $stats);
+        clone_write_file($mirrorRoot, $localFile, $rewritten);
+        $stats['pages']++;
+    }
+    if ($stats['pages'] === 0) {
+        fail('目标网站首页读取失败，无法生成静态镜像模板', 'CLONE_FETCH_FAILED', 422);
+    }
+    foreach (['pages', 'partials', 'assets'] as $dir) {
+        ensure_dir($templateDir . DIRECTORY_SEPARATOR . $dir);
+    }
+    $indexHtml = is_file($mirrorRoot . DIRECTORY_SEPARATOR . 'index.html') ? (string)file_get_contents($mirrorRoot . DIRECTORY_SEPARATOR . 'index.html') : $firstHtml;
+    foreach (['index', 'article', 'product', 'article-list', 'product-list', 'contact', 'page', 'search', 'order', 'cart', '404'] as $page) {
+        file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'pages' . DIRECTORY_SEPARATOR . $page . '.html', $indexHtml);
+    }
+    file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'partials' . DIRECTORY_SEPARATOR . 'header.html', '<!-- static mirror template header is embedded in pages -->');
+    file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'partials' . DIRECTORY_SEPARATOR . 'footer.html', '<!-- static mirror template footer is embedded in pages -->');
+    return ['html' => $firstHtml, 'title' => $firstTitle, 'stats' => $stats];
+}
+
 function template_clone_module_plan(string $title, string $url, bool $fetched): array
 {
     return [
@@ -4177,8 +4474,10 @@ function write_template_clone_metadata(string $templateDir, string $key, string 
         'version' => '0.1.0',
         'author' => '化简模板克隆',
         'type' => ['company', 'blog', 'shop'],
-        'supports' => ['page', 'article', 'product', 'seo', 'form', 'clone-draft'],
+        'supports' => ['page', 'article', 'product', 'seo', 'form', 'clone-draft', 'static-mirror'],
         'entry' => 'pages/index.html',
+        'clone_mode' => 'static_mirror',
+        'mirror_entry' => 'mirror/index.html',
         'source_url' => $url,
         'module_plan' => $modulePlan,
     ];
@@ -4192,22 +4491,17 @@ function create_template_clone_task(PDO $main, array $data): array
     ensure_center_tables($main);
     require_fields($data, ['target_url']);
     $url = normalize_template_clone_url((string)$data['target_url']);
-    $fetch = fetch_template_clone_html($url);
-    $html = (string)($fetch['html'] ?? '');
-    $fetched = $html !== '';
-    $message = ($fetch['message'] ?? '') . ' 模板草稿已生成。';
     $host = (string)(parse_url($url, PHP_URL_HOST) ?: '目标网站');
-    $sourceTitle = extract_html_title($html, $host);
     $key = template_clone_key($url);
-    $name = '克隆草稿 - ' . $sourceTitle;
     $root = dirname(__DIR__, 2);
-    $baseTemplate = $root . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . 'business-clean';
     $templateDir = $root . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . $key;
-    if (!is_dir($baseTemplate)) {
-        fail('基础模板不存在，无法生成草稿', 'TEMPLATE_BASE_MISSING', 500);
-    }
-    copy_directory($baseTemplate, $templateDir);
-    $modulePlan = template_clone_module_plan($sourceTitle, $url, $fetched);
+    $mirror = build_static_mirror_template($url, $templateDir);
+    $html = (string)($mirror['html'] ?? '');
+    $stats = $mirror['stats'] ?? ['pages' => 0, 'assets' => 0, 'failed_pages' => 0, 'failed_assets' => 0];
+    $sourceTitle = (string)($mirror['title'] ?: $host);
+    $name = '静态克隆 - ' . $sourceTitle;
+    $message = sprintf('已真实克隆目标网站：%d 个页面、%d 个资源；失败页面 %d、失败资源 %d。', (int)$stats['pages'], (int)$stats['assets'], (int)$stats['failed_pages'], (int)$stats['failed_assets']);
+    $modulePlan = template_clone_module_plan($sourceTitle, $url, true);
     write_template_clone_metadata($templateDir, $key, $name, $url, $modulePlan);
     $now = now();
     $taskNo = 'TC' . date('YmdHis') . strtoupper(substr(bin2hex(random_bytes(3)), 0, 6));

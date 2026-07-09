@@ -283,6 +283,9 @@ function write_file(string $path, string $content): void
 
 function copy_dir(string $src, string $dst): void
 {
+    if (!is_dir($src)) {
+        return;
+    }
     $items = new RecursiveIteratorIterator(
         new RecursiveDirectoryIterator($src, FilesystemIterator::SKIP_DOTS),
         RecursiveIteratorIterator::SELF_FIRST
@@ -850,11 +853,21 @@ if ($pdo) {
     $dataSource = 'json';
 }
 $site['id'] = (int)($site['id'] ?? (env_or_null('HJ_SITE_ID') ?: 10001));
+if (env_or_null('HJ_TEMPLATE_KEY')) {
+    $site['template_key'] = env_or_null('HJ_TEMPLATE_KEY');
+}
 $templateKey = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($site['template_key'] ?? 'business-clean')) ?: 'business-clean';
 $templateRoot = $root . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . $templateKey;
 if (!is_dir($templateRoot) || !is_file($templateRoot . DIRECTORY_SEPARATOR . 'template.json')) {
     $templateKey = 'business-clean';
     $templateRoot = $root . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . $templateKey;
+}
+$templateMeta = read_json($templateRoot . DIRECTORY_SEPARATOR . 'template.json');
+if (($templateMeta['clone_mode'] ?? '') === 'static_mirror' && is_dir($templateRoot . DIRECTORY_SEPARATOR . 'mirror')) {
+    reset_generated_output($publicRoot);
+    copy_dir($templateRoot . DIRECTORY_SEPARATOR . 'mirror', $publicRoot);
+    echo "Generated static mirror template {$templateKey}: {$publicRoot}\n";
+    exit;
 }
 
 $categoryMap = [];

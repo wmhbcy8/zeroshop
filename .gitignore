@@ -12,6 +12,7 @@
 /storage/deploy_targets/
 /storage/deploy_backups/
 /storage/build/
+/storage/template_previews/
 /storage/secret.key
 /storage/template_states.json
 /*.png

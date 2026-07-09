@@ -1,0 +1,66 @@
+{
+    "name": "静态克隆 - 零点互娱",
+    "key": "clone-www-ld199-com-260709165632-3530",
+    "version": "0.1.0",
+    "author": "化简模板克隆",
+    "type": [
+        "company",
+        "blog",
+        "shop"
+    ],
+    "supports": [
+        "page",
+        "article",
+        "product",
+        "seo",
+        "form",
+        "clone-draft",
+        "static-mirror"
+    ],
+    "entry": "pages/index.html",
+    "clone_mode": "static_mirror",
+    "mirror_entry": "mirror/index.html",
+    "source_url": "https://www.ld199.com",
+    "module_plan": [
+        {
+            "module": "header",
+            "title": "导航菜单",
+            "description": "保留品牌、导航、咨询入口的标准头部。"
+        },
+        {
+            "module": "hero",
+            "title": "零点互娱",
+            "description": "将目标网站首屏改造成可编辑标题、副标题、按钮和背景图。"
+        },
+        {
+            "module": "advantages",
+            "title": "核心优势",
+            "description": "用卡片模块承载服务优势、产品卖点和企业能力。"
+        },
+        {
+            "module": "products",
+            "title": "产品展示",
+            "description": "对接中台商品库，自动输出商品列表和详情页。"
+        },
+        {
+            "module": "articles",
+            "title": "内容与新闻",
+            "description": "对接文章库和采集中心，沉淀 SEO 内容。"
+        },
+        {
+            "module": "contact",
+            "title": "询盘转化",
+            "description": "保留联系表单、悬浮咨询和订单/询盘入口。"
+        },
+        {
+            "module": "footer",
+            "title": "页脚信息",
+            "description": "沉淀联系方式、备案/版权、友情链接和站点地图入口。"
+        },
+        {
+            "module": "source",
+            "title": "已读取目标 HTML",
+            "description": "https://www.ld199.com"
+        }
+    ]
+}

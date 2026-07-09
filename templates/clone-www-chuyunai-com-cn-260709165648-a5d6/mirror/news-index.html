@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>品牌动态 | 楚云数航</title>
+  <meta name="description" content="楚云数航品牌动态页，集中展示跨境电商、AI 创业孵化、SaaS 建站与合作生态的最新进展。">
+  <meta name="keywords" content="楚云数航, 品牌动态, 项目进展, AI 创业, 跨境电商, SaaS 建站">
+  <link rel="canonical" href="news-index.html">
+  <link rel="icon" href="assets/cloned/images/f48db716bf-logo-wide.png">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07111f;
+      --panel: rgba(10, 24, 42, 0.88);
+      --card: rgba(19, 39, 67, 0.9);
+      --line: rgba(130, 170, 255, 0.18);
+      --text: #eef4ff;
+      --muted: #9fb2cf;
+      --brand: #66a6ff;
+      --brand-2: #89f7fe;
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(102, 166, 255, 0.18), transparent 28%),
+        radial-gradient(circle at top right, rgba(137, 247, 254, 0.12), transparent 24%),
+        linear-gradient(180deg, #091321 0%, #050b14 100%);
+      min-height: 100vh;
+    }
+    a { color: inherit; text-decoration: none; }
+    .page {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 56px;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 18px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: rgba(7, 17, 31, 0.68);
+      backdrop-filter: blur(14px);
+      box-shadow: var(--shadow);
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .brand img {
+      width: 176px;
+      height: auto;
+      max-height: 48px;
+      object-fit: contain;
+      flex: 0 0 auto;
+    }
+    .top-actions, .lang-switch {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .ghost-btn, .lang-btn, .primary-btn {
+      border-radius: 999px;
+      padding: 10px 16px;
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 14px;
+      transition: 0.2s ease;
+    }
+    .primary-btn {
+      background: linear-gradient(135deg, var(--brand), var(--brand-2));
+      color: #07111f;
+      border: none;
+      font-weight: 700;
+    }
+    .ghost-btn:hover, .lang-btn:hover, .primary-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 12px 24px rgba(102, 166, 255, 0.18);
+    }
+    .lang-btn.is-active {
+      background: rgba(102, 166, 255, 0.18);
+      border-color: rgba(137, 247, 254, 0.5);
+    }
+    .hero {
+      margin-top: 24px;
+      padding: 44px 36px;
+      border-radius: 28px;
+      background: linear-gradient(135deg, rgba(13, 33, 56, 0.96), rgba(8, 17, 29, 0.96));
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+    }
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--brand-2);
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(32px, 5vw, 56px);
+      line-height: 1.08;
+    }
+    .hero p {
+      max-width: 760px;
+      margin: 18px 0 0;
+      font-size: 17px;
+      line-height: 1.8;
+      color: var(--muted);
+    }
+    .hero-actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 28px;
+    }
+    .section {
+      margin-top: 24px;
+      padding: 28px;
+      border-radius: 24px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+    }
+    .section h2 {
+      margin: 0 0 12px;
+      font-size: 26px;
+    }
+    .section-intro {
+      margin: 0 0 24px;
+      color: var(--muted);
+      line-height: 1.8;
+    }
+    .grid {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .card {
+      padding: 22px;
+      border-radius: 22px;
+      background: var(--card);
+      border: 1px solid rgba(130, 170, 255, 0.12);
+    }
+    .card .meta {
+      color: var(--brand-2);
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .card h3 {
+      margin: 12px 0 10px;
+      font-size: 20px;
+      line-height: 1.35;
+    }
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.75;
+      font-size: 14px;
+    }
+    .list {
+      display: grid;
+      gap: 14px;
+    }
+    .list-item {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 18px;
+      padding: 18px 20px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid rgba(130, 170, 255, 0.1);
+    }
+    .list-item .date {
+      color: var(--brand-2);
+      font-weight: 700;
+      font-size: 15px;
+    }
+    .list-item h3 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+    .list-item p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.7;
+      font-size: 14px;
+    }
+    .footer-note {
+      margin-top: 24px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+    [data-lang] { display: none; }
+    [data-lang].is-active { display: block; }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+      .list-item { grid-template-columns: 1fr; gap: 10px; }
+      .hero { padding: 32px 22px; }
+      .section { padding: 22px; }
+      .topbar { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <a class="brand" href="cn.html" aria-label="楚云数航首页">
+        <img src="assets/cloned/images/f48db716bf-logo-wide.png" alt="楚云数航">
+        <span>楚云数航</span>
+      </a>
+      <div class="top-actions">
+        <a class="ghost-btn" href="cn.html">首页</a>
+        <a class="ghost-btn" href="partner.html">合作体系</a>
+        <a class="ghost-btn" href="investor.html">项目进展</a>
+        <div class="lang-switch">
+          <button class="lang-btn" type="button" data-set-lang="zh-CN">中文</button>
+          <button class="lang-btn" type="button" data-set-lang="en">EN</button>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div data-lang="zh-CN">
+          <p class="eyebrow">Brand Updates</p>
+          <h1>楚云数航品牌动态</h1>
+          <p>本页替代原新闻中心旧内容，统一承接楚云数航在跨境电商、AI 创业孵化、SaaS 建站与政企协同方向的最新品牌进展、合作发布与能力更新。</p>
+          <div class="hero-actions">
+            <a class="primary-btn" href="investor.html">查看项目进展</a>
+            <a class="ghost-btn" href="about.html">联系团队</a>
+          </div>
+        </div>
+        <div data-lang="en">
+          <p class="eyebrow">Brand Updates</p>
+          <h1>ChuYun Digital Voyage Updates</h1>
+          <p>This page replaces the legacy news center and now serves as a branded hub for recent updates across cross-border commerce, AI venture incubation, SaaS site building, and public-sector collaboration.</p>
+          <div class="hero-actions">
+            <a class="primary-btn" href="investor.html">View Progress</a>
+            <a class="ghost-btn" href="about.html">Contact Team</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div data-lang="zh-CN">
+          <h2>重点更新方向</h2>
+          <p class="section-intro">当前品牌动态以“业务增长、平台能力、合作体系”三类信息为主，帮助客户、合作伙伴与创业团队快速理解楚云数航的推进节奏。</p>
+          <div class="grid">
+            <article class="card">
+              <div class="meta">Cross-border Commerce</div>
+              <h3>跨境电商增长方案</h3>
+              <p>围绕独立站搭建、内容投放、商品素材生产与转化分析，持续沉淀可复制的出海增长方法。</p>
+            </article>
+            <article class="card">
+              <div class="meta">AI SaaS</div>
+              <h3>AI 建站与运营中台</h3>
+              <p>迭代多租户站点模板、内容工作流、线索管理与数据面板，支撑标准化交付与快速部署。</p>
+            </article>
+            <article class="card">
+              <div class="meta">Partnership</div>
+              <h3>合作网络扩展</h3>
+              <p>联合品牌客户、园区平台、服务商与创业团队，形成从孵化到运营落地的协同闭环。</p>
+            </article>
+          </div>
+        </div>
+        <div data-lang="en">
+          <h2>Focus Areas</h2>
+          <p class="section-intro">Updates are organized around business growth, platform capability, and partnership development so that clients and partners can quickly understand the latest momentum.</p>
+          <div class="grid">
+            <article class="card">
+              <div class="meta">Commerce</div>
+              <h3>Cross-Border Growth Programs</h3>
+              <p>Builds repeatable outbound commerce playbooks spanning storefront setup, content delivery, merchandising, and conversion analytics.</p>
+            </article>
+            <article class="card">
+              <div class="meta">AI SaaS</div>
+              <h3>AI Site Building Platform</h3>
+              <p>Extends tenant-ready templates, content workflows, lead management, and operational dashboards for scalable delivery.</p>
+            </article>
+            <article class="card">
+              <div class="meta">Partnership</div>
+              <h3>Ecosystem Expansion</h3>
+              <p>Connects enterprise clients, industrial parks, service partners, and venture teams into a full incubation-to-operations loop.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div data-lang="zh-CN">
+          <h2>近期节点</h2>
+          <p class="section-intro">以下为当前阶段对外可公开展示的品牌化动态摘要，详细披露统一沉淀到“投资与合作”页的项目进展板块。</p>
+          <div class="list">
+            <article class="list-item">
+              <div class="date">2026 Q3</div>
+              <div>
+                <h3>多租户官网模板与品牌交付规范升级</h3>
+                <p>完成首页、关于页、合作体系页与投资合作页的一体化品牌改版，为后续 SaaS 化批量交付打基础。</p>
+              </div>
+            </article>
+            <article class="list-item">
+              <div class="date">2026 Q2</div>
+              <div>
+                <h3>跨境电商内容增长工作流上线</h3>
+                <p>建立内容选题、素材生成、页面发布与数据复盘的协同流程，提升品牌内容生产效率。</p>
+              </div>
+            </article>
+            <article class="list-item">
+              <div class="date">2026 Q1</div>
+              <div>
+                <h3>合作体系与园区协同方案完善</h3>
+                <p>围绕品牌客户、创业团队与政企合作场景，形成标准化的合作支持与运营节奏。</p>
+              </div>
+            </article>
+          </div>
+        </div>
+        <div data-lang="en">
+          <h2>Recent Milestones</h2>
+          <p class="section-intro">These are public-facing summaries for the current stage. Detailed disclosures now live under the progress section of the investment and partnership page.</p>
+          <div class="list">
+            <article class="list-item">
+              <div class="date">2026 Q3</div>
+              <div>
+                <h3>Unified Brand Delivery for Core Pages</h3>
+                <p>Completed the integrated brand refresh across home, about, partnership, and investment pages to support future SaaS-based batch delivery.</p>
+              </div>
+            </article>
+            <article class="list-item">
+              <div class="date">2026 Q2</div>
+              <div>
+                <h3>Content Growth Workflow for Commerce</h3>
+                <p>Established a collaborative loop for topic planning, asset production, page publishing, and performance review.</p>
+              </div>
+            </article>
+            <article class="list-item">
+              <div class="date">2026 Q1</div>
+              <div>
+                <h3>Partnership and Park Collaboration Framework</h3>
+                <p>Standardized support models for enterprise brands, venture teams, and public-sector collaboration scenarios.</p>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <p class="footer-note">
+      <span data-lang="zh-CN">本页为楚云数航品牌化承接页，已替代原旧新闻中心内容。</span>
+      <span data-lang="en">This branded landing page replaces the legacy news center content.</span>
+    </p>
+  </div>
+
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var lang = params.get("lang");
+      if (lang !== "en" && lang !== "zh-CN") {
+        lang = /(?:^|\/)en(?:\/|\.html$)/i.test(window.location.pathname) ? "en" : "zh-CN";
+      }
+      var groups = document.querySelectorAll("[data-lang]");
+      var buttons = document.querySelectorAll("[data-set-lang]");
+      function applyLanguage(next) {
+        document.documentElement.lang = next === "en" ? "en" : "zh-CN";
+        document.title = next === "en" ? "Updates & Insights | ChuYun Digital Voyage" : "品牌动态 | 楚云数航";
+        groups.forEach(function (node) {
+          node.classList.toggle("is-active", node.getAttribute("data-lang") === next);
+        });
+        buttons.forEach(function (button) {
+          button.classList.toggle("is-active", button.getAttribute("data-set-lang") === next);
+        });
+      }
+      buttons.forEach(function (button) {
+        button.addEventListener("click", function () {
+          var next = button.getAttribute("data-set-lang");
+          var url = new URL(window.location.href);
+          if (next === "en") {
+            url.searchParams.set("lang", "en");
+          } else {
+            url.searchParams.delete("lang");
+          }
+          window.history.replaceState({}, "", url.toString());
+          applyLanguage(next);
+        });
+      });
+      applyLanguage(lang);
+    }());
+  </script>
+</body>
+</html>

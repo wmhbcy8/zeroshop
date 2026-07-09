@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style id="route-hash-scroll-guard">html { scroll-behavior: auto !important; }</style>
+    <script>
+      (function () {
+        const hash = location.hash;
+        if (!hash || hash.length < 2) {
+          document.getElementById("route-hash-scroll-guard")?.remove();
+          return;
+        }
+        let id;
+        try {
+          id = decodeURIComponent(hash.slice(1));
+        } catch {
+          return;
+        }
+        function snapRouteHash() {
+          const target = document.getElementById(id);
+          if (!target) return;
+          document.documentElement.style.scrollBehavior = "auto";
+          document.body.style.scrollBehavior = "auto";
+          target.scrollIntoView({ block: "start", behavior: "instant" });
+        }
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", snapRouteHash, { once: true });
+        } else {
+          snapRouteHash();
+        }
+      })();
+    </script>
+    <link rel="icon" href="assets/cloned/images/f48db716bf-logo-wide.png" type="image/png">
+    <title>楚云数航 | AI内容、跨境店群、OPC园区与AI算力运营平台</title>
+    <meta name="description" content="湖北楚云数航科技有限公司官网，展示AI漫剧制作与培训、跨境店群投资与孵化、OPC园区基建与运营、AI算力运营及销售，以及光谷超算中心战略合作等核心业务。">
+    <meta name="keywords" content="楚云数航, AI漫剧, 跨境店群, OPC园区, AI算力, 光谷超算中心, 跨境电商孵化, 园区运营">
+    <link rel="canonical" href="cn.html">
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "name": "楚云数航",
+          "url": "./cn.html",
+          "description": "楚云数航围绕AI漫剧制作与培训、跨境店群投资与孵化、OPC园区基建与运营、AI算力运营及销售，构建可培训、可投资、可运营、可复制的产业平台。",
+          "inLanguage": "zh-CN",
+          "potentialAction": {
+            "@type": "ViewAction",
+            "target": "./cn.html"
+          }
+        },
+        {
+          "@type": "WebPage",
+          "name": "楚云数航 | AI内容、跨境店群、OPC园区与AI算力运营平台",
+          "url": "./cn.html",
+          "canonicalUrl": "./cn.html",
+          "isPartOf": {
+            "@type": "WebSite",
+            "name": "楚云数航",
+            "url": "./cn.html"
+          }
+        },
+        {
+          "@type": "Organization",
+          "name": "楚云数航",
+          "alternateName": "ChuYun Digital Voyage",
+          "url": "./cn.html",
+          "email": "business@chuyunai.com.cn",
+          "description": "楚云数航围绕AI内容、跨境店群、OPC园区和AI算力，连接高校、政府园区、光谷超算中心战略合作资源与产业服务商。"
+        }
+      ]
+    }
+    </script>
+    <script>
+      const previewMode = new URLSearchParams(window.location.search).get("view");
+      if (previewMode === "4k" || previewMode === "2k") {
+        document.documentElement.classList.add(`preview-${previewMode}`);
+      }
+    </script>
+    <link rel="stylesheet" href="assets/cloned/css/cd2130edc0-styles.css">
+  </head>
+  <body>
+    <header class="site-header" data-header>
+      <a class="brand" href="" aria-label="楚云数航首页">
+        <img src="assets/cloned/images/f48db716bf-logo-wide.png" alt="楚云数航">
+      </a>
+
+      <nav class="desktop-nav" aria-label="主导航">
+        <div class="nav-item">
+          <a class="nav-trigger" href="#products" data-section="products"><span>业务版图</span></a>
+        </div>
+        <div class="nav-item">
+          <a class="nav-trigger" href="#technology" data-section="technology"><span>平台能力</span></a>
+        </div>
+        <div class="nav-item">
+          <a class="nav-trigger" href="news-index.html"><span>品牌动态</span></a>
+        </div>
+        <div class="nav-item">
+          <a class="nav-trigger" href="investor.html"><span>项目进展</span></a>
+        </div>
+        <div class="nav-item">
+          <a class="nav-trigger" href="partner.html"><span>合作报名</span></a>
+        </div>
+        <div class="nav-item">
+          <button class="nav-trigger" type="button" data-section="about"><span>公司</span><span class="nav-chevron" aria-hidden="true"></span></button>
+          <div class="nav-dropdown nav-dropdown--about" role="menu" aria-label="公司导航">
+            <div class="nav-dropdown__group">
+              <h3 class="nav-dropdown__title">关于楚云数航</h3>
+              <a href="about.html">关于我们</a>
+              <a href="about.html">联系团队</a>
+            </div>
+            <div class="nav-dropdown__group">
+              <h3 class="nav-dropdown__title">合作体系</h3>
+              <a href="partner.html">合作伙伴方案</a>
+              <a href="partner.html">提交合作意向</a>
+            </div>
+          </div>
+        </div>
+      </nav>
+
+      <div class="header-actions">
+        <div class="language-menu" data-language-menu>
+          <button class="language-switch" type="button" data-language-toggle aria-label="语言" aria-expanded="false">
+            <svg viewbox="0 0 24 24" aria-hidden="true">
+              <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z"></path>
+              <path d="M3.6 9h16.8M3.6 15h16.8M12 3c2.2 2.4 3.4 5.4 3.4 9s-1.2 6.6-3.4 9c-2.2-2.4-3.4-5.4-3.4-9S9.8 5.4 12 3Z"></path>
+            </svg>
+            <span data-language-current>简体中文</span>
+            <span class="language-switch__chevron" aria-hidden="true"></span>
+          </button>
+          <div class="language-dropdown" role="menu" aria-label="语言选择">
+            <button type="button" role="menuitem" data-language-option="简体中文">简体中文</button>
+            <button type="button" role="menuitem" data-language-option="English">English</button>
+          </div>
+        </div>
+        <a class="primary-button primary-button--small" href="partner.html" data-nav-cta>获取方案</a>
+        <button class="menu-button" type="button" data-menu aria-label="菜单" aria-expanded="false" aria-controls="mobile-navigation">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+      </div>
+    </header>
+
+    <nav class="mobile-panel" id="mobile-navigation" data-mobile-panel aria-label="移动端导航">
+      <div class="mobile-panel__inner">
+        <div class="mobile-panel__section mobile-panel__section--main">
+          <a class="mobile-panel__primary-link" href="#products">业务版图</a>
+          <a class="mobile-panel__primary-link" href="#technology">平台能力</a>
+          <a class="mobile-panel__primary-link" href="news-index.html">品牌动态</a>
+          <a class="mobile-panel__primary-link" href="investor.html">项目进展</a>
+          <a class="mobile-panel__primary-link" href="partner.html">合作报名</a>
+        </div>
+
+        <section class="mobile-panel__section mobile-panel__section--accordion" aria-labelledby="mobile-about-title">
+          <button class="mobile-panel__accordion" type="button" data-mobile-accordion aria-expanded="false" aria-controls="mobile-about-submenu">
+            <span id="mobile-about-title">公司</span>
+            <span class="mobile-panel__arrow" aria-hidden="true"></span>
+          </button>
+          <div class="mobile-panel__submenu" id="mobile-about-submenu" data-mobile-submenu aria-hidden="true">
+            <div class="mobile-panel__group">
+              <div class="mobile-panel__links">
+                <a href="about.html">关于我们</a>
+                <a href="about.html">联系团队</a>
+              </div>
+            </div>
+            <div class="mobile-panel__group">
+              <p class="mobile-panel__eyebrow">合作体系</p>
+              <div class="mobile-panel__links">
+                <a href="partner.html">合作伙伴方案</a>
+                <a href="partner.html">提交合作意向</a>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <a class="mobile-panel__cta" href="partner.html" data-nav-cta-mobile>获取方案</a>
+      </div>
+    </nav>
+
+    <main class="page-shell">
+      <section class="hero section" id="hero" aria-labelledby="hero-title">
+        <div class="hero__motion" aria-hidden="true">
+          <span class="hero__motion-layer hero__motion-layer--left"></span>
+          <span class="hero__motion-layer hero__motion-layer--cyan"></span>
+          <span class="hero__motion-layer hero__motion-layer--warm"></span>
+          <span class="hero__motion-layer hero__motion-layer--violet"></span>
+        </div>
+        <div class="hero__wash" aria-hidden="true"></div>
+        <div class="hero-icon-cloud" aria-hidden="true">
+          <span class="liquid-icon liquid-icon--1"><img class="liquid-icon__logo liquid-icon__logo--wide" src="assets/cloned/images/cd760e1490-hero-icon-office-assistant.png" alt=""></span>
+          <span class="liquid-icon liquid-icon--2"><img class="liquid-icon__logo liquid-icon__logo--tall" src="assets/cloned/images/4f13588176-hero-icon-logoblack.png" alt=""></span>
+          <span class="liquid-icon liquid-icon--3"><img class="liquid-icon__logo liquid-icon__logo--wide" src="assets/cloned/images/623130cc31-hero-icon-senseaudio.png" alt=""></span>
+          <span class="liquid-icon liquid-icon--4"><img class="liquid-icon__logo" src="assets/cloned/images/6327aca292-hero-icon-sensear.png" alt=""></span>
+          <span class="liquid-icon liquid-icon--5"><img class="liquid-icon__logo" src="assets/cloned/images/dc388a30ab-hero-icon-ririxin.png" alt=""></span>
+          <span class="liquid-icon liquid-icon--6"><img class="liquid-icon__logo liquid-icon__logo--wide" src="assets/cloned/images/5f79bf00b7-hero-icon-foundation.png" alt=""></span>
+          <span class="liquid-icon liquid-icon--7"><img class="liquid-icon__logo liquid-icon__logo--tall" src="assets/cloned/images/72df89bfb8-hero-icon-ruying.png" alt=""></span>
+          <span class="liquid-icon liquid-icon--8"><img class="liquid-icon__logo" src="assets/cloned/images/38910cc552-hero-icon-shangliang.png" alt=""></span>
+          <span class="liquid-icon liquid-icon--9"><img class="liquid-icon__logo" src="assets/cloned/images/6a6a9747d9-hero-icon-maskgroup.png" alt=""></span>
+          <span class="liquid-icon liquid-icon--10"><img class="liquid-icon__logo" src="assets/cloned/images/ee43033b41-hero-icon-appstore.png" alt=""></span>
+        </div>
+        <div class="hero__content">
+          <h1 id="hero-title">楚云数航<br>AI驱动的跨境电商<br>AI 内容与算力园区运营平台</h1>
+          <p>围绕AI漫剧制作与培训、跨境店群投资与孵化、OPC园区基建与运营、AI算力运营及销售，连接高校、政府园区、光谷超算中心战略合作资源和产业服务商。</p>
+          <a class="hero-button" href="partner.html">查看合作体系</a>
+        </div>
+      </section>
+
+      <section class="news section" id="news" aria-labelledby="news-title">
+        <div class="section-heading">
+          <h2 id="news-title">项目进展</h2>
+        </div>
+
+        <div class="news-layout">
+          <article class="news-feature glass-panel" data-news>
+            <div class="news-feature__carousel" data-news-carousel aria-hidden="true"></div>
+            <button class="news-arrow news-arrow--prev" type="button" data-news-prev aria-label="上一条最新动态">
+              <svg viewbox="0 0 24 24" aria-hidden="true">
+                <path d="m15 18-6-6 6-6"></path>
+              </svg>
+            </button>
+            <button class="news-arrow news-arrow--next" type="button" data-news-next aria-label="下一条最新动态">
+              <svg viewbox="0 0 24 24" aria-hidden="true">
+                <path d="m9 18 6-6-6-6"></path>
+              </svg>
+            </button>
+            <div class="news-feature__chips">
+              <span></span>
+              <span></span>
+            </div>
+            <div class="news-feature__copy">
+              <h3></h3>
+              <strong></strong>
+              <p></p>
+              <button class="primary-button primary-button--arrow news-feature__cta" type="button">查看详情</button>
+            </div>
+          </article>
+
+        </div>
+
+      </section>
+
+      <section class="products section" id="products" aria-labelledby="products-title">
+        <div class="section-heading">
+          <h2 id="products-title">业务版图</h2>
+          <p>围绕AI内容、跨境店群、OPC园区和AI算力形成可培训、可投资、可运营、可复制的业务矩阵</p>
+        </div>
+
+        <div class="product-accordion" data-product-accordion>
+          <article class="product-expanded product-expanded--sensenova product-expanded--dynamic glass-panel" data-product-expanded>
+            <div class="product-expanded__copy">
+              <span class="product-number" data-product-number>01</span>
+              <div>
+                <h3 data-product-title>AI漫剧制作与培训</h3>
+                <p data-product-subtitle>把AI内容生产变成可学习、可交付、可商业化的训练体系</p>
+                <ul data-product-list>
+                  <li><a href="partner.html" data-product-link="AI漫剧课程体系">AI漫剧课程体系</a></li>
+                  <li><a href="partner.html" data-product-link="内容制作交付">内容制作交付</a></li>
+                  <li><a href="about.html" data-product-link="高校与园区训练营">高校与园区训练营</a></li>
+                </ul>
+              </div>
+            </div>
+            <div class="product-stage product-stage--sensenova" aria-hidden="true"></div>
+            <span class="product-stage-hotspot" aria-hidden="true"></span>
+          </article>
+
+          <div class="product-row" data-product-row="infra" role="button" tabindex="0" aria-label="展开跨境店群投资与孵化">
+            <span>02</span>
+            <strong>跨境店群投资与孵化</strong>
+            <em class="product-row__toggle" aria-hidden="true"></em>
+          </div>
+          <div class="product-row" data-product-row="city" role="button" tabindex="0" aria-label="展开OPC园区基建与运营">
+            <span>03</span>
+            <strong>OPC园区基建与运营</strong>
+            <em class="product-row__toggle" aria-hidden="true"></em>
+          </div>
+          <div class="product-row" data-product-row="innovation" role="button" tabindex="0" aria-label="展开AI算力运营及销售">
+            <span>04</span>
+            <strong>AI算力运营及销售</strong>
+            <em class="product-row__toggle" aria-hidden="true"></em>
+          </div>
+        </div>
+      </section>
+
+      <section class="technology section" id="technology" aria-labelledby="technology-title">
+        <div class="section-heading">
+          <div class="section-heading__copy">
+            <h2 id="technology-title">平台能力</h2>
+            <p>以内容生产、店群运营、园区管理和算力销售四类平台能力支撑业务落地</p>
+          </div>
+        </div>
+
+        <div class="tech-carousel" data-tech-carousel>
+        <div class="tech-grid" data-tech-track aria-label="技术列表">
+          <article class="tech-card">
+            <img class="tech-card__image" src="assets/cloned/images/772f7f09ce-chuyun-brand-placeholder.svg" alt="" decoding="async">
+            <div class="tech-copy">
+              <h3>AI内容与漫剧制作中台</h3>
+              <p>沉淀剧本、角色、分镜、素材、模板、任务协同和商业发布流程，服务AI漫剧培训、品牌内容制作与账号矩阵运营。</p>
+              <div class="tech-meta" aria-hidden="true">
+                <span>TECH</span>
+                <strong>内容引擎</strong>
+              </div>
+              <a class="tech-button" href="about.html">了解更多</a>
+            </div>
+          </article>
+
+          <article class="tech-card">
+            <img class="tech-card__image" src="assets/cloned/images/772f7f09ce-chuyun-brand-placeholder.svg" alt="" decoding="async">
+            <div class="tech-copy">
+              <h3>跨境店群运营管理平台</h3>
+              <p>管理多店铺、订单、库存、客服、选品、财务分润和投资项目复盘，让店群孵化有数据、有风控、有收益模型。</p>
+              <div class="tech-meta" aria-hidden="true">
+                <span>TECH</span>
+                <strong>经营系统</strong>
+              </div>
+              <a class="tech-button" href="partner.html">了解更多</a>
+            </div>
+          </article>
+
+          <article class="tech-card">
+            <img class="tech-card__image" src="assets/cloned/images/772f7f09ce-chuyun-brand-placeholder.svg" alt="" decoding="async">
+            <div class="tech-copy">
+              <h3>OPC园区数字化运营平台</h3>
+              <p>承接工位、学员、项目、活动、政策申报、招商展示和政府数据看板，支撑园区基建与长期运营。</p>
+              <div class="tech-meta" aria-hidden="true">
+                <span>TECH</span>
+                <strong>园区底座</strong>
+              </div>
+              <a class="tech-button" href="investor.html">了解更多</a>
+            </div>
+          </article>
+
+          <article class="tech-card">
+            <img class="tech-card__image" src="assets/cloned/images/772f7f09ce-chuyun-brand-placeholder.svg" alt="" decoding="async">
+            <div class="tech-copy">
+              <h3>AI算力运营与销售平台</h3>
+              <p>结合光谷超算中心战略合作等资源，承接算力套餐、API调用、模型应用、成本核算和渠道销售。</p>
+              <div class="tech-meta" aria-hidden="true">
+                <span>TECH</span>
+                <strong>算力资源</strong>
+              </div>
+              <a class="tech-button" href="investor.html">了解更多</a>
+            </div>
+          </article>
+        </div>
+        </div>
+      </section>
+
+      <footer class="footer-band section" id="about">
+        <img src="assets/cloned/images/f48db716bf-logo-wide.png" alt="楚云数航">
+        <p>以AI赋能内容，以店群连接全球，以园区承载项目，以算力驱动未来</p>
+        <div class="footer-line"></div>
+        <p class="legal"><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">鄂ICP备2026031741号</a>  © 2026 <a href="index.html" target="_blank" rel="noopener">湖北楚云数航科技有限公司</a>. All Rights Reserved.</p>
+      </footer>
+    </main>
+
+    <div class="toast" data-toast></div>
+
+    <script src="assets/cloned/js/154f36e314-app.js"></script>
+  </body>
+</html>
