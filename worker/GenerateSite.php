@@ -342,6 +342,11 @@ function reset_generated_output(string $publicRoot): void
 
 function site_for(array $site, string $rootBase): array
 {
+    $apiBase = trim((string)($site['api_base'] ?? ($site['api']['base_url'] ?? (env_or_null('HJ_PUBLIC_API_BASE') ?: ''))));
+    $apiBase = rtrim($apiBase, '/');
+    $site['api_base'] = $apiBase;
+    $site['api_base_json'] = json_encode($apiBase, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
     $site['payment'] = array_replace([
         'mode' => 'manual',
         'currency' => 'CNY',

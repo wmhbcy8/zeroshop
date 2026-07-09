@@ -2182,6 +2182,7 @@ function center_site_items(PDO $main, PDO $sitePdo): array
 
     return array_map(function (array $item) use ($articleCounts, $productCounts, $orderCounts, $pendingOrderCounts, $formCounts, $pendingFormCounts, $publishMap, $settings) {
         $siteId = (int)$item['id'];
+        $deploy = site_deploy_config($item, $siteId === 10001 ? $settings : []);
         $stats = [
             'articles' => $articleCounts[$siteId] ?? 0,
             'products' => $productCounts[$siteId] ?? 0,
@@ -2193,7 +2194,8 @@ function center_site_items(PDO $main, PDO $sitePdo): array
         return $item + [
             'stats' => $stats,
             'publish' => site_publish_summary($item, $publishMap[$siteId] ?? null),
-            'deploy' => site_deploy_config($item, $siteId === 10001 ? $settings : []),
+            'deploy' => $deploy,
+            'api_base' => (string)($deploy['api_base'] ?? ''),
         ];
     }, $items);
 }
@@ -2258,6 +2260,9 @@ function site_deploy_config(array $site, array $settings = []): array
     if (!empty($settings['deploy']) && is_array($settings['deploy'])) {
         $deploy = array_replace($deploy, $settings['deploy']);
     }
+    if (array_key_exists('api_base', $settings)) {
+        $deploy['api_base'] = $settings['api_base'];
+    }
 
     return [
         'bt_panel_url' => (string)($deploy['bt_panel_url'] ?? ''),
@@ -2265,6 +2270,7 @@ function site_deploy_config(array $site, array $settings = []): array
         'mode' => (string)($deploy['mode'] ?? 'manual'),
         'after_action' => (string)($deploy['after_action'] ?? ''),
         'note' => (string)($deploy['note'] ?? ''),
+        'api_base' => rtrim((string)($deploy['api_base'] ?? ''), '/'),
     ];
 }
 
@@ -2289,6 +2295,7 @@ function normalize_site_deploy_config(array $data, array $current = []): array
         'mode' => $mode,
         'after_action' => mb_substr(trim((string)($deploy['after_action'] ?? '')), 0, 120, 'UTF-8'),
         'note' => mb_substr(trim((string)($deploy['note'] ?? '')), 0, 500, 'UTF-8'),
+        'api_base' => rtrim(mb_substr(trim((string)($data['api_base'] ?? $deploy['api_base'] ?? '')), 0, 255, 'UTF-8'), '/'),
     ];
 }
 
@@ -2343,6 +2350,7 @@ function update_center_site(PDO $main, int $id, array $data, ?PDO $sitePdo = nul
             $settings[$field] = $payload[$field];
         }
         $settings['deploy'] = $payload['deploy'];
+        $settings['api_base'] = (string)($payload['deploy']['api_base'] ?? '');
         $settings['updated_at'] = now();
         save_site_settings($sitePdo, $settings, 10001);
     }
@@ -5801,19 +5809,18 @@ function requested_site_id(): int
 
 function current_site(PDO $main, PDO $sitePdo): array
 {
-    center_site_items($main, $sitePdo);
-    $stmt = $main->prepare('SELECT * FROM sites WHERE id = ? LIMIT 1');
-    $stmt->execute([requested_site_id()]);
-    $site = $stmt->fetch();
-    if ($site) {
-        return $site;
+    $siteId = requested_site_id();
+    $items = center_site_items($main, $sitePdo);
+    foreach ($items as $site) {
+        if ((int)($site['id'] ?? 0) === $siteId) {
+            return $site;
+        }
     }
 
-    $stmt = $main->prepare('SELECT * FROM sites WHERE id = 10001 LIMIT 1');
-    $stmt->execute();
-    $site = $stmt->fetch();
-    if ($site) {
-        return $site;
+    foreach ($items as $site) {
+        if ((int)($site['id'] ?? 0) === 10001) {
+            return $site;
+        }
     }
     fail('站点不存在', 'SITE_NOT_FOUND', 404);
 }
@@ -6655,7 +6662,7 @@ function save_site_menu(PDO $pdo, string $menuKey, array $data): array
 function preserve_service_configs(array $incoming, array $current): array
 {
     unset($incoming['_preserve_service_configs']);
-    foreach (['ai', 'payment', 'deploy'] as $key) {
+    foreach (['ai', 'payment', 'deploy', 'api_base'] as $key) {
         if (array_key_exists($key, $current)) {
             $incoming[$key] = $current[$key];
         } else {
@@ -10681,6 +10688,7 @@ try {
         putenv('HJ_SITE_LANGUAGE=' . (string)($currentSite['language'] ?: 'zh-CN'));
         putenv('HJ_TEMPLATE_KEY=' . (string)($currentSite['template_key'] ?: 'business-clean'));
         putenv('HJ_PUBLIC_PATH=' . $publicPath);
+        putenv('HJ_PUBLIC_API_BASE=' . (string)($currentSite['api_base'] ?? ''));
         $command = '"' . $php . '" "' . $script . '"';
         $output = [];
         $code = 0;
@@ -10737,6 +10745,7 @@ try {
         putenv('HJ_SITE_LANGUAGE=' . (string)($currentSite['language'] ?: 'zh-CN'));
         putenv('HJ_TEMPLATE_KEY=' . (string)($currentSite['template_key'] ?: 'business-clean'));
         putenv('HJ_PUBLIC_PATH=' . $publicPath);
+        putenv('HJ_PUBLIC_API_BASE=' . (string)($currentSite['api_base'] ?? ''));
         $command = '"' . $php . '" "' . $script . '"';
         $output = [];
         $code = 0;

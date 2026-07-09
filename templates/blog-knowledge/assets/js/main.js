@@ -30,10 +30,20 @@ function getPublicConfig() {
   return publicSiteConfig || window.HUAJIAN_PUBLIC_CONFIG || {};
 }
 
+function apiBase() {
+  return String(window.HUAJIAN_API_BASE || '').replace(/\/+$/, '');
+}
+
+function apiUrl(path) {
+  const value = String(path || '');
+  if (/^https?:\/\//i.test(value)) return value;
+  return apiBase() + (value.startsWith('/') ? value : '/' + value);
+}
+
 function loadPublicConfig() {
   if (location.protocol === 'file:') return Promise.resolve(getPublicConfig());
   const url = '/api/site/public-config?site_id=' + encodeURIComponent(getCurrentSiteId());
-  return fetch(url)
+  return fetch(apiUrl(url))
     .then(function (response) { return response.json(); })
     .then(function (result) {
       if (!result.success) throw new Error(result.message || '站点配置读取失败');
@@ -63,7 +73,7 @@ function siteCurrency(fallback) {
 
 function trackSiteVisit() {
   if (location.protocol === 'file:') return;
-  fetch('/api/analytics/visit', {
+  fetch(apiUrl('/api/analytics/visit'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -139,7 +149,7 @@ document.addEventListener('submit', function (event) {
     }
   });
 
-  fetch(api, {
+  fetch(apiUrl(api), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -337,7 +347,7 @@ function submitCartOrderForm(form) {
     item.disabled = true;
   });
 
-  fetch(api, {
+  fetch(apiUrl(api), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -413,7 +423,7 @@ function submitOrderForm(form) {
     item.disabled = true;
   });
 
-  fetch(api, {
+  fetch(apiUrl(api), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -688,7 +698,7 @@ function submitCustomerNote(form) {
     item.disabled = true;
   });
 
-  fetch(api, {
+  fetch(apiUrl(api), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -730,7 +740,7 @@ function submitPaymentProof(form) {
     item.disabled = true;
   });
 
-  fetch(api, {
+  fetch(apiUrl(api), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -773,7 +783,7 @@ function submitServiceRequest(form) {
     item.disabled = true;
   });
 
-  fetch(api, {
+  fetch(apiUrl(api), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -811,7 +821,7 @@ function submitOrderLookup(form) {
   if (status) status.textContent = '正在查询订单...';
   if (resultBox) resultBox.innerHTML = '';
 
-  fetch(api, {
+  fetch(apiUrl(api), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)

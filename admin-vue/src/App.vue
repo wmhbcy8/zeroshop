@@ -987,6 +987,7 @@
               </el-form-item>
               <el-form-item label="面板地址"><el-input v-model="siteForm.deploy.bt_panel_url" placeholder="https://server:8888" /></el-form-item>
               <el-form-item label="站点目录"><el-input v-model="siteForm.deploy.site_path" placeholder="/www/wwwroot/example.com" /></el-form-item>
+              <el-form-item label="前台API"><el-input v-model="siteForm.api_base" placeholder="留空同域；跨域静态站填 https://api.example.com" /></el-form-item>
               <el-form-item label="部署模式">
                 <el-select v-model="siteForm.deploy.mode">
                   <el-option label="手动发布" value="manual" />
@@ -2734,6 +2735,10 @@
                 <el-col :span="12"><el-form-item label="面板地址"><el-input v-model="site.deploy.bt_panel_url" placeholder="https://server:8888" /></el-form-item></el-col>
                 <el-col :span="12"><el-form-item label="站点目录"><el-input v-model="site.deploy.site_path" placeholder="/www/wwwroot/example.com" /></el-form-item></el-col>
               </el-row>
+              <el-form-item label="前台API地址">
+                <el-input v-model="site.api_base" placeholder="留空表示同域；跨域部署填 https://api.example.com" />
+                <small class="form-tip">生成静态站时会写入页面，订单、留言、支付凭证、客服请求和访问统计都会请求这个后台 API 地址。</small>
+              </el-form-item>
               <el-row :gutter="16">
                 <el-col :span="12">
                   <el-form-item label="部署模式">
@@ -3375,7 +3380,7 @@ const productForm = reactive<any>({})
 const pageForm = reactive<any>({})
 const siteEditingId = ref<number | string>('')
 const emptyDeploy = () => ({ bt_panel_url: '', site_path: '', mode: 'manual', after_action: '', note: '' })
-const siteForm = reactive<any>({ name: '', deploy_node_id: 0, domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active', deploy: emptyDeploy() })
+const siteForm = reactive<any>({ name: '', deploy_node_id: 0, api_base: '', domain: '', subdomain: '', language: 'zh-CN', template_key: 'business-clean', status: 'active', deploy: emptyDeploy() })
 const aiForm = reactive<any>({ type: 'article', prompt: '围绕自主品牌商品、行业解决方案和独立站 SEO 关键词生成内容', count: 5, status: 'draft', site_scope: 'current', site_ids: [] })
 const aiChatForm = reactive<any>({ message: '' })
 const aiChatMessages = ref<any[]>([])
@@ -4495,6 +4500,7 @@ function resetSiteForm() {
   Object.assign(siteForm, {
     name: '',
     deploy_node_id: 0,
+    api_base: '',
     domain: '',
     subdomain: '',
     language: defaults.language || 'zh-CN',
@@ -4518,6 +4524,7 @@ function editSite(item: any) {
   Object.assign(siteForm, {
     name: item.name || '',
     deploy_node_id: Number(item.deploy_node_id || 0),
+    api_base: item.api_base || '',
     domain: item.domain || '',
     subdomain: item.subdomain || '',
     language: item.language || 'zh-CN',
@@ -4651,6 +4658,7 @@ function normalizeSite(data: any = {}) {
   const normalized = {
     ...data,
     template_key: data.template_key || 'business-clean',
+    api_base: data.api_base || '',
     deploy_node_id: Number(data.deploy_node_id || 0),
     ai: data.ai || {},
     payment: data.payment || {},
@@ -4780,9 +4788,10 @@ async function savePublishDeploySettings() {
     method: 'PUT',
     data: {
       deploy: site.deploy,
+      api_base: site.api_base,
       deploy_node_id: site.deploy_node_id,
       _service_config_only: true,
-      _service_config_keys: ['deploy', 'deploy_node_id']
+      _service_config_keys: ['deploy', 'deploy_node_id', 'api_base']
     }
   })
   Object.assign(site, normalizeSite(data))
@@ -4811,9 +4820,10 @@ async function savePublishDeploySettingsAsDefault() {
     method: 'PUT',
     data: {
       deploy: site.deploy,
+      api_base: site.api_base,
       deploy_node_id: site.deploy_node_id,
       _service_config_only: true,
-      _service_config_keys: ['deploy', 'deploy_node_id']
+      _service_config_keys: ['deploy', 'deploy_node_id', 'api_base']
     }
   })
   Object.assign(site, normalizeSite(data))
