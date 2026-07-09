@@ -1,0 +1,85 @@
+{
+  "version": "0.1",
+  "mode": "static_mirror",
+  "description": "Editable region hints for the Chuyun AI static clone template.",
+  "regions": [
+    {
+      "id": "clone-header",
+      "module": "header",
+      "title": "Brand navigation",
+      "description": "Top navigation, language switch, and cooperation entry.",
+      "scope": "global",
+      "source_file": "mirror/cn.html",
+      "selectors": ["header", ".site-header", ".cy-header", "nav"],
+      "editable_fields": ["text", "image", "link", "visibility", "sort_order"],
+      "sort_order": 10
+    },
+    {
+      "id": "clone-hero",
+      "module": "hero",
+      "title": "AI platform hero",
+      "description": "Hero headline, subtitle, buttons, and primary business positioning.",
+      "scope": "home",
+      "source_file": "mirror/cn.html",
+      "selectors": ["[class*=hero]", "[class*=banner]", "main section"],
+      "editable_fields": ["text", "image", "link", "visibility", "sort_order"],
+      "sort_order": 20
+    },
+    {
+      "id": "clone-advantages",
+      "module": "advantages",
+      "title": "Platform capabilities",
+      "description": "AI content, cross-border commerce, OPC park, and compute capability blocks.",
+      "scope": "home",
+      "source_file": "mirror/cn.html",
+      "selectors": ["[class*=product]", "[class*=technology]", "[class*=capability]"],
+      "editable_fields": ["text", "image", "link", "visibility", "sort_order"],
+      "sort_order": 30
+    },
+    {
+      "id": "clone-products",
+      "module": "products",
+      "title": "Business map",
+      "description": "Business-line cards that can later map to products or solutions.",
+      "scope": "home",
+      "source_file": "mirror/cn.html",
+      "selectors": ["[class*=business]", "[class*=product]", "[class*=solution]"],
+      "editable_fields": ["text", "image", "link", "visibility", "sort_order"],
+      "sort_order": 40
+    },
+    {
+      "id": "clone-articles",
+      "module": "articles",
+      "title": "Project updates",
+      "description": "News and milestone sections that can later bind to articles.",
+      "scope": "home",
+      "source_file": "mirror/cn.html",
+      "selectors": ["[class*=news]", "[class*=announcement]", "[class*=update]"],
+      "editable_fields": ["text", "link", "visibility", "sort_order"],
+      "sort_order": 50
+    },
+    {
+      "id": "clone-contact",
+      "module": "contact",
+      "title": "Cooperation contact",
+      "description": "Contact and cooperation-intent entry.",
+      "scope": "home",
+      "source_file": "mirror/cn.html",
+      "selectors": ["[class*=contact]", "[id*=contact]", "form"],
+      "editable_fields": ["text", "link", "visibility", "sort_order"],
+      "sort_order": 60
+    },
+    {
+      "id": "clone-footer",
+      "module": "footer",
+      "title": "Footer",
+      "description": "Footer brand, copyright, and link groups.",
+      "scope": "global",
+      "source_file": "mirror/cn.html",
+      "selectors": ["footer", "[class*=footer]"],
+      "editable_fields": ["text", "link", "visibility"],
+      "sort_order": 70
+    }
+  ]
+}
+

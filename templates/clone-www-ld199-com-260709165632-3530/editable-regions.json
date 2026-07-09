@@ -1,0 +1,74 @@
+{
+  "version": "0.1",
+  "mode": "static_mirror",
+  "description": "Editable region hints for the LD199 static clone template.",
+  "regions": [
+    {
+      "id": "clone-header",
+      "module": "header",
+      "title": "Brand navigation",
+      "description": "Logo, navigation links, and consultation button.",
+      "scope": "global",
+      "source_file": "mirror/index.html",
+      "selectors": [".hj-header", ".hj-brand", ".hj-menu"],
+      "editable_fields": ["text", "image", "link", "visibility", "sort_order"],
+      "sort_order": 10
+    },
+    {
+      "id": "clone-hero",
+      "module": "hero",
+      "title": "Home hero",
+      "description": "Main headline, subtitle, buttons, and hero visual cards.",
+      "scope": "home",
+      "source_file": "mirror/index.html",
+      "selectors": [".hj-hero", ".hj-kicker", ".hj-actions", ".hj-visual"],
+      "editable_fields": ["text", "image", "link", "visibility", "sort_order"],
+      "sort_order": 20
+    },
+    {
+      "id": "clone-advantages",
+      "module": "advantages",
+      "title": "Core capabilities",
+      "description": "Capability cards for digital rights services.",
+      "scope": "home",
+      "source_file": "mirror/index.html",
+      "selectors": [".hj-section.white .hj-grid", ".hj-feature"],
+      "editable_fields": ["text", "link", "visibility", "sort_order"],
+      "sort_order": 30
+    },
+    {
+      "id": "clone-products",
+      "module": "products",
+      "title": "Service items",
+      "description": "Service/product cards and images.",
+      "scope": "home",
+      "source_file": "mirror/index.html",
+      "selectors": [".hj-product", ".hj-section .hj-grid"],
+      "editable_fields": ["text", "image", "link", "visibility", "sort_order"],
+      "sort_order": 40
+    },
+    {
+      "id": "clone-articles",
+      "module": "articles",
+      "title": "Latest updates",
+      "description": "News cards that can later bind to the article library.",
+      "scope": "home",
+      "source_file": "mirror/index.html",
+      "selectors": [".hj-news"],
+      "editable_fields": ["text", "link", "visibility", "sort_order"],
+      "sort_order": 50
+    },
+    {
+      "id": "clone-footer",
+      "module": "footer",
+      "title": "Footer",
+      "description": "Footer brand and contact links.",
+      "scope": "global",
+      "source_file": "mirror/index.html",
+      "selectors": [".hj-footer", "footer"],
+      "editable_fields": ["text", "link", "visibility"],
+      "sort_order": 60
+    }
+  ]
+}
+

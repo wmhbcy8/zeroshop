@@ -274,6 +274,7 @@ function template_registry(): array
             continue;
         }
         $key = (string)($data['key'] ?? basename(dirname($path)));
+        $editableRegions = template_editable_regions_from_dir(dirname($path));
         $items[] = [
             'key' => $key,
             'name' => (string)($data['name'] ?? $key),
@@ -285,10 +286,25 @@ function template_registry(): array
             'path' => 'templates/' . basename(dirname($path)),
             'status' => (string)($states[$key]['status'] ?? 'enabled'),
             'updated_at' => (string)($states[$key]['updated_at'] ?? ''),
+            'editable_region_count' => count($editableRegions),
         ];
     }
     usort($items, fn($a, $b) => strcmp((string)$a['key'], (string)$b['key']));
     return ['items' => $items];
+}
+
+function template_editable_regions_from_dir(string $dir): array
+{
+    $path = $dir . DIRECTORY_SEPARATOR . 'editable-regions.json';
+    if (!is_file($path)) {
+        return [];
+    }
+    $data = json_decode((string)file_get_contents($path), true);
+    if (!is_array($data)) {
+        return [];
+    }
+    $regions = $data['regions'] ?? $data;
+    return is_array($regions) ? array_values(array_filter($regions, 'is_array')) : [];
 }
 
 function template_root_path(): string
@@ -406,6 +422,8 @@ function template_item(string $key): array
     $key = trim($key);
     foreach (template_registry()['items'] ?? [] as $item) {
         if ((string)($item['key'] ?? '') === $key) {
+            $dir = template_root_path() . DIRECTORY_SEPARATOR . $key;
+            $item['editable_regions'] = template_editable_regions_from_dir($dir);
             return $item;
         }
     }
@@ -4470,6 +4488,60 @@ function template_clone_module_plan(string $title, string $url, bool $fetched): 
     ];
 }
 
+function template_clone_editable_regions(array $modulePlan): array
+{
+    $selectors = [
+        'header' => ['header', '.b-head', '.hj-header', 'nav'],
+        'hero' => ['.home-banner', '.hj-hero', '[class*=hero]', '[class*=banner]'],
+        'advantages' => ['.hj-grid', '.b-m-word', '[class*=advantage]', '[class*=feature]'],
+        'products' => ['.p-style-a', '.p-style-b', '.hj-product', '[class*=product]'],
+        'articles' => ['.m-nlist', '.hj-news', '[class*=news]', '[class*=article]'],
+        'contact' => ['.contact-form', '.clone-contact-grid', '[class*=contact]', '[class*=inquiry]'],
+        'footer' => ['footer', '.b-foot', '.hj-footer'],
+    ];
+    $regions = [];
+    $order = 10;
+    foreach ($modulePlan as $module) {
+        if (!is_array($module)) {
+            continue;
+        }
+        $key = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($module['module'] ?? ''));
+        if ($key === '' || $key === 'source') {
+            continue;
+        }
+        $regions[] = [
+            'id' => 'clone-' . $key,
+            'module' => $key,
+            'title' => (string)($module['title'] ?? $key),
+            'description' => (string)($module['description'] ?? ''),
+            'scope' => in_array($key, ['header', 'footer'], true) ? 'global' : 'home',
+            'source_file' => 'mirror/index.html',
+            'selectors' => $selectors[$key] ?? ['[data-module="' . $key . '"]'],
+            'editable_fields' => [
+                'text',
+                'image',
+                'link',
+                'visibility',
+                'sort_order',
+            ],
+            'sort_order' => $order,
+        ];
+        $order += 10;
+    }
+    return $regions;
+}
+
+function write_template_editable_regions(string $templateDir, array $modulePlan): void
+{
+    $payload = [
+        'version' => '0.1',
+        'mode' => 'static_mirror',
+        'description' => 'Editable region hints generated from the cloned static template. The admin can use these selectors to map cloned HTML into Huajian modules.',
+        'regions' => template_clone_editable_regions($modulePlan),
+    ];
+    file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'editable-regions.json', json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+}
+
 function write_template_clone_metadata(string $templateDir, string $key, string $name, string $url, array $modulePlan): void
 {
     $meta = [
@@ -4486,6 +4558,7 @@ function write_template_clone_metadata(string $templateDir, string $key, string 
         'module_plan' => $modulePlan,
     ];
     file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'template.json', json_encode($meta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+    write_template_editable_regions($templateDir, $modulePlan);
     $readme = "# {$name}\n\n来源：{$url}\n\n这是化简根据目标 URL 生成的标准化模板草稿，已转换为可编辑的 header、hero、内容模块、商品、文章、表单和 footer 结构。\n";
     file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'CLONE_SOURCE.md', $readme);
 }

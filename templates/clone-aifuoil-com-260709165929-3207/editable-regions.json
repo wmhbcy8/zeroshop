@@ -1,0 +1,96 @@
+{
+  "version": "0.1",
+  "mode": "static_mirror",
+  "description": "Editable region hints for the AIFUEL static clone template.",
+  "regions": [
+    {
+      "id": "clone-header",
+      "module": "header",
+      "title": "Brand navigation",
+      "description": "Logo, navigation links, and language entry.",
+      "scope": "global",
+      "source_file": "mirror/index.html",
+      "selectors": [".b-head", ".logo", ".navbar"],
+      "editable_fields": ["text", "image", "link", "visibility", "sort_order"],
+      "sort_order": 10
+    },
+    {
+      "id": "clone-hero",
+      "module": "hero",
+      "title": "Home hero",
+      "description": "Hero background, brand title, slogan, and search entry.",
+      "scope": "home",
+      "source_file": "mirror/index.html",
+      "selectors": [".home-banner", ".home-top", ".m-search"],
+      "editable_fields": ["text", "image", "link", "visibility", "sort_order"],
+      "sort_order": 20
+    },
+    {
+      "id": "clone-advantages",
+      "module": "advantages",
+      "title": "Service advantages",
+      "description": "Three-column advantage strip below the hero.",
+      "scope": "home",
+      "source_file": "mirror/index.html",
+      "selectors": [".home-note", ".b-m-word"],
+      "editable_fields": ["text", "icon", "visibility", "sort_order"],
+      "sort_order": 30
+    },
+    {
+      "id": "clone-products",
+      "module": "products",
+      "title": "Product center",
+      "description": "Product cards and application-scenario cards.",
+      "scope": "home",
+      "source_file": "mirror/index.html",
+      "selectors": [".p-style-a", ".p-style-b", ".clone-product-img"],
+      "editable_fields": ["text", "image", "link", "visibility", "sort_order"],
+      "sort_order": 40
+    },
+    {
+      "id": "clone-about",
+      "module": "about",
+      "title": "Brand introduction",
+      "description": "About AIFUEL copy, product visual, and service data.",
+      "scope": "home",
+      "source_file": "mirror/index.html",
+      "selectors": [".home-abus", ".abus-con", ".home-data"],
+      "editable_fields": ["text", "image", "visibility", "sort_order"],
+      "sort_order": 50
+    },
+    {
+      "id": "clone-articles",
+      "module": "articles",
+      "title": "News",
+      "description": "News list that can later bind to the article library.",
+      "scope": "home",
+      "source_file": "mirror/index.html",
+      "selectors": [".m-nlist"],
+      "editable_fields": ["text", "link", "visibility", "sort_order"],
+      "sort_order": 60
+    },
+    {
+      "id": "clone-contact",
+      "module": "contact",
+      "title": "Contact and inquiry",
+      "description": "Contact cards and inquiry entry.",
+      "scope": "home",
+      "source_file": "mirror/index.html",
+      "selectors": [".clone-contact-grid", ".contact-form"],
+      "editable_fields": ["text", "link", "visibility", "sort_order"],
+      "sort_order": 70
+    },
+    {
+      "id": "clone-footer",
+      "module": "footer",
+      "title": "Footer",
+      "description": "Footer links and copyright.",
+      "scope": "global",
+      "source_file": "mirror/index.html",
+      "selectors": [".b-foot", "footer"],
+      "editable_fields": ["text", "link", "visibility"],
+      "sort_order": 80
+    }
+  ]
+}
+
