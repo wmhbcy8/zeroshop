@@ -2422,12 +2422,22 @@
               <div class="card-head">
                 <strong>宝塔面板 / 部署配置</strong>
                 <div class="head-actions">
-                  <el-button @click="saveSettings">保存部署配置</el-button>
+                  <el-button @click="savePublishDeploySettings">保存部署配置</el-button>
                   <el-button @click="saveSettingsAsDefault">保存为公共默认</el-button>
                 </div>
               </div>
             </template>
             <el-form :model="site.deploy" label-width="100px" class="wide-form">
+              <el-form-item label="平台节点">
+                <div class="inline-form-row">
+                  <el-select v-model="site.deploy_node_id" clearable filterable placeholder="选择平台部署节点/宝塔节点">
+                    <el-option label="不绑定节点" :value="0" />
+                    <el-option v-for="node in deployNodes" :key="node.id" :label="`${node.name} / ${node.node_type || 'manual'}`" :value="node.id" />
+                  </el-select>
+                  <el-button @click="setView('sites')">站点列表</el-button>
+                </div>
+                <small class="form-tip">这里绑定当前站点使用的服务器节点；面板地址、站点目录和发布模式保存后会同步到当前站点。</small>
+              </el-form-item>
               <el-row :gutter="16">
                 <el-col :span="12"><el-form-item label="面板地址"><el-input v-model="site.deploy.bt_panel_url" placeholder="https://server:8888" /></el-form-item></el-col>
                 <el-col :span="12"><el-form-item label="站点目录"><el-input v-model="site.deploy.site_path" placeholder="/www/wwwroot/example.com" /></el-form-item></el-col>
@@ -4063,6 +4073,7 @@ async function toggleSiteStatus(item: any) {
 async function loadSettings() {
   const data = await request('/api/site/settings')
   Object.assign(site, normalizeSite(data))
+  site.deploy_node_id = Number(currentSite.value?.deploy_node_id || site.deploy_node_id || 0)
   selectedAiProviderId.value = site.ai?.provider_id || ''
 }
 
@@ -4145,6 +4156,7 @@ function normalizeSite(data: any = {}) {
   const normalized = {
     ...data,
     template_key: data.template_key || 'business-clean',
+    deploy_node_id: Number(data.deploy_node_id || 0),
     ai: data.ai || {},
     payment: data.payment || {},
     deploy: {
@@ -4214,6 +4226,28 @@ async function saveSettings() {
   const data = await request('/api/site/settings', { method: 'PUT', data: site })
   Object.assign(site, normalizeSite(data))
   ElMessage.success('当前站点设置已保存，生成静态站后前台生效')
+}
+
+async function savePublishDeploySettings() {
+  await saveSettings()
+  const current = currentSite.value
+  if (current?.id) {
+    await request(`/api/sites/${current.id}`, {
+      method: 'PUT',
+      data: {
+        name: current.name || site.name || '',
+        domain: current.domain || site.domain || '',
+        subdomain: current.subdomain || '',
+        language: current.language || site.language || 'zh-CN',
+        template_key: current.template_key || site.template_key || 'business-clean',
+        status: current.status || 'active',
+        deploy_node_id: Number(site.deploy_node_id || 0),
+        deploy: { ...emptyDeploy(), ...(site.deploy || {}) }
+      }
+    })
+  }
+  ElMessage.success('发布部署配置已保存到当前站点')
+  await Promise.all([loadSites(), loadDeployPlan(), loadDashboard()])
 }
 
 async function saveSettingsAsDefault() {
