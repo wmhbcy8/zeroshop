@@ -1413,6 +1413,7 @@
             @save="saveArticle"
             @delete="deleteArticle"
             @ai="generateArticleDraft"
+            @open-ai="openAiForContent"
             @bulk-distribute="bulkDistributeArticles"
             @bulk-publish="bulkPublishArticles"
             @publish-status="publishArticleStatus"
@@ -1520,6 +1521,7 @@
             @save="saveProduct"
             @delete="deleteProduct"
             @ai="generateProductDraft"
+            @open-ai="openAiForContent"
             @bulk-distribute="bulkDistributeProducts"
             @bulk-publish="bulkPublishProducts"
             @publish-status="publishProductStatus"
@@ -4479,6 +4481,7 @@ async function bulkDistributeContent(type: 'article' | 'product' | 'page', paylo
     return
   }
   const site_scope = payload.site_scope || 'current'
+  if (!ensureSelectedSiteScope(site_scope, payload.site_ids, '批量分发范围')) return
   const site_ids = siteIdsForScope(site_scope, payload.site_ids)
   const endpoint = type === 'article' ? '/api/articles' : type === 'product' ? '/api/products' : '/api/pages'
   await Promise.all(items.map((item: any) => request(`${endpoint}/${item.id}`, {
@@ -4602,6 +4605,14 @@ function applyAiQuickCommand(item: any) {
   aiForm.status = item.status
   aiForm.prompt = item.prompt
   syncAiSiteScope()
+}
+
+function openAiForContent(payload: any = {}) {
+  aiForm.type = payload.type === 'product' ? 'product' : 'article'
+  aiForm.site_scope = payload.site_scope || 'current'
+  aiForm.site_ids = Array.isArray(payload.site_ids) ? payload.site_ids : []
+  syncAiSiteScope()
+  setView('ai')
 }
 
 function newPage() { Object.assign(pageForm, { id: '', title: '', slug: '', cover: '', summary: '', content: '', seo_keywords: '', status: 'draft', ...scopeFromListFilter() }) }

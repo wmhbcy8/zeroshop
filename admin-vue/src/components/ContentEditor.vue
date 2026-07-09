@@ -4,7 +4,10 @@
       <template #header>
         <div class="card-head">
           <strong>{{ title }}列表</strong>
-          <el-button type="primary" @click="openNew">新建{{ title }}</el-button>
+          <div class="head-actions">
+            <el-button v-if="type !== 'page'" @click="openAiBatch">AI批量生成</el-button>
+            <el-button type="primary" @click="openNew">新建{{ title }}</el-button>
+          </div>
         </div>
       </template>
 
@@ -220,7 +223,7 @@ const props = defineProps<{
   listSiteScope?: string
 }>()
 
-const emit = defineEmits(['new', 'edit', 'save', 'delete', 'ai', 'page-change', 'bulk-distribute', 'bulk-publish', 'publish-status', 'scope-change', 'preview-modules', 'save-modules'])
+const emit = defineEmits(['new', 'edit', 'save', 'delete', 'ai', 'open-ai', 'page-change', 'bulk-distribute', 'bulk-publish', 'publish-status', 'scope-change', 'preview-modules', 'save-modules'])
 
 const prompt = ref('')
 const moduleText = ref('')
@@ -258,6 +261,15 @@ function saveForm() {
 function generateDraft() {
   syncScope()
   emit('ai', prompt.value)
+}
+
+function openAiBatch() {
+  syncBulkScope()
+  emit('open-ai', {
+    type: props.type,
+    site_scope: bulkForm.value.site_scope,
+    site_ids: bulkForm.value.site_ids
+  })
 }
 
 function allSiteIds() {
