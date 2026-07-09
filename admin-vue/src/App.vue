@@ -3644,14 +3644,25 @@ async function applySelectedAiProvider() {
 function switchSite() {
   ElMessage.success('已切换当前站点')
   publishResult.value = null
+  syncCurrentScopedWorkflows()
   const contentRefresh = contentListSiteScope.value === 'current'
     ? Promise.all([loadArticles(), loadProducts(), loadPages()])
     : Promise.resolve()
   Promise.all([loadDomains(), loadStaticPages(), refreshCurrentView(), contentRefresh])
 }
 
+function syncCurrentScopedWorkflows() {
+  const ids = currentSiteIds()
+  ;[articleForm, productForm, pageForm, aiForm, collectorForm, collectorPublishScope, manualCollectorForm].forEach((form: any) => {
+    if (!form || form.site_scope !== 'current') return
+    form.site_ids = ids
+    if ('site_id' in form) form.site_id = ids[0]
+  })
+}
+
 function openSite(item: any) {
   currentSiteId.value = item.id
+  syncCurrentScopedWorkflows()
   view.value = 'settings'
   ElMessage.success(`已进入：${item.name}`)
   Promise.all([loadSettings(), loadStaticPages()])

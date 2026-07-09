@@ -146,6 +146,7 @@ http://127.0.0.1:8000/
 - 文章、商品、页面和 AI 批量入库都采用“一份内容库，多站点分发”逻辑，可发布到当前站点、全部启用站点或指定站点；生成静态站时每个前台只读取分发给自己的内容
 - 文章、商品和页面列表支持按“全部内容库 / 当前站点 / 指定站点”查看，批量分发和 AI 入库沿用同一套站点范围逻辑
 - 当选择“指定站点”发布文章、商品或 AI 内容时，必须明确选择目标站点，系统不会静默回退到当前站点
+- 菜单 API 已与站点设置共用同一份导航数据，`/api/menus` 可读取顶部/底部菜单，`/api/menus/{menu_key}` 可独立保存单个菜单
 - 文章支持标签维护，发布静态站时会生成 `/tag/{slug}/index.html` 标签聚合页，并同步写入 `sitemap.xml` 和 `search.json`
 - 发布静态站时会生成 `rss.xml` 文章订阅源，模板头部会自动写入 RSS 发现链接
 - 文章和商品支持 AI 生成封面图，当前 MVP 生成本地 SVG 并自动写入媒体库
@@ -198,6 +199,8 @@ POST /api/auth/logout
 
 ```text
 GET/PUT          /api/site/settings
+GET              /api/menus
+PUT              /api/menus/{menu_key}
 GET              /api/site/modules
 GET              /api/modules
 GET              /api/modules/{key}
@@ -236,6 +239,8 @@ POST             /api/site/publish
 POST             /api/site/deploy-test
 GET              /api/site/publish-versions
 GET              /api/site/publish-log
+GET              /api/platform/publish-tasks
+GET              /api/platform/publish-tasks/{id}
 GET              /api/orders/export
 GET              /api/orders/service-requests
 POST             /api/orders/service-requests/resolve

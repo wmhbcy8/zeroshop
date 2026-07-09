@@ -5594,6 +5594,88 @@ function sanitize_site_settings_for_response(array $settings): array
     return $settings;
 }
 
+function normalize_menu_items(array $items): array
+{
+    $normalized = [];
+    foreach ($items as $index => $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $title = trim((string)($item['title'] ?? $item['label'] ?? ''));
+        $url = trim((string)($item['url'] ?? $item['href'] ?? ''));
+        if ($title === '' && $url === '') {
+            continue;
+        }
+        $children = $item['children'] ?? [];
+        if (!is_array($children)) {
+            $children = [];
+        }
+        $targetBlank = (bool)($item['target_blank'] ?? false);
+        $target = (string)($item['target'] ?? ($targetBlank ? '_blank' : '_self'));
+        $normalized[] = [
+            'id' => (string)($item['id'] ?? ('menu-' . date('YmdHis') . '-' . $index)),
+            'title' => mb_substr($title ?: $url, 0, 80, 'UTF-8'),
+            'type' => mb_substr(trim((string)($item['type'] ?? 'custom')), 0, 40, 'UTF-8'),
+            'url' => mb_substr($url ?: '#', 0, 255, 'UTF-8'),
+            'target' => $target === '_blank' ? '_blank' : '_self',
+            'target_blank' => $target === '_blank' || $targetBlank,
+            'children' => normalize_menu_items($children),
+        ];
+    }
+    return $normalized;
+}
+
+function site_menus(PDO $pdo): array
+{
+    $settings = site_settings($pdo);
+    $menus = is_array($settings['menus'] ?? null) ? $settings['menus'] : [];
+    $primary = normalize_menu_items(is_array($settings['nav'] ?? null) ? $settings['nav'] : []);
+    $footer = normalize_menu_items(is_array($settings['footer_nav'] ?? null) ? $settings['footer_nav'] : ($menus['footer'] ?? []));
+    return [
+        'items' => [
+            [
+                'menu_key' => 'primary',
+                'title' => '顶部导航',
+                'items' => $primary,
+            ],
+            [
+                'menu_key' => 'footer',
+                'title' => '底部导航',
+                'items' => $footer,
+            ],
+        ],
+        'site_id' => requested_site_id(),
+    ];
+}
+
+function save_site_menu(PDO $pdo, string $menuKey, array $data): array
+{
+    $menuKey = strtolower(trim($menuKey));
+    $items = normalize_menu_items(is_array($data['items'] ?? null) ? $data['items'] : []);
+    $settings = site_settings($pdo);
+    if (in_array($menuKey, ['primary', 'main', 'header'], true)) {
+        $settings['nav'] = $items;
+        $menuKey = 'primary';
+    } elseif ($menuKey === 'footer') {
+        $settings['footer_nav'] = $items;
+        $settings['menus'] = is_array($settings['menus'] ?? null) ? $settings['menus'] : [];
+        $settings['menus']['footer'] = $items;
+    } else {
+        $settings['menus'] = is_array($settings['menus'] ?? null) ? $settings['menus'] : [];
+        $settings['menus'][$menuKey] = $items;
+    }
+    $settings = save_site_settings($pdo, $settings);
+    return [
+        'menu' => [
+            'menu_key' => $menuKey,
+            'title' => $menuKey === 'footer' ? '底部导航' : ($menuKey === 'primary' ? '顶部导航' : $menuKey),
+            'items' => $items,
+        ],
+        'menus' => site_menus($pdo),
+        'site' => sanitize_site_settings_for_response($settings),
+    ];
+}
+
 function preserve_service_configs(array $incoming, array $current): array
 {
     unset($incoming['_preserve_service_configs']);
@@ -8112,6 +8194,16 @@ try {
         ok(list_deploy_tasks(main_pdo()));
     }
 
+    if ($method === 'GET' && $path === '/platform/publish-tasks') {
+        ok(list_deploy_tasks(main_pdo()));
+    }
+
+    if ($params = route_param('/platform/publish-tasks/{id}', $path)) {
+        if ($method === 'GET') {
+            ok(get_deploy_task(main_pdo(), (int)$params['id']));
+        }
+    }
+
     if ($method === 'GET' && $path === '/platform/domain-applications') {
         ok(list_domain_applications(main_pdo(), $user, true));
     }
@@ -8267,6 +8359,16 @@ try {
 
     if ($method === 'GET' && $path === '/site/settings') {
         ok(sanitize_site_settings_for_response(site_settings($pdo)));
+    }
+
+    if ($method === 'GET' && $path === '/menus') {
+        ok(site_menus($pdo));
+    }
+
+    if ($params = route_param('/menus/{menu_key}', $path)) {
+        if ($method === 'PUT') {
+            ok(save_site_menu($pdo, (string)$params['menu_key'], body_json()), '菜单已保存');
+        }
     }
 
     if ($method === 'GET' && $path === '/site/pages') {
