@@ -65,7 +65,7 @@
       "description": "Contact and cooperation-intent entry.",
       "scope": "home",
       "source_file": "mirror/cn.html",
-      "selectors": ["[class*=contact]", "[id*=contact]", "form"],
+      "selectors": ["#about", ".footer-band", ".nav-trigger"],
       "editable_fields": ["text", "link", "visibility", "sort_order"],
       "sort_order": 60
     },
@@ -82,4 +82,3 @@
     }
   ]
 }
-

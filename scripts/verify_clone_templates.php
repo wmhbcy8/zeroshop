@@ -19,6 +19,7 @@ $failed = false;
 $rows = [];
 foreach ($templates as $key => $rules) {
     $out = $root . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'template_previews' . DIRECTORY_SEPARATOR . 'verify_' . $key;
+    $templateRoot = $root . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . $key;
     remove_path($out);
     putenv('HJ_TEMPLATE_KEY=' . $key);
     putenv('HJ_PUBLIC_PATH=' . $out);
@@ -31,6 +32,7 @@ foreach ($templates as $key => $rules) {
     $html = is_file($index) ? (string)file_get_contents($index) : '';
     $assetCheck = verify_local_assets($out);
     $pageCheck = verify_html_pages($out);
+    $regionCheck = verify_editable_regions($templateRoot);
     preg_match('/<title>(.*?)<\/title>/is', $html, $titleMatch);
     $row = [
         'key' => $key,
@@ -40,6 +42,8 @@ foreach ($templates as $key => $rules) {
         'html_pages' => $pageCheck['pages'],
         'empty_titles' => count($pageCheck['empty_titles']),
         'dirty_pages' => count($pageCheck['dirty_pages']),
+        'editable_regions' => $regionCheck['regions'],
+        'unmatched_regions' => count($regionCheck['unmatched']),
         'asset_refs' => $assetCheck['checked'],
         'missing_assets' => count($assetCheck['missing']),
         'external_refs' => count($assetCheck['external']),
@@ -54,6 +58,8 @@ foreach ($templates as $key => $rules) {
         && $row['html_pages'] >= (int)$rules['min_pages']
         && $row['empty_titles'] === 0
         && $row['dirty_pages'] === 0
+        && $row['editable_regions'] > 0
+        && $row['unmatched_regions'] === 0
         && $row['missing_assets'] === 0
         && !$row['redirect']
         && !$row['zeroshop']
@@ -62,6 +68,7 @@ foreach ($templates as $key => $rules) {
     $row['external_examples'] = array_slice($assetCheck['external'], 0, 3);
     $row['empty_title_examples'] = array_slice($pageCheck['empty_titles'], 0, 3);
     $row['dirty_page_examples'] = array_slice($pageCheck['dirty_pages'], 0, 3);
+    $row['unmatched_region_examples'] = array_slice($regionCheck['unmatched'], 0, 3);
     $failed = $failed || !$row['ok'];
     $rows[] = $row;
 }
@@ -71,7 +78,7 @@ putenv('HJ_SITE_ID');
 
 foreach ($rows as $row) {
     echo sprintf(
-        "%s\t%s\tlen=%d\timg=%d\tpages=%d\temptyTitle=%d\tdirty=%d\tassets=%d\tmissing=%d\texternal=%d\tredirect=%s\tzeroshop=%s\tok=%s\n",
+        "%s\t%s\tlen=%d\timg=%d\tpages=%d\temptyTitle=%d\tdirty=%d\tregions=%d\tunmatched=%d\tassets=%d\tmissing=%d\texternal=%d\tredirect=%s\tzeroshop=%s\tok=%s\n",
         $row['key'],
         $row['title'],
         $row['length'],
@@ -79,6 +86,8 @@ foreach ($rows as $row) {
         $row['html_pages'],
         $row['empty_titles'],
         $row['dirty_pages'],
+        $row['editable_regions'],
+        $row['unmatched_regions'],
         $row['asset_refs'],
         $row['missing_assets'],
         $row['external_refs'],
@@ -97,6 +106,9 @@ foreach ($rows as $row) {
     }
     foreach ($row['dirty_page_examples'] as $page) {
         echo "  dirty-page: {$page}\n";
+    }
+    foreach ($row['unmatched_region_examples'] as $region) {
+        echo "  unmatched-region: {$region}\n";
     }
 }
 
@@ -200,6 +212,127 @@ function verify_html_pages(string $root): array
         'empty_titles' => $emptyTitles,
         'dirty_pages' => $dirtyPages,
     ];
+}
+
+function verify_editable_regions(string $templateRoot): array
+{
+    $path = $templateRoot . DIRECTORY_SEPARATOR . 'editable-regions.json';
+    if (!is_file($path)) {
+        return ['regions' => 0, 'unmatched' => ['missing editable-regions.json']];
+    }
+    $payload = json_decode((string)file_get_contents($path), true);
+    if (!is_array($payload)) {
+        return ['regions' => 0, 'unmatched' => ['invalid editable-regions.json']];
+    }
+    $regions = $payload['regions'] ?? $payload;
+    if (!is_array($regions) || !$regions) {
+        return ['regions' => 0, 'unmatched' => ['empty editable regions']];
+    }
+    $unmatched = [];
+    foreach ($regions as $region) {
+        if (!is_array($region)) {
+            continue;
+        }
+        $id = (string)($region['id'] ?? $region['module'] ?? 'region');
+        $source = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, (string)($region['source_file'] ?? ''));
+        $sourcePath = $templateRoot . DIRECTORY_SEPARATOR . $source;
+        if ($source === '' || str_contains($source, '..') || !is_file($sourcePath)) {
+            $unmatched[] = $id . ' -> missing source file';
+            continue;
+        }
+        $selectors = $region['selectors'] ?? ($region['selector'] ?? []);
+        if (is_string($selectors)) {
+            $selectors = [$selectors];
+        }
+        if (!is_array($selectors) || !$selectors) {
+            $unmatched[] = $id . ' -> no selectors';
+            continue;
+        }
+        $html = (string)file_get_contents($sourcePath);
+        if (!html_has_matching_selector($html, $selectors)) {
+            $unmatched[] = $id . ' -> ' . implode(' | ', array_map('strval', $selectors));
+        }
+    }
+    return [
+        'regions' => count($regions),
+        'unmatched' => $unmatched,
+    ];
+}
+
+function html_has_matching_selector(string $html, array $selectors): bool
+{
+    if (!class_exists('DOMDocument')) {
+        return true;
+    }
+    $dom = new DOMDocument('1.0', 'UTF-8');
+    libxml_use_internal_errors(true);
+    $loaded = $dom->loadHTML('<?xml encoding="UTF-8">' . $html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+    libxml_clear_errors();
+    if (!$loaded) {
+        return false;
+    }
+    $xpath = new DOMXPath($dom);
+    foreach ($selectors as $selector) {
+        $query = css_selector_to_xpath((string)$selector);
+        if (!$query) {
+            continue;
+        }
+        $nodes = $xpath->query($query);
+        if ($nodes && $nodes->length > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function css_selector_to_xpath(string $selector): ?string
+{
+    $selector = trim($selector);
+    if ($selector === '' || str_contains($selector, ',') || str_contains($selector, '>')) {
+        return null;
+    }
+    $parts = preg_split('/\s+/', $selector) ?: [];
+    $query = '';
+    foreach ($parts as $part) {
+        $part = trim($part);
+        if ($part === '') {
+            continue;
+        }
+        $step = selector_part_to_xpath($part);
+        if ($step === null) {
+            return null;
+        }
+        $query .= '//' . $step;
+    }
+    return $query ?: null;
+}
+
+function selector_part_to_xpath(string $part): ?string
+{
+    if (preg_match('/^\[([a-zA-Z0-9_-]+)\*=["\']?([^"\']+)["\']?\]$/', $part, $match)) {
+        return '*[contains(@' . strtolower($match[1]) . ', "' . xpath_literal($match[2]) . '")]';
+    }
+    if (preg_match('/^#([a-zA-Z0-9_-]+)$/', $part, $match)) {
+        return '*[@id="' . xpath_literal($match[1]) . '"]';
+    }
+    if (preg_match('/^([a-zA-Z][a-zA-Z0-9_-]*)?((?:\.[a-zA-Z0-9_-]+)+)$/', $part, $match)) {
+        $tag = $match[1] !== '' ? strtolower($match[1]) : '*';
+        preg_match_all('/\.([a-zA-Z0-9_-]+)/', $match[2], $classes);
+        $conditions = [];
+        foreach ($classes[1] as $className) {
+            $conditions[] = 'contains(concat(" ", normalize-space(@class), " "), " ' . xpath_literal($className) . ' ")';
+        }
+        return $tag . '[' . implode(' and ', $conditions) . ']';
+    }
+    if (preg_match('/^[a-zA-Z][a-zA-Z0-9_-]*$/', $part)) {
+        return strtolower($part);
+    }
+    return null;
+}
+
+function xpath_literal(string $value): string
+{
+    return str_replace('"', '\"', $value);
 }
 
 function extract_html_refs(string $html): array
