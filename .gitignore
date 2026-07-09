@@ -13,6 +13,7 @@
 /storage/deploy_backups/
 /storage/build/
 /storage/secret.key
+/storage/template_states.json
 /*.png
 
 config/database.local.php

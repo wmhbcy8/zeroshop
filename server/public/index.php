@@ -264,6 +264,7 @@ function template_registry(): array
 {
     $root = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'templates';
     $items = [];
+    $states = template_states();
     if (!is_dir($root)) {
         return ['items' => []];
     }
@@ -282,10 +283,34 @@ function template_registry(): array
             'supports' => $data['supports'] ?? [],
             'entry' => (string)($data['entry'] ?? ''),
             'path' => 'templates/' . basename(dirname($path)),
+            'status' => (string)($states[$key]['status'] ?? 'enabled'),
+            'updated_at' => (string)($states[$key]['updated_at'] ?? ''),
         ];
     }
     usort($items, fn($a, $b) => strcmp((string)$a['key'], (string)$b['key']));
     return ['items' => $items];
+}
+
+function template_state_path(): string
+{
+    return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'template_states.json';
+}
+
+function template_states(): array
+{
+    $path = template_state_path();
+    if (!is_file($path)) {
+        return [];
+    }
+    $data = json_decode((string)file_get_contents($path), true);
+    return is_array($data) ? $data : [];
+}
+
+function save_template_states(array $states): void
+{
+    $path = template_state_path();
+    ensure_dir(dirname($path));
+    file_put_contents($path, json_encode($states, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 }
 
 function template_item(string $key): array
@@ -299,9 +324,27 @@ function template_item(string $key): array
     fail('模板不存在', 'NOT_FOUND', 404);
 }
 
+function set_template_status(string $key, string $status): array
+{
+    $template = template_item($key);
+    if (!in_array($status, ['enabled', 'disabled', 'archived'], true)) {
+        fail('模板状态不正确', 'VALIDATION_ERROR', 422);
+    }
+    $states = template_states();
+    $states[(string)$template['key']] = [
+        'status' => $status,
+        'updated_at' => now(),
+    ];
+    save_template_states($states);
+    return template_item((string)$template['key']);
+}
+
 function activate_site_template(PDO $main, PDO $sitePdo, string $key): array
 {
     $template = template_item($key);
+    if (($template['status'] ?? 'enabled') !== 'enabled') {
+        fail('模板未启用，无法应用到站点', 'TEMPLATE_DISABLED', 422);
+    }
     $siteId = requested_site_id();
     $settings = site_settings($sitePdo, $siteId);
     $settings['template_key'] = (string)$template['key'];
@@ -8385,6 +8428,28 @@ try {
 
     if ($method === 'GET' && $path === '/platform/templates') {
         ok(template_registry());
+    }
+
+    if ($params = route_param('/platform/templates/{key}', $path)) {
+        $key = (string)$params['key'];
+        if ($method === 'GET') {
+            ok(template_item($key));
+        }
+        if ($method === 'DELETE') {
+            ok(set_template_status($key, 'archived'), '模板已归档');
+        }
+    }
+
+    if ($params = route_param('/platform/templates/{key}/enable', $path)) {
+        if ($method === 'POST') {
+            ok(set_template_status((string)$params['key'], 'enabled'), '模板已启用');
+        }
+    }
+
+    if ($params = route_param('/platform/templates/{key}/disable', $path)) {
+        if ($method === 'POST') {
+            ok(set_template_status((string)$params['key'], 'disabled'), '模板已停用');
+        }
     }
 
     if ($method === 'GET' && $path === '/platform/deploy-tasks') {

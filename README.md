@@ -210,6 +210,10 @@ GET              /api/templates/{key}
 GET              /api/templates/{key}/preview
 POST             /api/templates/{key}/activate
 GET              /api/platform/templates
+GET              /api/platform/templates/{key}
+POST             /api/platform/templates/{key}/enable
+POST             /api/platform/templates/{key}/disable
+DELETE           /api/platform/templates/{key}
 GET/PUT/DELETE   /api/platform/sites/{id}
 GET              /api/dashboard/metrics
 GET/POST         /api/articles
