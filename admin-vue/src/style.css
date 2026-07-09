@@ -1075,6 +1075,24 @@ body {
   gap: 8px;
   flex-shrink: 0;
 }
+.ai-draft-target {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed #bfdbfe;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+.ai-draft-target span,
+.ai-draft-target small {
+  color: var(--hj-muted);
+  line-height: 1.5;
+}
+.ai-draft-target strong {
+  color: var(--hj-text);
+  font-size: 14px;
+}
 .ai-draft-card p {
   margin: 12px 0 8px;
   color: var(--hj-muted);

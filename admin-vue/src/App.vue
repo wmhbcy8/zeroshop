@@ -1169,7 +1169,7 @@
                     type="info"
                     show-icon
                     :closable="false"
-                    :title="`AI 生成内容会进入中台内容库，并发布到：${contentSiteLabel(siteIdsForScope(aiForm.site_scope, aiForm.site_ids))}`"
+                    :title="`AI 生成内容会进入中台内容库，目标范围：${contentSiteLabel(siteIdsForScope(aiForm.site_scope, aiForm.site_ids))}。草稿只绑定站点不前台展示，发布后会自动生成对应静态站。`"
                   />
                   <el-form-item label="内容类型">
                     <el-segmented v-model="aiForm.type" :options="[{ label: '文章', value: 'article' }, { label: '商品', value: 'product' }]" />
@@ -1243,8 +1243,13 @@
                       <div class="ai-draft-actions">
                         <el-button size="small" :loading="aiCoverLoading === item.local_id" @click="generateAiCover(item)">生成封面</el-button>
                         <el-button size="small" @click="saveAiDraft(item, index, 'draft')">存草稿</el-button>
-                        <el-button size="small" type="primary" @click="saveAiDraft(item, index, 'published')">直接发布</el-button>
+                        <el-button size="small" type="primary" @click="saveAiDraft(item, index, 'published')">发布到目标站</el-button>
                       </div>
+                    </div>
+                    <div class="ai-draft-target">
+                      <span>目标范围</span>
+                      <strong>{{ contentSiteLabel(siteIdsForScope(aiForm.site_scope, aiForm.site_ids)) }}</strong>
+                      <small>{{ aiForm.status === 'published' ? '发布后立即生成对应静态站' : '先入库为草稿，后续可在文章/商品页再发布' }}</small>
                     </div>
                     <img v-if="item.cover" class="ai-cover" :src="item.cover.startsWith('/') ? item.cover : '/' + item.cover" />
                     <p>{{ item.summary }}</p>
@@ -1323,7 +1328,7 @@
                   type="warning"
                   show-icon
                   :closable="false"
-                  title="中台只保存一份内容，发布范围决定它同步到哪些静态站。修改范围后，需要重新生成静态站，前台才会更新。"
+                  title="中台只保存一份内容，发布范围决定它同步到哪些静态站。当前页面的预览、任务、批量入库、单条保存都走同一套范围。"
                 />
                 <div class="content-publish-rule-list mt16">
                   <article v-for="item in contentPublishRules" :key="item.title">
