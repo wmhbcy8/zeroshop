@@ -1357,6 +1357,7 @@
             @delete="deleteArticle"
             @ai="generateArticleDraft"
             @bulk-distribute="bulkDistributeArticles"
+            @bulk-publish="bulkPublishArticles"
             @publish-status="publishArticleStatus"
             @page-change="changeArticlePage"
             @scope-change="changeContentListScope"
@@ -1434,6 +1435,7 @@
             @delete="deletePage"
             @ai="generatePageDraft"
             @bulk-distribute="bulkDistributePages"
+            @bulk-publish="bulkPublishPages"
             @publish-status="publishPageStatus"
             @page-change="changePagePage"
             @scope-change="changeContentListScope"
@@ -1460,6 +1462,7 @@
             @delete="deleteProduct"
             @ai="generateProductDraft"
             @bulk-distribute="bulkDistributeProducts"
+            @bulk-publish="bulkPublishProducts"
             @publish-status="publishProductStatus"
             @page-change="changeProductPage"
             @scope-change="changeContentListScope"
@@ -4331,6 +4334,40 @@ async function bulkDistributeContent(type: 'article' | 'product' | 'page', paylo
   await syncGeneratedSitesForContent(site_ids, `${items.length} 条内容分发范围更新`)
 }
 
+async function bulkPublishContent(type: 'article' | 'product' | 'page', payload: any, reload: () => Promise<void>) {
+  const items = Array.isArray(payload?.items) ? payload.items : []
+  if (!items.length) {
+    ElMessage.warning('请先选择需要处理的内容')
+    return
+  }
+  const site_scope = payload.site_scope || 'current'
+  if (!ensureSelectedSiteScope(site_scope, payload.site_ids, '批量发布范围')) return
+  const site_ids = siteIdsForScope(site_scope, payload.site_ids)
+  const action = payload.action === 'draft' ? 'draft' : 'publish'
+  const actionText = action === 'publish' ? '发布' : '转为草稿'
+  await ElMessageBox.confirm(`确定将 ${items.length} 条${type === 'article' ? '文章' : type === 'product' ? '商品' : '页面'}${actionText}到：${contentSiteLabel(site_ids)}？`)
+  if (type === 'article' || type === 'product') {
+    const endpoint = type === 'article' ? '/api/articles/batch-publish' : '/api/products/batch-publish'
+    await request(endpoint, {
+      method: 'POST',
+      data: {
+        ids: items.map((item: any) => item.id),
+        action,
+        site_scope,
+        site_ids
+      }
+    })
+  } else {
+    await Promise.all(items.map((item: any) => request(`/api/pages/${item.id}/publish`, {
+      method: 'POST',
+      data: { action, site_scope, site_ids }
+    })))
+  }
+  ElMessage.success(`已${actionText} ${items.length} 条内容`)
+  await Promise.all([reload(), loadDashboard(), loadSites()])
+  await syncGeneratedSitesForContent(site_ids, `${items.length} 条内容${actionText}后自动生成`)
+}
+
 async function publishContentStatus(type: 'article' | 'product' | 'page', item: any, action: 'publish' | 'draft', reload: () => Promise<void>) {
   const endpoint = type === 'article' ? '/api/articles' : type === 'product' ? '/api/products' : '/api/pages'
   const site_ids = item.site_ids?.length ? item.site_ids : currentSiteIds()
@@ -4428,6 +4465,10 @@ async function bulkDistributePages(payload: any) {
   await bulkDistributeContent('page', payload, loadPages)
   await loadStaticPages()
 }
+async function bulkPublishPages(payload: any) {
+  await bulkPublishContent('page', payload, loadPages)
+  await loadStaticPages()
+}
 async function publishPageStatus(item: any, action: 'publish' | 'draft') {
   await publishContentStatus('page', item, action, loadPages)
   await loadStaticPages()
@@ -4463,6 +4504,10 @@ async function saveArticle() {
 async function bulkDistributeArticles(payload: any) {
   await bulkDistributeContent('article', payload, loadArticles)
 }
+async function bulkPublishArticles(payload: any) {
+  await bulkPublishContent('article', payload, loadArticles)
+  await loadTags()
+}
 async function publishArticleStatus(item: any, action: 'publish' | 'draft') {
   await publishContentStatus('article', item, action, loadArticles)
   await loadTags()
@@ -4493,6 +4538,9 @@ async function saveProduct() {
 }
 async function bulkDistributeProducts(payload: any) {
   await bulkDistributeContent('product', payload, loadProducts)
+}
+async function bulkPublishProducts(payload: any) {
+  await bulkPublishContent('product', payload, loadProducts)
 }
 async function publishProductStatus(item: any, action: 'publish' | 'draft') {
   await publishContentStatus('product', item, action, loadProducts)

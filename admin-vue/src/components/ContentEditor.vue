@@ -47,7 +47,7 @@
       <div class="content-distribution-bar">
         <div>
           <strong>批量发布范围</strong>
-          <small>内容在中台只保存一份，发布范围决定它同步到哪些前台静态站。</small>
+          <small>先选择目标站点，再对选中内容批量分发、发布或转草稿。</small>
         </div>
         <el-radio-group v-model="bulkForm.site_scope" size="small" @change="syncBulkScope">
           <el-radio-button value="current">当前站点</el-radio-button>
@@ -67,7 +67,13 @@
           <el-option v-for="site in sites" :key="site.id" :label="site.name" :value="site.id" />
         </el-select>
         <el-button type="primary" :disabled="!selectedRows.length" @click="applyBulkDistribution">
-          应用到 {{ selectedRows.length }} 条
+          分发到 {{ selectedRows.length }} 条
+        </el-button>
+        <el-button type="success" :disabled="!selectedRows.length" @click="applyBulkPublish('publish')">
+          发布 {{ selectedRows.length }} 条
+        </el-button>
+        <el-button :disabled="!selectedRows.length" @click="applyBulkPublish('draft')">
+          转草稿
         </el-button>
       </div>
 
@@ -200,7 +206,7 @@ const props = defineProps<{
   listSiteScope?: string
 }>()
 
-const emit = defineEmits(['new', 'edit', 'save', 'delete', 'ai', 'page-change', 'bulk-distribute', 'publish-status', 'scope-change'])
+const emit = defineEmits(['new', 'edit', 'save', 'delete', 'ai', 'page-change', 'bulk-distribute', 'bulk-publish', 'publish-status', 'scope-change'])
 
 const prompt = ref('')
 const drawerVisible = ref(false)
@@ -268,16 +274,36 @@ watch(
 )
 
 function applyBulkDistribution() {
-  if (bulkForm.value.site_scope === 'selected' && !(bulkForm.value.site_ids || []).length) {
-    ElMessage.warning('请先选择至少一个目标站点')
-    return
-  }
+  if (!ensureBulkScope()) return
   syncBulkScope()
   emit('bulk-distribute', {
     items: selectedRows.value,
     site_scope: bulkForm.value.site_scope,
     site_ids: bulkForm.value.site_ids
   })
+}
+
+function applyBulkPublish(action: 'publish' | 'draft') {
+  if (!ensureBulkScope()) return
+  syncBulkScope()
+  emit('bulk-publish', {
+    items: selectedRows.value,
+    action,
+    site_scope: bulkForm.value.site_scope,
+    site_ids: bulkForm.value.site_ids
+  })
+}
+
+function ensureBulkScope() {
+  if (!selectedRows.value.length) {
+    ElMessage.warning('请先选择需要处理的内容')
+    return false
+  }
+  if (bulkForm.value.site_scope === 'selected' && !(bulkForm.value.site_ids || []).length) {
+    ElMessage.warning('请先选择至少一个目标站点')
+    return false
+  }
+  return true
 }
 
 function siteNames(row: any) {

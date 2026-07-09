@@ -6056,6 +6056,40 @@ function publish_content_item(PDO $pdo, string $type, int $id, array $data = [])
     return $item;
 }
 
+function batch_publish_content_items(PDO $pdo, string $type, array $data): array
+{
+    $ids = $data['ids'] ?? $data['items'] ?? [];
+    if (!is_array($ids)) {
+        $ids = [$ids];
+    }
+    $ids = array_values(array_unique(array_filter(array_map(function ($item) {
+        if (is_array($item)) {
+            return (int)($item['id'] ?? 0);
+        }
+        return (int)$item;
+    }, $ids), fn($id) => $id > 0)));
+    if (!$ids) {
+        fail('请选择需要发布的内容', 'VALIDATION_ERROR', 422);
+    }
+    if (count($ids) > 200) {
+        fail('单次最多处理 200 条内容', 'VALIDATION_ERROR', 422);
+    }
+    $siteIds = normalize_site_ids($data);
+    $items = [];
+    foreach ($ids as $id) {
+        $items[] = publish_content_item($pdo, $type, $id, [
+            'action' => $data['action'] ?? $data['status'] ?? 'publish',
+            'site_scope' => $data['site_scope'] ?? 'selected',
+            'site_ids' => $siteIds,
+        ]);
+    }
+    return [
+        'count' => count($items),
+        'site_ids' => $siteIds,
+        'items' => $items,
+    ];
+}
+
 function ensure_collector_tables(PDO $pdo): void
 {
     $pdo->exec("CREATE TABLE IF NOT EXISTS collector_sources (
@@ -8687,6 +8721,10 @@ try {
         ok(['id' => $id], '创建成功');
     }
 
+    if ($method === 'POST' && $path === '/articles/batch-publish') {
+        ok(batch_publish_content_items($pdo, 'article', body_json()), '文章批量发布完成');
+    }
+
     if ($params = route_param('/articles/{id}/publish', $path)) {
         if ($method === 'POST') {
             $item = publish_content_item($pdo, 'article', (int)$params['id'], body_json());
@@ -8753,6 +8791,10 @@ try {
         $id = insert_product($pdo, $data);
         sync_content_distribution($pdo, 'product', $id, normalize_site_ids($data));
         ok(['id' => $id], '创建成功');
+    }
+
+    if ($method === 'POST' && $path === '/products/batch-publish') {
+        ok(batch_publish_content_items($pdo, 'product', body_json()), '商品批量发布完成');
     }
 
     if ($params = route_param('/products/{id}/publish', $path)) {
