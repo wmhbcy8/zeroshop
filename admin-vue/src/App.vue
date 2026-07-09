@@ -2302,6 +2302,75 @@
         </section>
 
         <section v-if="view === 'tasks'">
+          <el-card class="panel mb16" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>中台任务流</strong>
+                <div class="head-actions">
+                  <el-button @click="loadTaskStream">刷新任务流</el-button>
+                </div>
+              </div>
+            </template>
+            <el-alert class="mb16" type="info" show-icon :closable="false" title="这里把 AI 任务、批量发布、部署任务和模板克隆统一成一条中台任务流，方便客户一次查看所有站点的关键执行过程。" />
+            <div class="metric-grid mb16">
+              <MetricCard title="任务流总数" :value="taskStreamOverview.total || 0" note="当前筛选范围" icon="List" />
+              <MetricCard title="成功任务" :value="taskStreamOverview.success || 0" note="已完成或已确认" icon="CircleCheck" />
+              <MetricCard title="待处理任务" :value="taskStreamOverview.pending || 0" note="待确认、待执行或运行中" icon="Clock" />
+              <MetricCard title="失败任务" :value="taskStreamOverview.failed || 0" note="需排查或重试" icon="Warning" />
+              <MetricCard title="AI任务" :value="taskStreamOverview.ai || 0" note="内容生成和确认入库" icon="MagicStick" />
+              <MetricCard title="部署任务" :value="taskStreamOverview.deploy || 0" note="发布包、同步和重试" icon="Upload" />
+            </div>
+            <div class="task-toolbar">
+              <el-select v-model="taskStreamFilters.source" clearable placeholder="任务来源" @change="applyTaskStreamFilters">
+                <el-option label="批量任务" value="batch" />
+                <el-option label="部署任务" value="deploy" />
+                <el-option label="AI 任务" value="ai" />
+                <el-option v-if="isPlatformAdmin" label="模板任务" value="template" />
+              </el-select>
+              <el-select v-model="taskStreamFilters.status" clearable placeholder="任务状态" @change="applyTaskStreamFilters">
+                <el-option label="成功" value="success" />
+                <el-option label="等待/运行" value="pending" />
+                <el-option label="部分成功" value="partial" />
+                <el-option label="失败" value="failed" />
+              </el-select>
+              <el-select v-model="taskStreamFilters.site_id" placeholder="站点范围" @change="applyTaskStreamFilters">
+                <el-option label="全部站点" value="all" />
+                <el-option v-for="item in sites" :key="item.id" :label="item.name" :value="String(item.id)" />
+              </el-select>
+              <el-input v-model="taskStreamFilters.keyword" clearable placeholder="搜索任务号/站点/说明" @keyup.enter="applyTaskStreamFilters" />
+              <el-button type="primary" @click="applyTaskStreamFilters">筛选</el-button>
+              <el-button @click="resetTaskStreamFilters">重置</el-button>
+            </div>
+            <el-table :data="taskStream" height="430" row-key="task_no">
+              <el-table-column label="任务" min-width="280">
+                <template #default="{ row }">
+                  <strong>{{ row.title }}</strong><br />
+                  <small>{{ row.task_no }} · {{ row.source_label }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column label="站点" min-width="180">
+                <template #default="{ row }"><small>{{ row.site_names?.length ? row.site_names.join('、') : '平台任务' }}</small></template>
+              </el-table-column>
+              <el-table-column label="状态" width="120">
+                <template #default="{ row }"><el-tag :type="taskStreamTag(row.status_group)">{{ taskStreamStatusLabel(row) }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="进度" width="130">
+                <template #default="{ row }">{{ row.progress?.success || 0 }}/{{ row.progress?.total || 0 }}</template>
+              </el-table-column>
+              <el-table-column prop="summary" label="说明" min-width="240" />
+              <el-table-column prop="created_at" label="创建时间" width="170" />
+            </el-table>
+            <el-pagination
+              class="table-pager"
+              layout="sizes, prev, pager, next, total"
+              :current-page="taskStreamPager.page"
+              :page-size="taskStreamPager.page_size"
+              :page-sizes="[10, 20, 50]"
+              :total="taskStreamPager.total"
+              @current-change="changeTaskStreamPage"
+              @size-change="changeTaskStreamPageSize"
+            />
+          </el-card>
           <el-card class="panel" shadow="never">
             <template #header>
               <div class="card-head">
@@ -2489,11 +2558,13 @@ const paymentProofs = ref<any[]>([])
 const seoAudit = ref<any>({})
 const versions = ref<any[]>([])
 const batchTasks = ref<any[]>([])
+const taskStream = ref<any[]>([])
 const deployTasks = ref<any[]>([])
 const deployPlan = ref<any>(null)
 const siteBackups = ref<any[]>([])
 const operationLogs = ref<any[]>([])
 const batchTaskOverview = ref<any>({})
+const taskStreamOverview = ref<any>({})
 const quota = ref<any>({})
 const sites = ref<any[]>([])
 const centerOverview = ref<any>({})
@@ -2548,6 +2619,7 @@ const formFilters = reactive({ keyword: '', status: '' })
 const collectorFilters = reactive({ keyword: '', status: '' })
 const mediaFilters = reactive({ keyword: '', file_type: '' })
 const taskFilters = reactive({ action: '', status: '', date: '' })
+const taskStreamFilters = reactive({ source: '', status: '', site_id: 'all', keyword: '' })
 const paymentEventFilters = reactive({ keyword: '', payment_status: '' })
 const paymentProofFilters = reactive({ keyword: '', status: 'pending' })
 const logFilters = reactive({ keyword: '', method: '', site_id: 'all' })
@@ -2632,6 +2704,7 @@ const collectorSourcePager = reactive({ page: 1, page_size: 10, total: 0 })
 const collectorRecordPager = reactive({ page: 1, page_size: 10, total: 0 })
 const aiTaskPager = reactive({ page: 1, page_size: 10, total: 0 })
 const taskPager = reactive({ page: 1, page_size: 10, total: 0 })
+const taskStreamPager = reactive({ page: 1, page_size: 10, total: 0 })
 const paymentEventPager = reactive({ page: 1, page_size: 10, total: 0 })
 const paymentProofPager = reactive({ page: 1, page_size: 10, total: 0 })
 const logPager = reactive({ page: 1, page_size: 20, total: 0 })
@@ -2669,7 +2742,7 @@ const navItems = [
   { key: 'orders', label: '订单', hint: '处理支付、发货和订单跟进。', icon: 'ShoppingCart' },
   { key: 'service', label: '服务', hint: '集中处理客户服务请求。', icon: 'Service' },
   { key: 'payments', label: '支付', hint: '统一配置收款通道并分配到各站点。', icon: 'Money' },
-  { key: 'tasks', label: '任务', hint: '查看批量生成、发布和部署检查的执行记录。', icon: 'List' },
+  { key: 'tasks', label: '任务', hint: '统一查看 AI、批量发布、模板克隆和部署检查的执行记录。', icon: 'List' },
   { key: 'logs', label: '日志', hint: '查看后台、中台关键写操作的审计记录。', icon: 'Notebook' },
   { key: 'media', label: '媒体库', hint: '上传并复用图片和文件素材。', icon: 'Picture' },
   { key: 'forms', label: '留言', hint: '处理询盘线索和联系表单。', icon: 'ChatLineRound' },
@@ -2857,7 +2930,7 @@ function setView(key: string) {
   if (key === 'orders') loadOrders()
   if (key === 'service') loadServices()
   if (key === 'payments') Promise.all([loadSettings(), loadPaymentChannels(), loadPaymentProofs(), loadPaymentEvents()])
-  if (key === 'tasks') loadBatchTasks()
+  if (key === 'tasks') Promise.all([loadTaskStream(), loadBatchTasks()])
   if (key === 'logs') loadOperationLogs()
   if (key === 'media') loadMedia()
   if (key === 'forms') loadForms()
@@ -2885,7 +2958,7 @@ function refreshCurrentView() {
     orders: loadOrders,
     service: loadServices,
     payments: async () => { await Promise.all([loadSettings(), loadPaymentChannels(), loadPaymentProofs(), loadPaymentEvents()]) },
-    tasks: loadBatchTasks,
+    tasks: async () => { await Promise.all([loadTaskStream(), loadBatchTasks()]) },
     logs: loadOperationLogs,
     media: loadMedia,
     forms: loadForms,
@@ -2928,6 +3001,7 @@ async function loadAll() {
     loadPaymentChannels(),
     loadPaymentProofs(),
     loadPaymentEvents(),
+    loadTaskStream(),
     loadBatchTasks(),
     loadDeployTasks(),
     loadSiteBackups(),
@@ -4402,7 +4476,7 @@ async function batchCreateAiContent() {
     const site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
     const data = await request(path, { method: 'POST', data: { prompt: aiForm.prompt, count: aiForm.count, status: aiForm.status, site_scope: aiForm.site_scope, site_ids } })
     ElMessage.success(`已批量生成 ${data.count || 0} 条内容`)
-    await Promise.all([loadArticles(), loadProducts(), loadDashboard(), loadSites()])
+    await Promise.all([loadArticles(), loadProducts(), loadAiTasks(), loadTaskStream(), loadDashboard(), loadSites()])
     await syncGeneratedSitesForContent(site_ids, 'AI 批量入库后自动生成')
   } finally {
     aiBatchLoading.value = false
@@ -4944,6 +5018,47 @@ async function loadBatchTasks() {
   taskPager.total = data.pagination?.total || batchTasks.value.length
 }
 
+async function loadTaskStream() {
+  const query = taskStreamQuery()
+  const data = await request(`/api/tasks/stream${query.toString() ? `?${query.toString()}` : ''}`)
+  taskStream.value = data.items || []
+  taskStreamOverview.value = data.overview || {}
+  taskStreamPager.total = data.pagination?.total || taskStream.value.length
+}
+
+function taskStreamQuery() {
+  const query = new URLSearchParams()
+  query.set('page', String(taskStreamPager.page))
+  query.set('page_size', String(taskStreamPager.page_size))
+  if (taskStreamFilters.site_id) query.set('site_id', taskStreamFilters.site_id)
+  if (taskStreamFilters.source) query.set('source', taskStreamFilters.source)
+  if (taskStreamFilters.status) query.set('status', taskStreamFilters.status)
+  if (taskStreamFilters.keyword) query.set('keyword', taskStreamFilters.keyword)
+  return query
+}
+
+function applyTaskStreamFilters() {
+  taskStreamPager.page = 1
+  loadTaskStream()
+}
+
+function resetTaskStreamFilters() {
+  Object.assign(taskStreamFilters, { source: '', status: '', site_id: 'all', keyword: '' })
+  taskStreamPager.page = 1
+  loadTaskStream()
+}
+
+function changeTaskStreamPage(page: number) {
+  taskStreamPager.page = page
+  loadTaskStream()
+}
+
+function changeTaskStreamPageSize(size: number) {
+  taskStreamPager.page_size = size
+  taskStreamPager.page = 1
+  loadTaskStream()
+}
+
 function batchTaskQuery(includePagination = true) {
   const query = new URLSearchParams()
   if (includePagination) {
@@ -5018,6 +5133,16 @@ function logMethodTag(method: string) {
 
 function deployTaskTag(status: string) {
   return status === 'success' ? 'success' : (status === 'failed' ? 'danger' : (status === 'pending' ? 'warning' : 'info'))
+}
+
+function taskStreamTag(status: string) {
+  return status === 'success' ? 'success' : (status === 'failed' ? 'danger' : (status === 'partial' ? 'warning' : 'info'))
+}
+
+function taskStreamStatusLabel(row: any) {
+  const group = row?.status_group || row?.status
+  if (row?.status === 'ready') return '就绪'
+  return ({ success: '成功', failed: '失败', partial: '部分成功', pending: '等待/运行' } as any)[group] || row?.status || '-'
 }
 
 function deployStepTag(status: string) {

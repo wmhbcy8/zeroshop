@@ -2078,6 +2078,187 @@ function list_batch_tasks(PDO $main): array
     ];
 }
 
+function task_stream_status_tag(string $status): string
+{
+    return match ($status) {
+        'success', 'confirmed', 'approved', 'converted', 'ready' => 'success',
+        'failed', 'rejected', 'discarded', 'error' => 'failed',
+        'partial' => 'partial',
+        'running', 'pending', 'submitted', 'draft', 'rewritten' => 'pending',
+        default => $status ?: 'pending',
+    };
+}
+
+function task_stream_item(string $source, array $row, array $siteMap = []): array
+{
+    $siteIds = [];
+    if (!empty($row['site_ids']) && is_string((string)$row['site_ids'])) {
+        $decoded = json_decode((string)$row['site_ids'], true);
+        if (is_array($decoded)) {
+            $siteIds = array_values(array_filter(array_map('intval', $decoded), fn($id) => $id > 0));
+        }
+    }
+    if (!$siteIds && !empty($row['site_id'])) {
+        $siteIds = [(int)$row['site_id']];
+    }
+    $siteNames = [];
+    foreach ($siteIds as $siteId) {
+        $siteNames[] = $siteMap[$siteId] ?? ('Site ' . $siteId);
+    }
+    $status = (string)($row['status'] ?? 'pending');
+    $createdAt = (string)($row['created_at'] ?? $row['started_at'] ?? $row['updated_at'] ?? '');
+    $updatedAt = (string)($row['updated_at'] ?? $row['finished_at'] ?? $createdAt);
+    $base = [
+        'source' => $source,
+        'source_label' => [
+            'batch' => '批量任务',
+            'deploy' => '部署任务',
+            'ai' => 'AI 任务',
+            'template' => '模板任务',
+        ][$source] ?? $source,
+        'id' => (int)($row['id'] ?? 0),
+        'task_no' => (string)($row['task_no'] ?? ($source . '-' . (string)($row['id'] ?? ''))),
+        'type' => (string)($row['action'] ?? $row['task_type'] ?? 'task'),
+        'status' => $status,
+        'status_group' => task_stream_status_tag($status),
+        'site_ids' => $siteIds,
+        'site_names' => $siteNames,
+        'created_at' => $createdAt,
+        'updated_at' => $updatedAt,
+        'finished_at' => (string)($row['finished_at'] ?? ''),
+        'message' => (string)($row['message'] ?? ''),
+        'summary' => '',
+        'raw' => $row,
+    ];
+    if ($source === 'batch') {
+        $summary = json_decode((string)($row['summary'] ?? ''), true);
+        $base['title'] = '批量' . (string)($row['action'] ?? '任务') . '：' . (int)($row['success_count'] ?? 0) . '/' . (int)($row['total_count'] ?? 0) . ' 成功';
+        $base['summary'] = (string)($summary['message'] ?? '');
+        $base['progress'] = [
+            'total' => (int)($row['total_count'] ?? 0),
+            'success' => (int)($row['success_count'] ?? 0),
+            'failed' => (int)($row['failed_count'] ?? 0),
+        ];
+    } elseif ($source === 'deploy') {
+        $base['title'] = '部署' . (string)($row['action'] ?? '任务') . '：' . (string)($row['site_name'] ?? ($siteNames[0] ?? '-'));
+        $base['summary'] = (string)($row['message'] ?? $row['target_path'] ?? '');
+        $base['progress'] = ['total' => 1, 'success' => $status === 'success' ? 1 : 0, 'failed' => $status === 'failed' ? 1 : 0];
+    } elseif ($source === 'ai') {
+        $base['title'] = (string)($row['prompt'] ?? 'AI 任务');
+        $base['summary'] = (string)($row['message'] ?? '');
+        $base['progress'] = ['total' => (int)($row['success_count'] ?? 0), 'success' => (int)($row['success_count'] ?? 0), 'failed' => $status === 'failed' ? 1 : 0];
+    } else {
+        $base['title'] = (string)($row['template_name'] ?? $row['source_title'] ?? $row['target_url'] ?? '模板任务');
+        $base['summary'] = (string)($row['message'] ?? $row['target_url'] ?? '');
+        $base['progress'] = ['total' => 1, 'success' => $status === 'success' ? 1 : 0, 'failed' => $status === 'failed' ? 1 : 0];
+    }
+    return $base;
+}
+
+function list_task_stream(PDO $sitePdo, PDO $main): array
+{
+    ensure_center_tables($main);
+    ensure_ai_task_tables($sitePdo);
+    $sourceFilter = trim((string)($_GET['source'] ?? ''));
+    $statusFilter = trim((string)($_GET['status'] ?? ''));
+    $keyword = trim((string)($_GET['keyword'] ?? ''));
+    $siteScope = requested_site_scope($main);
+    $siteMap = site_name_map($main);
+    $items = [];
+
+    if ($sourceFilter === '' || $sourceFilter === 'batch') {
+        [$whereSql, $params] = batch_task_filter_sql();
+        $stmt = $main->prepare("SELECT * FROM batch_tasks{$whereSql} ORDER BY id DESC LIMIT 200");
+        $stmt->execute($params);
+        foreach ($stmt->fetchAll() as $row) {
+            $items[] = task_stream_item('batch', $row, $siteMap);
+        }
+    }
+
+    if ($sourceFilter === '' || $sourceFilter === 'deploy') {
+        $clauses = [];
+        $params = [];
+        append_site_scope_clause($clauses, $params, 'site_id', 'stream_deploy_site');
+        $whereSql = $clauses ? ' WHERE ' . implode(' AND ', $clauses) : '';
+        $stmt = $main->prepare("SELECT * FROM deploy_tasks{$whereSql} ORDER BY id DESC LIMIT 200");
+        $stmt->execute($params);
+        foreach ($stmt->fetchAll() as $row) {
+            $items[] = task_stream_item('deploy', $row, $siteMap);
+        }
+    }
+
+    if ($sourceFilter === '' || $sourceFilter === 'ai') {
+        $stmt = $sitePdo->query('SELECT * FROM ai_tasks ORDER BY id DESC LIMIT 300');
+        foreach ($stmt->fetchAll() as $row) {
+            $item = task_stream_item('ai', $row, $siteMap);
+            if ($siteScope !== null) {
+                $matched = false;
+                foreach ($item['site_ids'] as $siteId) {
+                    if (in_array((int)$siteId, $siteScope, true)) {
+                        $matched = true;
+                        break;
+                    }
+                }
+                if (!$matched) {
+                    continue;
+                }
+            }
+            $items[] = $item;
+        }
+    }
+
+    if (($sourceFilter === '' || $sourceFilter === 'template') && is_platform_admin(auth_user())) {
+        $stmt = $main->query('SELECT * FROM template_clone_tasks ORDER BY id DESC LIMIT 100');
+        foreach ($stmt->fetchAll() as $row) {
+            $items[] = task_stream_item('template', $row, $siteMap);
+        }
+    }
+
+    if ($statusFilter !== '') {
+        $items = array_values(array_filter($items, static fn($item) => $item['status_group'] === $statusFilter || $item['status'] === $statusFilter));
+    }
+    if ($keyword !== '') {
+        $items = array_values(array_filter($items, static function ($item) use ($keyword) {
+            $haystack = implode(' ', [
+                $item['task_no'] ?? '',
+                $item['title'] ?? '',
+                $item['summary'] ?? '',
+                $item['message'] ?? '',
+                implode(' ', $item['site_names'] ?? []),
+            ]);
+            return mb_stripos($haystack, $keyword, 0, 'UTF-8') !== false;
+        }));
+    }
+
+    usort($items, static fn($a, $b) => strcmp((string)($b['created_at'] ?? ''), (string)($a['created_at'] ?? '')));
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $pageSize = min(100, max(1, (int)($_GET['page_size'] ?? 20)));
+    $total = count($items);
+    $paged = array_slice($items, ($page - 1) * $pageSize, $pageSize);
+    $overview = [
+        'total' => $total,
+        'success' => count(array_filter($items, static fn($item) => $item['status_group'] === 'success')),
+        'failed' => count(array_filter($items, static fn($item) => $item['status_group'] === 'failed')),
+        'pending' => count(array_filter($items, static fn($item) => $item['status_group'] === 'pending')),
+        'partial' => count(array_filter($items, static fn($item) => $item['status_group'] === 'partial')),
+        'ai' => count(array_filter($items, static fn($item) => $item['source'] === 'ai')),
+        'deploy' => count(array_filter($items, static fn($item) => $item['source'] === 'deploy')),
+        'batch' => count(array_filter($items, static fn($item) => $item['source'] === 'batch')),
+        'template' => count(array_filter($items, static fn($item) => $item['source'] === 'template')),
+    ];
+
+    return [
+        'items' => $paged,
+        'overview' => $overview,
+        'pagination' => [
+            'page' => $page,
+            'page_size' => $pageSize,
+            'total' => $total,
+            'total_pages' => (int)ceil($total / $pageSize),
+        ],
+    ];
+}
+
 function operation_log_action(string $method, string $path): array
 {
     $segments = array_values(array_filter(explode('/', trim($path, '/'))));
@@ -4267,6 +4448,9 @@ function normalize_site_ids(array $data): array
         $ids = [$ids];
     }
     $ids = array_values(array_unique(array_filter(array_map('intval', $ids), fn($id) => $id > 0)));
+    if ($scope === 'selected' && !$ids) {
+        fail('指定站点发布时，请至少选择一个目标站点', 'SITE_SCOPE_EMPTY', 422);
+    }
     foreach ($ids as $siteId) {
         assert_site_access((int)$siteId);
     }
@@ -6208,9 +6392,9 @@ function create_ai_task(PDO $pdo, array $data): array
     require_fields($data, ['type', 'prompt']);
     $type = in_array(($data['type'] ?? 'article'), ['article', 'product'], true) ? (string)$data['type'] : 'article';
     $count = min(20, max(1, (int)($data['count'] ?? 3)));
+    $siteIds = normalize_site_ids($data);
     consume_ai_quota(main_pdo(), auth_user(), $count);
     $site = site_settings($pdo);
-    $siteIds = normalize_site_ids($data);
     $items = [];
     for ($i = 1; $i <= $count; $i++) {
         $itemPrompt = trim((string)$data['prompt']) . "（第 {$i} 条，避免重复）";
@@ -6298,6 +6482,32 @@ function confirm_ai_task(PDO $pdo, int $taskId, array $data): array
         'updated_at' => now(),
     ]);
     return normalize_ai_task_row(fetch_one($pdo, 'ai_tasks', $taskId) ?: []);
+}
+
+function record_ai_batch_content_task(PDO $pdo, string $type, string $prompt, array $siteIds, array $createdIds): array
+{
+    ensure_ai_task_tables($pdo);
+    $time = now();
+    $isProduct = $type === 'product';
+    $stmt = $pdo->prepare("INSERT INTO ai_tasks (site_id, task_type, prompt, status, site_ids, result_json, message, success_count, created_article_ids, created_product_ids, started_at, finished_at, confirmed_at, created_at, updated_at)
+        VALUES (:site_id, :task_type, :prompt, 'confirmed', :site_ids, :result_json, :message, :success_count, :created_article_ids, :created_product_ids, :started_at, :finished_at, :confirmed_at, :created_at, :updated_at)");
+    $stmt->execute([
+        'site_id' => requested_site_id(),
+        'task_type' => $isProduct ? 'product_batch_publish' : 'article_batch_publish',
+        'prompt' => $prompt,
+        'site_ids' => json_encode(array_values(array_unique(array_map('intval', $siteIds))), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'result_json' => json_encode(['created_ids' => $createdIds, 'content_type' => $type], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'message' => 'AI 批量入库完成：' . ($isProduct ? '商品 ' : '文章 ') . count($createdIds) . ' 条',
+        'success_count' => count($createdIds),
+        'created_article_ids' => json_encode($isProduct ? [] : $createdIds, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'created_product_ids' => json_encode($isProduct ? $createdIds : [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'started_at' => $time,
+        'finished_at' => $time,
+        'confirmed_at' => $time,
+        'created_at' => $time,
+        'updated_at' => $time,
+    ]);
+    return normalize_ai_task_row(fetch_one($pdo, 'ai_tasks', (int)$pdo->lastInsertId()) ?: []);
 }
 
 function svg_text(string $value): string
@@ -7478,6 +7688,10 @@ try {
         ok(seo_audit($pdo, main_pdo()));
     }
 
+    if ($method === 'GET' && $path === '/tasks/stream') {
+        ok(list_task_stream($pdo, main_pdo()));
+    }
+
     if ($method === 'POST' && $path === '/seo/fix') {
         ok(seo_fix($pdo, main_pdo(), body_json()), 'SEO 修复已完成');
     }
@@ -7686,11 +7900,12 @@ try {
         require_fields($data, ['prompt']);
         $prompt = trim((string)$data['prompt']);
         $count = min(20, max(1, (int)($data['count'] ?? 5)));
+        $siteIds = normalize_site_ids($data);
         consume_ai_quota(main_pdo(), $user, $count);
         $status = in_array(($data['status'] ?? 'draft'), ['draft', 'published'], true) ? $data['status'] : 'draft';
         $site = site_settings($pdo);
         $created = [];
-        $siteIds = normalize_site_ids($data);
+        $createdIds = [];
         $angles = ['行业趋势', '选型指南', '应用案例', 'SEO 获客', '产品卖点', '客户痛点', '解决方案', '常见问题', '运营方法', '转化路径'];
         for ($i = 1; $i <= $count; $i++) {
             $angle = $angles[($i - 1) % count($angles)];
@@ -7703,10 +7918,12 @@ try {
             $draft['status'] = $status;
             $draft['published_at'] = $status === 'published' ? now() : null;
             $id = insert_article($pdo, $draft);
+            $createdIds[] = $id;
             sync_content_distribution($pdo, 'article', $id, $siteIds);
             $created[] = attach_distribution($pdo, 'article', [fetch_one($pdo, 'articles', $id)])[0];
         }
-        ok(['items' => $created, 'count' => count($created)], '批量生成成功');
+        $task = record_ai_batch_content_task($pdo, 'article', $prompt, $siteIds, $createdIds);
+        ok(['items' => $created, 'count' => count($created), 'task' => $task], '批量生成成功');
     }
 
     if ($method === 'POST' && $path === '/ai/batch-products') {
@@ -7714,11 +7931,12 @@ try {
         require_fields($data, ['prompt']);
         $prompt = trim((string)$data['prompt']);
         $count = min(20, max(1, (int)($data['count'] ?? 5)));
+        $siteIds = normalize_site_ids($data);
         consume_ai_quota(main_pdo(), $user, $count);
         $status = in_array(($data['status'] ?? 'draft'), ['draft', 'published'], true) ? $data['status'] : 'draft';
         $site = site_settings($pdo);
         $created = [];
-        $siteIds = normalize_site_ids($data);
+        $createdIds = [];
         $angles = ['标准款', '专业款', '旗舰款', '入门套装', '行业方案', '高续航版', '轻量版', '企业定制版', '巡检版', '营销组合'];
         for ($i = 1; $i <= $count; $i++) {
             $angle = $angles[($i - 1) % count($angles)];
@@ -7732,10 +7950,12 @@ try {
             $draft['status'] = $status;
             $draft['published_at'] = $status === 'published' ? now() : null;
             $id = insert_product($pdo, $draft);
+            $createdIds[] = $id;
             sync_content_distribution($pdo, 'product', $id, $siteIds);
             $created[] = attach_distribution($pdo, 'product', [fetch_one($pdo, 'products', $id)])[0];
         }
-        ok(['items' => $created, 'count' => count($created)], '批量生成成功');
+        $task = record_ai_batch_content_task($pdo, 'product', $prompt, $siteIds, $createdIds);
+        ok(['items' => $created, 'count' => count($created), 'task' => $task], '批量生成成功');
     }
 
     if ($method === 'POST' && $path === '/ai/generate-image') {
