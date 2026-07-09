@@ -2,9 +2,11 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import path from 'path'
 
+const base = process.env.HJ_ADMIN_BASE || '/admin-vue/'
+
 export default defineConfig({
   root: __dirname,
-  base: '/admin-vue/',
+  base,
   server: {
     port: 5173,
     host: true,

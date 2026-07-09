@@ -22,7 +22,7 @@
         <span>简</span>
         <div>
           <strong>化简</strong>
-          <small>{{ view === 'platform' ? '平台后台' : '客户中台' }}</small>
+          <small>{{ appModeLabel }}</small>
         </div>
       </div>
       <el-menu :default-active="view" class="menu" @select="setView">
@@ -41,13 +41,15 @@
           <p>{{ currentNav?.hint }}</p>
           <div class="work-tabs">
             <el-tag effect="plain">{{ currentNav?.label || '工作台' }}</el-tag>
-            <el-select v-model="currentSiteId" class="site-switcher" placeholder="选择站点" @change="switchSite">
+            <el-select v-if="!isSuperAdminApp" v-model="currentSiteId" class="site-switcher" placeholder="选择站点" @change="switchSite">
               <el-option v-for="item in sites" :key="item.id" :label="item.name" :value="item.id">
                 <span>{{ item.name }}</span>
                 <small class="option-domain">{{ item.domain || item.subdomain || item.site_key }}</small>
               </el-option>
             </el-select>
             <el-button link type="primary" @click="refreshCurrentView">刷新当前页</el-button>
+            <el-button v-if="isSuperAdminApp" link type="primary" @click="openCustomerAdmin">客户中台</el-button>
+            <el-button v-else-if="isPlatformAdmin" link type="primary" @click="openSuperAdmin">超级后台</el-button>
             <el-button link @click="openLegacyAdmin">旧版后台</el-button>
           </div>
         </div>
@@ -56,8 +58,8 @@
             <strong>{{ currentUser?.display_name || currentUser?.username || '账号' }}</strong>
             <small>{{ accountScopeText }}</small>
           </div>
-          <el-button @click="previewSite">预览站点</el-button>
-          <el-button type="primary" :loading="generating" @click="generateSite">生成静态站</el-button>
+          <el-button v-if="!isSuperAdminApp" @click="previewSite">预览站点</el-button>
+          <el-button v-if="!isSuperAdminApp" type="primary" :loading="generating" @click="generateSite">生成静态站</el-button>
           <el-button @click="logout">退出</el-button>
         </div>
       </el-header>
@@ -3215,11 +3217,15 @@ import axios from 'axios'
 import ContentEditor from './components/ContentEditor.vue'
 
 const TOKEN_KEY = 'huajian_admin_token'
+const isSuperAdminApp = window.location.pathname.replace(/\\/g, '/').startsWith('/superadmin')
+const platformViewKeys = new Set(['platform', 'platform-system', 'logs'])
+const customerHomeView = 'dashboard'
+const platformHomeView = 'platform'
 const token = ref(localStorage.getItem(TOKEN_KEY) || '')
 const currentUser = ref<any>(null)
 const loading = ref(false)
 const generating = ref(false)
-const view = ref('dashboard')
+const view = ref(isSuperAdminApp ? platformHomeView : customerHomeView)
 const templateTab = ref('home')
 
 const loginForm = reactive({ username: 'admin', password: 'admin123456' })
@@ -3481,15 +3487,20 @@ const navItems = [
   { key: 'publish', label: '发布部署', hint: '配置宝塔面板、生成静态站并查看发布记录。', icon: 'Upload' }
 ]
 const isPlatformAdmin = computed(() => ['admin', 'platform_admin', 'super_admin'].includes(String(currentUser.value?.role || '')))
+const appModeLabel = computed(() => isSuperAdminApp ? '超级管理员后台' : '客户中台')
 const accountScopeText = computed(() => {
   if (!currentUser.value) return '未登录'
+  if (isSuperAdminApp) return isPlatformAdmin.value ? `超级管理员后台 / ${platformCustomers.value.length || 0} 个客户` : '无超级管理员权限'
   if (isPlatformAdmin.value) return `平台后台 / ${currentUser.value.site_count ?? sites.value.length} 个站点`
   const plan = currentUser.value.customer?.plan_key || quota.value?.plan_key || 'starter'
   const siteCount = currentUser.value.site_count ?? sites.value.length
   const maxSites = currentUser.value.quota?.max_sites ?? quota.value?.max_sites ?? '-'
   return `客户中台 / ${plan} / ${siteCount}/${maxSites} 站`
 })
-const visibleNavItems = computed(() => navItems.filter((item) => !['platform', 'platform-system'].includes(item.key) || isPlatformAdmin.value))
+const visibleNavItems = computed(() => navItems.filter((item) => {
+  if (isSuperAdminApp) return platformViewKeys.has(item.key)
+  return !platformViewKeys.has(item.key)
+}))
 const currentNav = computed(() => visibleNavItems.value.find((item) => item.key === view.value) || visibleNavItems.value[0])
 const currentSite = computed(() => sites.value.find((item: any) => String(item.id) === String(currentSiteId.value)))
 const aiTargetSiteIds = computed(() => siteIdsForScope(aiForm.site_scope, aiForm.site_ids))
@@ -3692,8 +3703,15 @@ async function login() {
     token.value = data.token
     localStorage.setItem(TOKEN_KEY, data.token)
     currentUser.value = await request('/api/auth/me')
+    if (isSuperAdminApp && !isPlatformAdmin.value) {
+      token.value = ''
+      currentUser.value = null
+      localStorage.removeItem(TOKEN_KEY)
+      ElMessage.error('当前账号没有超级管理员权限')
+      return
+    }
     ElMessage.success('登录成功')
-    if (!isPlatformAdmin.value && view.value === 'platform') view.value = 'dashboard'
+    view.value = isSuperAdminApp ? platformHomeView : customerHomeView
     await loadAll()
   } finally {
     loading.value = false
@@ -3708,10 +3726,15 @@ async function logout() {
 }
 
 function setView(key: string) {
-  if (['platform', 'platform-system'].includes(key) && !isPlatformAdmin.value) {
-    view.value = 'dashboard'
+  if (isSuperAdminApp && !platformViewKeys.has(key)) {
+    view.value = platformHomeView
     return
   }
+  if (!isSuperAdminApp && platformViewKeys.has(key)) {
+    view.value = customerHomeView
+    return
+  }
+  if (platformViewKeys.has(key) && !isPlatformAdmin.value) return
   view.value = key
   if (key === 'platform') loadPlatform()
   if (key === 'platform-system') loadPlatformSystemSettings()
@@ -3780,15 +3803,34 @@ function openLegacyAdmin() {
   window.open('/admin.html', '_blank')
 }
 
+function openCustomerAdmin() {
+  window.location.href = '/admin-vue/'
+}
+
+function openSuperAdmin() {
+  window.location.href = '/superadmin/'
+}
+
 async function loadAll() {
   if (!currentUser.value) {
     currentUser.value = await request('/api/auth/me')
   }
-  if (!isPlatformAdmin.value && view.value === 'platform') {
-    view.value = 'dashboard'
+  if (isSuperAdminApp) {
+    view.value = platformViewKeys.has(view.value) ? view.value : platformHomeView
+    if (!isPlatformAdmin.value) {
+      token.value = ''
+      currentUser.value = null
+      localStorage.removeItem(TOKEN_KEY)
+      ElMessage.error('当前账号没有超级管理员权限')
+      return
+    }
+    await Promise.all([loadPlatform(), loadOperationLogs()])
+    return
+  }
+  if (platformViewKeys.has(view.value)) {
+    view.value = customerHomeView
   }
   await Promise.all([
-    isPlatformAdmin.value ? loadPlatform() : Promise.resolve(),
     loadSites(),
     loadDomains(),
     loadDomainApplications(),
@@ -4492,6 +4534,10 @@ async function impersonatePlatformSite(item: any) {
   view.value = 'dashboard'
   syncCurrentScopedWorkflows()
   ElMessage.success(`已进入客户中台：${data.site?.name || item.name}`)
+  if (isSuperAdminApp) {
+    window.location.href = '/admin-vue/'
+    return
+  }
   await loadAll()
 }
 
