@@ -655,6 +655,22 @@ function public_root(?array $site = null): string
     return $site ? site_public_root($site) : dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'sites' . DIRECTORY_SEPARATOR . 'site_10001' . DIRECTORY_SEPARATOR . 'public';
 }
 
+function media_file_path(array $item, ?array $site = null): string
+{
+    $relative = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, (string)($item['file_path'] ?? ''));
+    if ($relative === '' || str_contains($relative, '..')) {
+        fail('媒体文件路径不安全', 'INVALID_MEDIA_PATH', 422);
+    }
+    $root = public_root($site);
+    $path = $root . DIRECTORY_SEPARATOR . $relative;
+    $rootReal = realpath($root) ?: $root;
+    $parentReal = realpath(dirname($path)) ?: dirname($path);
+    if (!str_starts_with($parentReal, $rootReal)) {
+        fail('媒体文件路径不安全', 'INVALID_MEDIA_PATH', 422);
+    }
+    return $path;
+}
+
 function package_root(): string
 {
     return dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'packages';
@@ -9889,8 +9905,9 @@ try {
         $imageExts = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'svg'];
         $fileType = in_array($ext, $imageExts, true) ? 'image' : 'file';
         $folder = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($_POST['folder'] ?? 'images')) ?: 'images';
+        $currentSite = current_site(main_pdo(), $pdo);
         $relativeDir = 'uploads/' . $folder . '/' . date('Ym');
-        $targetDir = public_root() . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativeDir);
+        $targetDir = public_root($currentSite) . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativeDir);
         ensure_dir($targetDir);
         $safeName = date('YmdHis') . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
         $targetPath = $targetDir . DIRECTORY_SEPARATOR . $safeName;
@@ -9935,6 +9952,9 @@ try {
             assert_site_access((int)($item['site_id'] ?? 10001), main_pdo());
         }
         if ($method === 'PUT') {
+            if (!$item) {
+                fail('媒体文件不存在', 'NOT_FOUND', 404);
+            }
             $data = body_json();
             $stmt = $pdo->prepare("UPDATE media SET alt_text=:alt_text, updated_at=:updated_at WHERE id=:id");
             $stmt->execute([
@@ -9945,8 +9965,12 @@ try {
             ok(fetch_one($pdo, 'media', $id), '保存成功');
         }
         if ($method === 'DELETE') {
+            if (!$item) {
+                fail('媒体文件不存在', 'NOT_FOUND', 404);
+            }
             if ($item) {
-                $filePath = public_root() . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $item['file_path']);
+                $site = fetch_one(main_pdo(), 'sites', (int)($item['site_id'] ?? requested_site_id())) ?: current_site(main_pdo(), $pdo);
+                $filePath = media_file_path($item, $site);
                 if (is_file($filePath)) {
                     unlink($filePath);
                 }

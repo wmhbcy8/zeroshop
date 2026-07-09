@@ -1741,11 +1741,31 @@
                 <div v-else class="file-tile">FILE</div>
                 <strong>{{ item.file_name }}</strong>
                 <small>/{{ item.file_path }}</small>
-                <el-button size="small" @click="copyMediaPath(item.file_path)">复制路径</el-button>
+                <div class="media-card-actions">
+                  <el-button size="small" @click="copyMediaPath(item.file_path)">复制路径</el-button>
+                  <el-button size="small" @click="editMedia(item)">编辑</el-button>
+                  <el-button size="small" type="danger" plain @click="deleteMedia(item)">删除</el-button>
+                </div>
               </article>
             </div>
             <el-pagination class="table-pager" layout="prev, pager, next, total" :current-page="mediaPager.page" :page-size="mediaPager.page_size" :total="mediaPager.total" @current-change="changeMediaPage" />
           </el-card>
+          <el-drawer v-model="mediaDrawerVisible" size="520px" title="媒体文件">
+            <el-form :model="mediaForm" label-width="92px">
+              <el-descriptions :column="1" border class="mb16">
+                <el-descriptions-item label="文件名">{{ mediaForm.file_name || '-' }}</el-descriptions-item>
+                <el-descriptions-item label="路径">/{{ mediaForm.file_path || '-' }}</el-descriptions-item>
+                <el-descriptions-item label="类型">{{ mediaForm.file_type || '-' }} / {{ mediaForm.mime_type || '-' }}</el-descriptions-item>
+                <el-descriptions-item label="大小">{{ formatFileSize(mediaForm.file_size || 0) }}</el-descriptions-item>
+              </el-descriptions>
+              <img v-if="mediaForm.file_type === 'image' && mediaForm.file_path" class="media-drawer-preview" :src="`/${mediaForm.file_path}`" />
+              <el-form-item label="Alt 文本"><el-input v-model="mediaForm.alt_text" placeholder="用于图片 SEO 和无障碍说明" /></el-form-item>
+              <div class="drawer-actions">
+                <el-button @click="copyMediaPath(mediaForm.file_path)">复制路径</el-button>
+                <el-button type="primary" @click="saveMedia">保存</el-button>
+              </div>
+            </el-form>
+          </el-drawer>
         </section>
 
         <section v-if="view === 'forms'">
@@ -2734,6 +2754,7 @@ const selectedServiceIds = ref<string[]>([])
 const orderDrawerVisible = ref(false)
 const paymentDrawerVisible = ref(false)
 const formDrawerVisible = ref(false)
+const mediaDrawerVisible = ref(false)
 const collectorDrawerVisible = ref(false)
 const manualCollectorDrawerVisible = ref(false)
 const domainDrawerVisible = ref(false)
@@ -2781,6 +2802,7 @@ const domainForm = reactive<any>({})
 const domainApplicationForm = reactive<any>({})
 const platformDomainApplicationForm = reactive<any>({})
 const paymentForm = reactive<any>({})
+const mediaForm = reactive<any>({})
 const paymentConfigText = ref('')
 const publishDetail = reactive<any>({})
 const deployTaskDetail = reactive<any>({})
@@ -5208,6 +5230,30 @@ async function copyMediaPath(path: string) {
   } catch {
     ElMessage.info(value)
   }
+}
+
+function editMedia(item: any) {
+  Object.assign(mediaForm, item)
+  mediaDrawerVisible.value = true
+}
+
+async function saveMedia() {
+  if (!mediaForm.id) return
+  await request(`/api/media/${mediaForm.id}`, {
+    method: 'PUT',
+    data: { alt_text: mediaForm.alt_text || '' }
+  })
+  mediaDrawerVisible.value = false
+  ElMessage.success('媒体信息已保存')
+  await loadMedia()
+}
+
+async function deleteMedia(item: any) {
+  await ElMessageBox.confirm(`确定删除媒体文件「${item.file_name}」？`)
+  await request(`/api/media/${item.id}`, { method: 'DELETE' })
+  ElMessage.success('媒体文件已删除')
+  if (mediaForm.id === item.id) mediaDrawerVisible.value = false
+  await Promise.all([loadMedia(), loadDashboard()])
 }
 async function loadForms() {
   const params = new URLSearchParams()
