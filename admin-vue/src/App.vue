@@ -52,6 +52,10 @@
           </div>
         </div>
         <div class="top-actions">
+          <div class="account-pill">
+            <strong>{{ currentUser?.display_name || currentUser?.username || '账号' }}</strong>
+            <small>{{ accountScopeText }}</small>
+          </div>
           <el-button @click="previewSite">预览站点</el-button>
           <el-button type="primary" :loading="generating" @click="generateSite">生成静态站</el-button>
           <el-button @click="logout">退出</el-button>
@@ -2751,6 +2755,14 @@ const navItems = [
   { key: 'publish', label: '发布部署', hint: '配置宝塔面板、生成静态站并查看发布记录。', icon: 'Upload' }
 ]
 const isPlatformAdmin = computed(() => ['admin', 'platform_admin', 'super_admin'].includes(String(currentUser.value?.role || '')))
+const accountScopeText = computed(() => {
+  if (!currentUser.value) return '未登录'
+  if (isPlatformAdmin.value) return `平台后台 / ${currentUser.value.site_count ?? sites.value.length} 个站点`
+  const plan = currentUser.value.customer?.plan_key || quota.value?.plan_key || 'starter'
+  const siteCount = currentUser.value.site_count ?? sites.value.length
+  const maxSites = currentUser.value.quota?.max_sites ?? quota.value?.max_sites ?? '-'
+  return `客户中台 / ${plan} / ${siteCount}/${maxSites} 站`
+})
 const visibleNavItems = computed(() => navItems.filter((item) => item.key !== 'platform' || isPlatformAdmin.value))
 const currentNav = computed(() => visibleNavItems.value.find((item) => item.key === view.value) || visibleNavItems.value[0])
 const currentSite = computed(() => sites.value.find((item: any) => String(item.id) === String(currentSiteId.value)))
@@ -2891,8 +2903,8 @@ async function login() {
       data: { ...loginForm }
     })
     token.value = data.token
-    currentUser.value = data.user || null
     localStorage.setItem(TOKEN_KEY, data.token)
+    currentUser.value = await request('/api/auth/me')
     ElMessage.success('登录成功')
     if (!isPlatformAdmin.value && view.value === 'platform') view.value = 'dashboard'
     await loadAll()

@@ -7064,6 +7064,50 @@ function allowed_site_ids_for_user(PDO $main, ?array $user = null): ?array
     return array_values(array_filter(array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN)), fn($id) => $id > 0));
 }
 
+function auth_context_payload(PDO $sitePdo, PDO $main, array $user): array
+{
+    ensure_center_tables($main);
+    $platformAdmin = is_platform_admin($user);
+    $allowedSiteIds = allowed_site_ids_for_user($main, $user);
+    $customer = current_customer($main, $user);
+    $quota = customer_quota_summary($sitePdo, $main, $user);
+    $siteRows = filter_sites_for_user($main, center_site_items($main, $sitePdo), $user);
+    $sites = array_map(static function (array $site): array {
+        return [
+            'id' => (int)($site['id'] ?? 0),
+            'name' => (string)($site['name'] ?? ''),
+            'site_key' => (string)($site['site_key'] ?? ''),
+            'domain' => (string)($site['domain'] ?? ''),
+            'subdomain' => (string)($site['subdomain'] ?? ''),
+            'status' => (string)($site['status'] ?? ''),
+        ];
+    }, array_slice($siteRows, 0, 100));
+    return [
+        'id' => (int)$user['id'],
+        'username' => (string)$user['username'],
+        'display_name' => (string)($user['display_name'] ?? $user['username']),
+        'role' => (string)$user['role'],
+        'role_label' => $platformAdmin ? '平台管理员' : '客户管理员',
+        'customer_id' => (int)($user['customer_id'] ?? 0),
+        'customer' => $customer ? [
+            'id' => (int)$customer['id'],
+            'name' => (string)$customer['name'],
+            'company' => (string)($customer['company'] ?? ''),
+            'plan_key' => (string)($customer['plan_key'] ?? 'starter'),
+            'status' => (string)($customer['status'] ?? ''),
+            'expires_at' => (string)($customer['expires_at'] ?? ''),
+        ] : null,
+        'permissions' => $platformAdmin
+            ? ['platform:*', 'sites:*', 'content:*', 'orders:*', 'deploy:*']
+            : ['sites:own', 'content:own', 'orders:own', 'deploy:own'],
+        'site_scope' => $platformAdmin ? 'all' : 'customer',
+        'allowed_site_ids' => $allowedSiteIds,
+        'sites' => $sites,
+        'site_count' => count($siteRows),
+        'quota' => $quota,
+    ];
+}
+
 function assert_site_access(int $siteId, ?PDO $main = null): void
 {
     $user = auth_user();
@@ -7171,7 +7215,7 @@ try {
     }
 
     if ($method === 'GET' && $path === '/auth/me') {
-        ok(require_login($pdo));
+        ok(auth_context_payload($pdo, main_pdo(), require_login($pdo)));
     }
 
     if ($method === 'POST' && $path === '/analytics/visit') {
