@@ -1738,7 +1738,7 @@
                     </div>
                     <div class="ai-draft-target">
                       <span>目标范围</span>
-                      <strong>{{ contentSiteLabel(siteIdsForScope(aiForm.site_scope, aiForm.site_ids)) }}</strong>
+                      <strong>{{ contentSiteLabel(draftTargetSiteIds(item)) }}</strong>
                       <small>{{ aiForm.status === 'published' ? '发布后立即生成对应静态站' : '先入库为草稿，后续可在文章/商品页再发布' }}</small>
                     </div>
                     <img v-if="item.cover" class="ai-cover" :src="item.cover.startsWith('/') ? item.cover : '/' + item.cover" />
@@ -5716,7 +5716,7 @@ function aiPromptFor(index = 1) {
   return `${aiForm.prompt}（第 ${index} 条，避免重复）`
 }
 
-function normalizeAiDraft(type: string, draft: any, index = 1) {
+function normalizeAiDraft(type: string, draft: any, index = 1, siteScope = aiForm.site_scope, siteIds = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)) {
   const title = draft.title || `${aiForm.prompt.slice(0, 24)} ${index}`
   return {
     ...draft,
@@ -5732,8 +5732,14 @@ function normalizeAiDraft(type: string, draft: any, index = 1) {
     price: draft.price ?? 0,
     stock: draft.stock ?? 999,
     seo_keywords: draft.seo_keywords || '',
-    status: aiForm.status
+    status: aiForm.status,
+    site_scope: siteScope,
+    site_ids: siteIds
   }
+}
+
+function draftTargetSiteIds(item: any) {
+  return siteIdsForScope(item?.site_scope || aiForm.site_scope, item?.site_ids || aiForm.site_ids)
 }
 
 async function generateAiPreview() {
@@ -5742,17 +5748,19 @@ async function generateAiPreview() {
   aiLoading.value = true
   try {
     const items = []
+    const site_scope = aiForm.site_scope
+    const site_ids = siteIdsForScope(site_scope, aiForm.site_ids)
     for (let index = 1; index <= Math.min(3, aiForm.count); index++) {
       const data = await request('/api/ai/generate', {
         method: 'POST',
         data: {
           type: aiForm.type,
           prompt: aiPromptFor(index),
-          site_scope: aiForm.site_scope,
-          site_ids: aiForm.site_ids
+          site_scope,
+          site_ids
         }
       })
-      items.push(normalizeAiDraft(aiForm.type, data.draft || data, index))
+      items.push(normalizeAiDraft(aiForm.type, data.draft || data, index, site_scope, site_ids))
     }
     aiDrafts.value = items
     ElMessage.success(`已生成 ${items.length} 条预览`)
@@ -5843,9 +5851,10 @@ function aiTaskTypeLabel(value: string) {
 }
 
 async function saveAiDraft(item: any, index: number, status: 'draft' | 'published' = 'draft') {
-  if (!ensureSelectedSiteScope(aiForm.site_scope, aiForm.site_ids, 'AI 草稿入库')) return
-  const site_ids = siteIdsForScope(aiForm.site_scope, aiForm.site_ids)
-  const payload = { ...item, status, site_scope: aiForm.site_scope, site_ids }
+  const site_scope = item.site_scope || aiForm.site_scope
+  if (!ensureSelectedSiteScope(site_scope, item.site_ids || aiForm.site_ids, 'AI 草稿入库')) return
+  const site_ids = draftTargetSiteIds(item)
+  const payload = { ...item, status, site_scope, site_ids }
   if (item.type === 'article') {
     await request('/api/articles', { method: 'POST', data: payload })
   } else {
