@@ -1446,6 +1446,70 @@ function public_search(PDO $pdo, int $siteId): array
     ];
 }
 
+function public_site_config(PDO $pdo, PDO $main, int $siteId): array
+{
+    ensure_center_tables($main);
+    assert_public_rate_limit($pdo, $siteId, 'site.public_config', [], 120, 60);
+    $stmt = $main->prepare('SELECT id, site_key, name, domain, subdomain, language, template_key, status FROM sites WHERE id = ? LIMIT 1');
+    $stmt->execute([$siteId]);
+    $siteRow = $stmt->fetch() ?: [];
+    if (!$siteRow || (string)($siteRow['status'] ?? 'active') !== 'active') {
+        fail('站点不可访问', 'SITE_NOT_FOUND', 404);
+    }
+    $settings = site_settings($pdo, $siteId);
+    $payment = is_array($settings['payment'] ?? null) ? $settings['payment'] : [];
+    $globalModules = is_array($settings['global_modules'] ?? null) ? $settings['global_modules'] : [];
+    $nav = is_array($settings['nav'] ?? null) ? $settings['nav'] : [];
+    $publicNav = array_values(array_map(static function (array $item): array {
+        return [
+            'title' => (string)($item['title'] ?? ''),
+            'url' => (string)($item['url'] ?? '#'),
+            'target_blank' => !empty($item['target_blank']),
+        ];
+    }, array_filter($nav, static fn($item) => is_array($item) && trim((string)($item['title'] ?? '')) !== '')));
+
+    return [
+        'site' => [
+            'id' => $siteId,
+            'site_key' => (string)($siteRow['site_key'] ?? ('site_' . $siteId)),
+            'name' => (string)($settings['name'] ?? $siteRow['name'] ?? ''),
+            'domain' => (string)($settings['domain'] ?? $siteRow['domain'] ?? ''),
+            'subdomain' => (string)($siteRow['subdomain'] ?? ''),
+            'language' => (string)($settings['language'] ?? $siteRow['language'] ?? 'zh-CN'),
+            'template_key' => (string)($settings['template_key'] ?? $siteRow['template_key'] ?? 'business-clean'),
+            'status' => (string)($siteRow['status'] ?? 'active'),
+            'phone' => (string)($settings['phone'] ?? ''),
+            'email' => (string)($settings['email'] ?? ''),
+            'address' => (string)($settings['address'] ?? ''),
+            'whatsapp' => (string)($settings['whatsapp'] ?? $globalModules['floating_whatsapp'] ?? ''),
+            'wechat' => (string)($settings['wechat'] ?? $globalModules['floating_wechat'] ?? ''),
+        ],
+        'nav' => $publicNav,
+        'payment' => [
+            'mode' => (string)($payment['mode'] ?? 'manual'),
+            'currency' => (string)($payment['currency'] ?? 'CNY'),
+            'account' => (string)($payment['account'] ?? ''),
+            'guide' => (string)($payment['guide'] ?? $payment['instructions'] ?? ''),
+            'instructions' => (string)($payment['instructions'] ?? $payment['guide'] ?? ''),
+        ],
+        'service' => [
+            'floating_enabled' => (bool)($globalModules['floating_service'] ?? true),
+            'floating_text' => (string)($globalModules['floating_text'] ?? '联系我们'),
+            'phone' => (string)($globalModules['floating_phone'] ?? $settings['phone'] ?? ''),
+            'email' => (string)($globalModules['floating_email'] ?? $settings['email'] ?? ''),
+            'whatsapp' => (string)($globalModules['floating_whatsapp'] ?? $settings['whatsapp'] ?? ''),
+            'wechat' => (string)($globalModules['floating_wechat'] ?? $settings['wechat'] ?? ''),
+        ],
+        'features' => [
+            'forms' => true,
+            'search' => true,
+            'orders' => true,
+            'payment_proof' => true,
+            'service_request' => true,
+        ],
+    ];
+}
+
 function dashboard_todos(PDO $pdo, PDO $main): array
 {
     $sites = filter_sites_for_user($main, center_site_items($main, $pdo), current_user($pdo));
@@ -8101,6 +8165,11 @@ try {
     if ($method === 'GET' && $path === '/search') {
         $siteId = resolve_request_site_id($_GET);
         ok(public_search($pdo, $siteId));
+    }
+
+    if ($method === 'GET' && $path === '/site/public-config') {
+        $siteId = resolve_request_site_id($_GET);
+        ok(public_site_config($pdo, main_pdo(), $siteId));
     }
 
     if ($method === 'POST' && $path === '/orders') {

@@ -1,6 +1,7 @@
 const latestOrderStorageBaseKey = 'huajian_latest_order';
 const visitStorageBaseKey = 'huajian_visit_id';
 const cartStorageBaseKey = 'huajian_cart_items';
+let publicSiteConfig = window.HUAJIAN_PUBLIC_CONFIG || null;
 
 function siteStorageKey(baseKey) {
   return baseKey + '_' + getCurrentSiteId();
@@ -23,6 +24,41 @@ function getVisitId() {
 function getCurrentSiteId() {
   const value = Number(window.HUAJIAN_SITE_ID || 10001);
   return value > 0 ? value : 10001;
+}
+
+function getPublicConfig() {
+  return publicSiteConfig || window.HUAJIAN_PUBLIC_CONFIG || {};
+}
+
+function loadPublicConfig() {
+  if (location.protocol === 'file:') return Promise.resolve(getPublicConfig());
+  const url = '/api/site/public-config?site_id=' + encodeURIComponent(getCurrentSiteId());
+  return fetch(url)
+    .then(function (response) { return response.json(); })
+    .then(function (result) {
+      if (!result.success) throw new Error(result.message || '站点配置读取失败');
+      publicSiteConfig = result.data || {};
+      window.HUAJIAN_PUBLIC_CONFIG = publicSiteConfig;
+      applyPublicConfigToPage(publicSiteConfig);
+      return publicSiteConfig;
+    })
+    .catch(function () {
+      return getPublicConfig();
+    });
+}
+
+function applyPublicConfigToPage(config) {
+  if (!config) return;
+  const payment = config.payment || {};
+  document.querySelectorAll('[data-payment-instructions]').forEach(function (node) {
+    if (payment.account) node.setAttribute('data-payment-account', payment.account);
+    if (payment.instructions || payment.guide) node.setAttribute('data-payment-instructions', payment.instructions || payment.guide);
+  });
+}
+
+function siteCurrency(fallback) {
+  const payment = getPublicConfig().payment || {};
+  return payment.currency || fallback || 'CNY';
 }
 
 function trackSiteVisit() {
@@ -281,7 +317,7 @@ function submitCartOrderForm(form) {
     phone: formData.get('phone') || '',
     email: formData.get('email') || '',
     address: formData.get('address') || '',
-    currency: formData.get('currency') || 'CNY',
+    currency: siteCurrency(formData.get('currency') || 'CNY'),
     payment_method: 'manual',
     source_url: location.pathname,
     remark: formData.get('remark') || '',
@@ -359,7 +395,7 @@ function submitOrderForm(form) {
     phone: formData.get('phone') || '',
     email: formData.get('email') || '',
     address: formData.get('address') || '',
-    currency: formData.get('currency') || 'CNY',
+    currency: siteCurrency(formData.get('currency') || 'CNY'),
     payment_method: 'manual',
     source_url: location.pathname,
     remark: formData.get('remark') || '',
@@ -464,9 +500,10 @@ function renderOrderLookupLegacy(order) {
 function readPaymentGuide(scope) {
   const root = scope || document;
   const source = root.closest?.('[data-payment-instructions]') || root.querySelector?.('[data-payment-instructions]') || document.querySelector('[data-payment-instructions]');
+  const payment = getPublicConfig().payment || {};
   return {
-    account: source?.getAttribute('data-payment-account') || '',
-    instructions: source?.getAttribute('data-payment-instructions') || ''
+    account: payment.account || source?.getAttribute('data-payment-account') || '',
+    instructions: payment.instructions || payment.guide || source?.getAttribute('data-payment-instructions') || ''
   };
 }
 
@@ -892,7 +929,9 @@ function initStaticSearch() {
 }
 
 document.addEventListener('DOMContentLoaded', function () {
-  initStaticSearch();
-  initOrderLookup();
-  renderCartPage();
+  loadPublicConfig().finally(function () {
+    initStaticSearch();
+    initOrderLookup();
+    renderCartPage();
+  });
 });

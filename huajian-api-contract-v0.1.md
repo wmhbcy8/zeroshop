@@ -1039,6 +1039,7 @@ GET /api/ai/template/clone/{task_id}
 ```text
 POST /api/forms/submit
 GET  /api/search
+GET  /api/site/public-config
 ```
 
 ### 10.1 搜索
@@ -1054,6 +1055,53 @@ GET /api/search?keyword=无人机
 ```text
 小站点用 search.json。
 大站点后续再接动态搜索 API。
+```
+
+### 10.2 站点公开配置
+
+```http
+GET /api/site/public-config?site_id=10001
+```
+
+用途：
+
+```text
+静态前台读取当前站点可公开展示的轻量配置。
+用于支付说明、客服入口、站点联系方式、导航和前台功能开关。
+不得返回 AI Key、部署密钥、后台 Token 等敏感信息。
+```
+
+响应示例：
+
+```json
+{
+  "site": {
+    "id": 10001,
+    "name": "楚云数航",
+    "domain": "example.com",
+    "phone": "13800000000",
+    "email": "demo@example.com"
+  },
+  "payment": {
+    "mode": "manual",
+    "currency": "CNY",
+    "account": "收款账号",
+    "instructions": "付款后请提交流水号"
+  },
+  "service": {
+    "floating_enabled": true,
+    "phone": "13800000000",
+    "email": "demo@example.com",
+    "whatsapp": ""
+  },
+  "features": {
+    "forms": true,
+    "search": true,
+    "orders": true,
+    "payment_proof": true,
+    "service_request": true
+  }
+}
 ```
 
 ## 11. 通用字段规范
@@ -1246,4 +1294,3 @@ collector
 template clone
 operation logs
 ```
-
