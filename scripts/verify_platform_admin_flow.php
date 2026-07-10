@@ -97,10 +97,16 @@ try {
     $customers = api_request($baseUrl, 'GET', '/api/platform/customers?page_size=20', $token);
     $customerItems = is_array($customers['items'] ?? null) ? $customers['items'] : [];
     $customerId = (int)($customerItems[0]['id'] ?? 0);
+    $firstCustomer = is_array($customerItems[0] ?? null) ? $customerItems[0] : [];
     $rows[] = [
         'name' => 'platform customer list',
         'ok' => $customerId > 0,
         'message' => 'first_customer=' . ($customerId ?: '-'),
+    ];
+    $rows[] = [
+        'name' => 'customer admin account status fields',
+        'ok' => $customerId > 0 && array_key_exists('admin_user_status', $firstCustomer) && array_key_exists('admin_username', $firstCustomer),
+        'message' => 'status=' . (string)($firstCustomer['admin_user_status'] ?? '-'),
     ];
     if ($customerId <= 0) {
         throw new RuntimeException('No platform customer found for quota verification.');

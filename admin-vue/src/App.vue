@@ -164,6 +164,15 @@
                   <el-table-column label="站点" width="100">
                     <template #default="{ row }">{{ row.site_count || 0 }}</template>
                   </el-table-column>
+                  <el-table-column label="中台账号" width="180">
+                    <template #default="{ row }">
+                      <el-tag :type="row.admin_user_status === 'active' ? 'success' : (row.admin_user_status === 'disabled' ? 'info' : 'warning')" size="small">
+                        {{ row.admin_user_status === 'none' ? '未开通' : row.admin_user_status }}
+                      </el-tag>
+                      <br />
+                      <small>{{ row.admin_username || '点击开通账号' }}</small>
+                    </template>
+                  </el-table-column>
                   <el-table-column label="状态" width="100">
                     <template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status }}</el-tag></template>
                   </el-table-column>

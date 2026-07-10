@@ -3227,7 +3227,7 @@ function platform_customer_payload(array $data, array $current = []): array
     ];
 }
 
-function list_platform_customers(PDO $main): array
+function list_platform_customers(PDO $main, ?PDO $sitePdo = null): array
 {
     ensure_center_tables($main);
     $where = [];
@@ -3257,10 +3257,17 @@ function list_platform_customers(PDO $main): array
         ORDER BY c.id DESC
         LIMIT {$pageSize} OFFSET {$offset}");
     $stmt->execute($params);
+    $adminMap = $sitePdo ? platform_customer_admin_map($sitePdo) : [];
     return [
-        'items' => array_map(function (array $row) {
+        'items' => array_map(function (array $row) use ($adminMap) {
             $row['site_count'] = (int)($row['site_count'] ?? 0);
             $row['active_site_count'] = (int)($row['active_site_count'] ?? 0);
+            $admin = $adminMap[(int)($row['id'] ?? 0)] ?? null;
+            $row['admin_user_id'] = $admin ? (int)($admin['id'] ?? 0) : null;
+            $row['admin_username'] = $admin ? (string)($admin['username'] ?? '') : '';
+            $row['admin_display_name'] = $admin ? (string)($admin['display_name'] ?? '') : '';
+            $row['admin_user_status'] = $admin ? (string)($admin['status'] ?? 'active') : 'none';
+            $row['admin_last_login_at'] = $admin['last_login_at'] ?? null;
             return $row;
         }, $stmt->fetchAll()),
         'pagination' => [
@@ -3270,6 +3277,23 @@ function list_platform_customers(PDO $main): array
             'total_pages' => (int)ceil($total / $pageSize),
         ],
     ];
+}
+
+function platform_customer_admin_map(PDO $sitePdo): array
+{
+    ensure_auth_tables($sitePdo);
+    $stmt = $sitePdo->query("SELECT id, username, display_name, customer_id, status, last_login_at, updated_at
+        FROM admin_users
+        WHERE role = 'customer_admin' AND customer_id IS NOT NULL
+        ORDER BY id ASC");
+    $map = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $customerId = (int)($row['customer_id'] ?? 0);
+        if ($customerId > 0 && !isset($map[$customerId])) {
+            $map[$customerId] = $row;
+        }
+    }
+    return $map;
 }
 
 function save_platform_customer(PDO $main, array $data, ?int $id = null): array
@@ -9807,7 +9831,7 @@ try {
     }
 
     if ($method === 'GET' && $path === '/platform/customers') {
-        ok(list_platform_customers(main_pdo()));
+        ok(list_platform_customers(main_pdo(), $pdo));
     }
 
     if ($method === 'POST' && $path === '/platform/customers') {
