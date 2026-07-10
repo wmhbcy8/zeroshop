@@ -12,6 +12,7 @@ $checks = [
     ['script' => 'verify_ai_collector_distribution.php', 'args' => [$baseUrl]],
     ['script' => 'verify_site_scope_and_publish_restore.php', 'args' => [$baseUrl]],
     ['script' => 'verify_deploy_package_flow.php', 'args' => [$baseUrl]],
+    ['script' => 'verify_platform_admin_flow.php', 'args' => [$baseUrl]],
 ];
 
 if ($includeLiveClone) {
