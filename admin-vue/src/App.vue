@@ -657,6 +657,12 @@
               <el-table-column label="价格" width="140">
                 <template #default="{ row }">{{ row.currency || 'CNY' }} {{ row.monthly_price || 0 }}/月</template>
               </el-table-column>
+              <el-table-column label="使用情况" width="160">
+                <template #default="{ row }">
+                  <strong>{{ row.customer_count || 0 }} 客户</strong><br />
+                  <small>{{ row.active_customer_count || 0 }} 启用 / {{ row.site_count || 0 }} 站点</small>
+                </template>
+              </el-table-column>
               <el-table-column prop="description" label="说明" min-width="220" />
               <el-table-column label="状态" width="100">
                 <template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status === 'active' ? '启用' : '停用' }}</el-tag></template>
@@ -664,7 +670,7 @@
               <el-table-column label="操作" width="130">
                 <template #default="{ row }">
                   <el-button link type="primary" @click="editPlatformPlan(row)">编辑</el-button>
-                  <el-button link type="danger" @click="deletePlatformPlan(row)">删除</el-button>
+                  <el-button link type="danger" :disabled="Boolean(row.in_use)" @click="deletePlatformPlan(row)">删除</el-button>
                 </template>
               </el-table-column>
             </el-table>

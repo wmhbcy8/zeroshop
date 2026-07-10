@@ -2264,7 +2264,34 @@ function list_subscription_plans(PDO $main, bool $activeOnly = false): array
     ensure_center_tables($main);
     $where = $activeOnly ? "WHERE status = 'active'" : '';
     $items = $main->query("SELECT * FROM subscription_plans {$where} ORDER BY sort_order ASC, id ASC")->fetchAll();
-    return ['items' => array_map('normalize_subscription_plan', $items)];
+    $usage = [];
+    $stmt = $main->query("SELECT c.plan_key, COUNT(c.id) AS customer_count, SUM(c.status = 'active') AS active_customer_count, COALESCE(SUM(site_counts.site_count), 0) AS site_count
+        FROM customers c
+        LEFT JOIN (
+            SELECT customer_id, COUNT(*) AS site_count
+            FROM sites
+            WHERE status <> 'archived'
+            GROUP BY customer_id
+        ) site_counts ON site_counts.customer_id = c.id
+        GROUP BY c.plan_key");
+    foreach ($stmt->fetchAll() as $row) {
+        $usage[(string)($row['plan_key'] ?? '')] = [
+            'customer_count' => (int)($row['customer_count'] ?? 0),
+            'active_customer_count' => (int)($row['active_customer_count'] ?? 0),
+            'site_count' => (int)($row['site_count'] ?? 0),
+        ];
+    }
+    return [
+        'items' => array_map(static function (array $row) use ($usage): array {
+            $item = normalize_subscription_plan($row);
+            $itemUsage = $usage[(string)($item['plan_key'] ?? '')] ?? [];
+            $item['customer_count'] = (int)($itemUsage['customer_count'] ?? 0);
+            $item['active_customer_count'] = (int)($itemUsage['active_customer_count'] ?? 0);
+            $item['site_count'] = (int)($itemUsage['site_count'] ?? 0);
+            $item['in_use'] = $item['customer_count'] > 0;
+            return $item;
+        }, $items),
+    ];
 }
 
 function normalize_subscription_plan(array $row): array

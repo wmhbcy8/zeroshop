@@ -41,10 +41,16 @@ try {
     $plans = api_request($baseUrl, 'GET', '/api/platform/plans', $token);
     $planItems = is_array($plans['items'] ?? null) ? $plans['items'] : [];
     $planKeys = array_map(static fn($item): string => (string)($item['plan_key'] ?? ''), $planItems);
+    $starterPlan = find_plan($planItems, 'starter');
     $rows[] = [
         'name' => 'platform plan list',
         'ok' => in_array('starter', $planKeys, true) && in_array('growth', $planKeys, true) && in_array('enterprise', $planKeys, true),
         'message' => 'plans=' . implode(',', array_filter($planKeys)),
+    ];
+    $rows[] = [
+        'name' => 'platform plan usage stats',
+        'ok' => $starterPlan !== null && array_key_exists('customer_count', $starterPlan) && array_key_exists('site_count', $starterPlan),
+        'message' => 'starter_customers=' . (string)($starterPlan['customer_count'] ?? '-'),
     ];
 
     $planKey = 'verify_plan_' . strtolower(substr(bin2hex(random_bytes(3)), 0, 6));
@@ -216,6 +222,16 @@ function same_plan(array $expected, array $actual): bool
         }
     }
     return true;
+}
+
+function find_plan(array $items, string $planKey): ?array
+{
+    foreach ($items as $item) {
+        if ((string)($item['plan_key'] ?? '') === $planKey) {
+            return is_array($item) ? $item : null;
+        }
+    }
+    return null;
 }
 
 function login(string $baseUrl): string
