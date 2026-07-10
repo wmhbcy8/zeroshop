@@ -425,7 +425,7 @@
               </el-row>
               <el-divider content-position="left">套餐配额</el-divider>
               <el-row :gutter="12">
-                <el-col :span="12"><el-form-item label="套餐"><el-select v-model="platformCustomerForm.plan_key"><el-option label="Starter" value="starter" /><el-option label="Growth" value="growth" /><el-option label="Enterprise" value="enterprise" /></el-select></el-form-item></el-col>
+                <el-col :span="12"><el-form-item label="套餐"><el-select v-model="platformCustomerForm.plan_key" @change="(value) => applyPlanToCustomerForm(value, platformCustomerForm)"><el-option v-for="plan in activePlatformPlans" :key="plan.plan_key" :label="plan.name" :value="plan.plan_key" /></el-select></el-form-item></el-col>
                 <el-col :span="12"><el-form-item label="到期日"><el-date-picker v-model="platformCustomerForm.expires_at" value-format="YYYY-MM-DD" type="date" placeholder="可选" /></el-form-item></el-col>
               </el-row>
               <el-row :gutter="12">
@@ -489,7 +489,7 @@
                 </el-row>
                 <template v-if="customerQuotaForm.action === 'update_plan'">
                   <el-row :gutter="12">
-                    <el-col :span="12"><el-form-item label="套餐"><el-select v-model="customerQuotaForm.plan_key"><el-option label="Starter" value="starter" /><el-option label="Growth" value="growth" /><el-option label="Enterprise" value="enterprise" /></el-select></el-form-item></el-col>
+                    <el-col :span="12"><el-form-item label="套餐"><el-select v-model="customerQuotaForm.plan_key" @change="(value) => applyPlanToCustomerForm(value, customerQuotaForm)"><el-option v-for="plan in activePlatformPlans" :key="plan.plan_key" :label="plan.name" :value="plan.plan_key" /></el-select></el-form-item></el-col>
                     <el-col :span="12"><el-form-item label="到期日"><el-date-picker v-model="customerQuotaForm.expires_at" value-format="YYYY-MM-DD" type="date" placeholder="可选" /></el-form-item></el-col>
                   </el-row>
                   <el-row :gutter="12">
@@ -615,7 +615,7 @@
               <el-col :span="12">
                 <el-form :model="platformSettingsForm.customer_defaults" label-width="116px" class="wide-form">
                   <el-divider content-position="left">新客户默认套餐</el-divider>
-                  <el-form-item label="默认套餐"><el-select v-model="platformSettingsForm.customer_defaults.plan_key"><el-option label="Starter" value="starter" /><el-option label="Growth" value="growth" /><el-option label="Enterprise" value="enterprise" /></el-select></el-form-item>
+                  <el-form-item label="默认套餐"><el-select v-model="platformSettingsForm.customer_defaults.plan_key" @change="(value) => applyPlanToCustomerForm(value, platformSettingsForm.customer_defaults)"><el-option v-for="plan in activePlatformPlans" :key="plan.plan_key" :label="plan.name" :value="plan.plan_key" /></el-select></el-form-item>
                   <el-row :gutter="12">
                     <el-col :span="8"><el-form-item label="站点数"><el-input-number v-model="platformSettingsForm.customer_defaults.max_sites" :min="1" /></el-form-item></el-col>
                     <el-col :span="8"><el-form-item label="AI额度"><el-input-number v-model="platformSettingsForm.customer_defaults.ai_quota" :min="0" /></el-form-item></el-col>
@@ -637,6 +637,60 @@
             <MetricCard title="默认存储" :value="platformSettingsForm.customer_defaults.storage_quota_mb || 0" suffix="MB" note="媒体库容量限制" icon="Folder" />
             <MetricCard title="默认模板" :value="platformSettingsForm.site_defaults.template_key || '-'" note="新站初始化模板" icon="Brush" />
           </div>
+          <el-card class="panel mt16" shadow="never">
+            <template #header>
+              <div class="card-head">
+                <strong>套餐模板</strong>
+                <el-button type="primary" @click="newPlatformPlan">新建套餐</el-button>
+              </div>
+            </template>
+            <el-table :data="platformPlans" height="320" row-key="id">
+              <el-table-column label="套餐" min-width="180">
+                <template #default="{ row }">
+                  <strong>{{ row.name }}</strong><br />
+                  <small>{{ row.plan_key }}</small>
+                </template>
+              </el-table-column>
+              <el-table-column label="额度" min-width="240">
+                <template #default="{ row }">站点 {{ row.max_sites }} / AI {{ row.ai_quota }} / {{ row.storage_quota_mb }}MB</template>
+              </el-table-column>
+              <el-table-column label="价格" width="140">
+                <template #default="{ row }">{{ row.currency || 'CNY' }} {{ row.monthly_price || 0 }}/月</template>
+              </el-table-column>
+              <el-table-column prop="description" label="说明" min-width="220" />
+              <el-table-column label="状态" width="100">
+                <template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status === 'active' ? '启用' : '停用' }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="操作" width="130">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="editPlatformPlan(row)">编辑</el-button>
+                  <el-button link type="danger" @click="deletePlatformPlan(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+          <el-drawer v-model="platformPlanDrawerVisible" size="560px" :title="platformPlanForm.id ? '编辑套餐' : '新建套餐'">
+            <el-form :model="platformPlanForm" label-width="104px">
+              <el-form-item label="套餐 Key"><el-input v-model="platformPlanForm.plan_key" placeholder="starter / growth / enterprise" /></el-form-item>
+              <el-form-item label="套餐名称"><el-input v-model="platformPlanForm.name" /></el-form-item>
+              <el-form-item label="说明"><el-input v-model="platformPlanForm.description" type="textarea" :rows="3" /></el-form-item>
+              <el-row :gutter="12">
+                <el-col :span="8"><el-form-item label="站点数"><el-input-number v-model="platformPlanForm.max_sites" :min="1" /></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="AI额度"><el-input-number v-model="platformPlanForm.ai_quota" :min="0" /></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="存储MB"><el-input-number v-model="platformPlanForm.storage_quota_mb" :min="0" /></el-form-item></el-col>
+              </el-row>
+              <el-row :gutter="12">
+                <el-col :span="8"><el-form-item label="月费"><el-input-number v-model="platformPlanForm.monthly_price" :min="0" :precision="2" /></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="币种"><el-input v-model="platformPlanForm.currency" /></el-form-item></el-col>
+                <el-col :span="8"><el-form-item label="排序"><el-input-number v-model="platformPlanForm.sort_order" /></el-form-item></el-col>
+              </el-row>
+              <el-form-item label="状态"><el-select v-model="platformPlanForm.status"><el-option label="启用" value="active" /><el-option label="停用" value="disabled" /></el-select></el-form-item>
+              <div class="drawer-actions">
+                <el-button @click="platformPlanDrawerVisible = false">取消</el-button>
+                <el-button type="primary" @click="savePlatformPlan">保存套餐</el-button>
+              </div>
+            </el-form>
+          </el-drawer>
         </section>
 
         <section v-if="view === 'dashboard'">
@@ -3354,6 +3408,7 @@ const platformSites = ref<any[]>([])
 const platformPublishTasks = ref<any[]>([])
 const platformDomainApplications = ref<any[]>([])
 const platformSettings = ref<any>({})
+const platformPlans = ref<any[]>([])
 const deployNodes = ref<any[]>([])
 const aiProviders = ref<any[]>([])
 const currentSiteId = ref<number | string>(10001)
@@ -3390,6 +3445,7 @@ const batchTaskDrawerVisible = ref(false)
 const categoryDrawerVisible = ref(false)
 const tagDrawerVisible = ref(false)
 const platformCustomerDrawerVisible = ref(false)
+const platformPlanDrawerVisible = ref(false)
 const customerQuotaDrawerVisible = ref(false)
 const customerAdminDrawerVisible = ref(false)
 const deployNodeDrawerVisible = ref(false)
@@ -3436,6 +3492,7 @@ const categoryForm = reactive<any>({})
 const categoryType = ref<'article' | 'product'>('article')
 const tagForm = reactive<any>({})
 const platformCustomerForm = reactive<any>({})
+const platformPlanForm = reactive<any>({})
 const customerQuotaDetail = reactive<any>({ customer: {}, usage: {}, logs: [] })
 const customerQuotaForm = reactive<any>({})
 const customerAdminForm = reactive<any>({})
@@ -3452,6 +3509,14 @@ const platformSettingsForm = reactive<any>({
   platform: { app_name: '化简', admin_title: '化简 SaaS 建站集群', base_domain: 'huajian.local', support_phone: '', support_email: '' },
   customer_defaults: { plan_key: 'starter', max_sites: 10, ai_quota: 1000, storage_quota_mb: 1024 },
   site_defaults: { language: 'zh-CN', template_key: 'business-clean', subdomain_suffix: 'huajian.local' }
+})
+const activePlatformPlans = computed(() => {
+  const active = platformPlans.value.filter((item: any) => item.status === 'active')
+  return active.length ? active : [
+    { plan_key: 'starter', name: 'Starter', max_sites: 10, ai_quota: 1000, storage_quota_mb: 1024 },
+    { plan_key: 'growth', name: 'Growth', max_sites: 50, ai_quota: 10000, storage_quota_mb: 10240 },
+    { plan_key: 'enterprise', name: 'Enterprise', max_sites: 500, ai_quota: 100000, storage_quota_mb: 102400 }
+  ]
 })
 const selectedAiProviderId = ref<number | string>('')
 const moduleScopeFilter = ref('all')
@@ -4024,7 +4089,7 @@ async function loadAll() {
 
 async function loadPlatform() {
   if (!isPlatformAdmin.value) return
-  const [overview, customers, siteData, nodes, providers, publishTasks, domainApps, systemSettings, templateData] = await Promise.all([
+  const [overview, customers, siteData, nodes, providers, publishTasks, domainApps, systemSettings, templateData, planData] = await Promise.all([
     request('/api/platform/overview'),
     request('/api/platform/customers?page_size=100'),
     request('/api/platform/sites'),
@@ -4033,7 +4098,8 @@ async function loadPlatform() {
     request('/api/platform/publish-tasks?page_size=20'),
     request('/api/platform/domain-applications?page_size=100'),
     request('/api/platform/system-settings'),
-    request('/api/platform/templates')
+    request('/api/platform/templates'),
+    request('/api/platform/plans')
   ])
   platformOverview.value = overview || {}
   platformCustomers.value = customers.items || []
@@ -4043,6 +4109,7 @@ async function loadPlatform() {
   platformPublishTasks.value = publishTasks.items || []
   platformDomainApplications.value = domainApps.items || []
   templates.value = templateData.items || templates.value
+  platformPlans.value = planData.items || []
   applyPlatformSettings(systemSettings)
 }
 
@@ -4070,7 +4137,11 @@ function applyPlatformSettings(data: any = {}) {
 
 async function loadPlatformSystemSettings() {
   if (!isPlatformAdmin.value) return
-  const data = await request('/api/platform/system-settings')
+  const [data, planData] = await Promise.all([
+    request('/api/platform/system-settings'),
+    request('/api/platform/plans')
+  ])
+  platformPlans.value = planData.items || []
   applyPlatformSettings(data)
 }
 
@@ -4078,6 +4149,72 @@ async function savePlatformSystemSettings() {
   const data = await request('/api/platform/system-settings', { method: 'PUT', data: platformSettingsForm })
   applyPlatformSettings(data)
   ElMessage.success('平台系统设置已保存')
+  await loadPlatform()
+}
+
+function planByKey(planKey: string) {
+  return activePlatformPlans.value.find((item: any) => item.plan_key === planKey) || null
+}
+
+function applyPlanToCustomerForm(planKey: string, target: any) {
+  const plan = planByKey(planKey)
+  if (!plan) return
+  target.max_sites = Number(plan.max_sites || target.max_sites || 1)
+  target.ai_quota = Number(plan.ai_quota || 0)
+  target.storage_quota_mb = Number(plan.storage_quota_mb || 0)
+}
+
+function resetPlatformPlanForm() {
+  Object.assign(platformPlanForm, {
+    id: '',
+    plan_key: '',
+    name: '',
+    description: '',
+    max_sites: 10,
+    ai_quota: 1000,
+    storage_quota_mb: 1024,
+    monthly_price: 0,
+    currency: 'CNY',
+    sort_order: (platformPlans.value.length + 1) * 10,
+    status: 'active'
+  })
+}
+
+function newPlatformPlan() {
+  resetPlatformPlanForm()
+  platformPlanDrawerVisible.value = true
+}
+
+function editPlatformPlan(row: any) {
+  Object.assign(platformPlanForm, {
+    id: row.id,
+    plan_key: row.plan_key || '',
+    name: row.name || '',
+    description: row.description || '',
+    max_sites: Number(row.max_sites || 1),
+    ai_quota: Number(row.ai_quota || 0),
+    storage_quota_mb: Number(row.storage_quota_mb || 0),
+    monthly_price: Number(row.monthly_price || 0),
+    currency: row.currency || 'CNY',
+    sort_order: Number(row.sort_order || 0),
+    status: row.status || 'active'
+  })
+  platformPlanDrawerVisible.value = true
+}
+
+async function savePlatformPlan() {
+  const method = platformPlanForm.id ? 'PUT' : 'POST'
+  const path = platformPlanForm.id ? `/api/platform/plans/${platformPlanForm.id}` : '/api/platform/plans'
+  await request(path, { method, data: { ...platformPlanForm } })
+  platformPlanDrawerVisible.value = false
+  ElMessage.success('套餐已保存')
+  await loadPlatform()
+}
+
+async function deletePlatformPlan(row: any) {
+  await ElMessageBox.confirm(`确定删除套餐「${row.name}」吗？已有客户使用时不能删除，可改为停用。`)
+  await request(`/api/platform/plans/${row.id}`, { method: 'DELETE' })
+  ElMessage.success('套餐已删除')
   await loadPlatform()
 }
 

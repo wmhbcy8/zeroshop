@@ -8,6 +8,7 @@ $rows = [];
 $originalSettings = null;
 $customerId = 0;
 $originalPlan = null;
+$createdPlanId = 0;
 
 try {
     $me = api_request($baseUrl, 'GET', '/api/auth/me', $token);
@@ -35,6 +36,56 @@ try {
         'name' => 'platform settings save',
         'ok' => (string)($savedSettings['platform']['support_phone'] ?? '') === $marker,
         'message' => $marker,
+    ];
+
+    $plans = api_request($baseUrl, 'GET', '/api/platform/plans', $token);
+    $planItems = is_array($plans['items'] ?? null) ? $plans['items'] : [];
+    $planKeys = array_map(static fn($item): string => (string)($item['plan_key'] ?? ''), $planItems);
+    $rows[] = [
+        'name' => 'platform plan list',
+        'ok' => in_array('starter', $planKeys, true) && in_array('growth', $planKeys, true) && in_array('enterprise', $planKeys, true),
+        'message' => 'plans=' . implode(',', array_filter($planKeys)),
+    ];
+
+    $planKey = 'verify_plan_' . strtolower(substr(bin2hex(random_bytes(3)), 0, 6));
+    $createdPlan = api_request($baseUrl, 'POST', '/api/platform/plans', $token, [
+        'plan_key' => $planKey,
+        'name' => 'Verify Plan',
+        'description' => 'temporary verifier plan',
+        'max_sites' => 3,
+        'ai_quota' => 33,
+        'storage_quota_mb' => 333,
+        'monthly_price' => 9.9,
+        'currency' => 'CNY',
+        'sort_order' => 999,
+        'status' => 'active',
+    ]);
+    $createdPlanId = (int)($createdPlan['id'] ?? 0);
+    $rows[] = [
+        'name' => 'platform plan create',
+        'ok' => $createdPlanId > 0 && (string)($createdPlan['plan_key'] ?? '') === $planKey,
+        'message' => $planKey,
+    ];
+
+    $updatedPlan = api_request($baseUrl, 'PUT', '/api/platform/plans/' . $createdPlanId, $token, array_replace($createdPlan, [
+        'name' => 'Verify Plan Updated',
+        'max_sites' => 5,
+        'status' => 'disabled',
+    ]));
+    $rows[] = [
+        'name' => 'platform plan update',
+        'ok' => (int)($updatedPlan['max_sites'] ?? 0) === 5 && (string)($updatedPlan['status'] ?? '') === 'disabled',
+        'message' => (string)($updatedPlan['name'] ?? ''),
+    ];
+
+    api_request($baseUrl, 'DELETE', '/api/platform/plans/' . $createdPlanId, $token);
+    $createdPlanId = 0;
+    $afterDeletePlans = api_request($baseUrl, 'GET', '/api/platform/plans', $token);
+    $afterDeleteKeys = array_map(static fn($item): string => (string)($item['plan_key'] ?? ''), $afterDeletePlans['items'] ?? []);
+    $rows[] = [
+        'name' => 'platform plan delete',
+        'ok' => !in_array($planKey, $afterDeleteKeys, true),
+        'message' => $planKey,
     ];
 
     $customers = api_request($baseUrl, 'GET', '/api/platform/customers?page_size=20', $token);
@@ -97,6 +148,12 @@ try {
     ];
     $failed = true;
 } finally {
+    if ($createdPlanId > 0) {
+        try {
+            api_request($baseUrl, 'DELETE', '/api/platform/plans/' . $createdPlanId, $token);
+        } catch (Throwable) {
+        }
+    }
     if (is_array($originalPlan) && $customerId > 0) {
         try {
             api_request($baseUrl, 'POST', '/api/platform/customers/' . $customerId . '/plan-adjust', $token, $originalPlan + [

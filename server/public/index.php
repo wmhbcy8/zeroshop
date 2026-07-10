@@ -1958,6 +1958,23 @@ function ensure_center_tables(PDO $main): void
     ensure_column($main, 'customers', 'ai_used', 'INT UNSIGNED NOT NULL DEFAULT 0');
     ensure_column($main, 'customers', 'storage_quota_mb', 'INT UNSIGNED NOT NULL DEFAULT 1024');
     ensure_column($main, 'customers', 'expires_at', 'DATE');
+    $main->exec("CREATE TABLE IF NOT EXISTS subscription_plans (
+        id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+        plan_key VARCHAR(60) NOT NULL UNIQUE,
+        name VARCHAR(100) NOT NULL,
+        description VARCHAR(500),
+        max_sites INT UNSIGNED NOT NULL DEFAULT 1,
+        ai_quota INT UNSIGNED NOT NULL DEFAULT 0,
+        storage_quota_mb INT UNSIGNED NOT NULL DEFAULT 0,
+        monthly_price DECIMAL(10,2) NOT NULL DEFAULT 0,
+        currency VARCHAR(10) NOT NULL DEFAULT 'CNY',
+        sort_order INT NOT NULL DEFAULT 0,
+        status VARCHAR(30) NOT NULL DEFAULT 'active',
+        created_at DATETIME NOT NULL,
+        updated_at DATETIME NOT NULL,
+        INDEX idx_status (status),
+        INDEX idx_sort_order (sort_order)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $main->exec("CREATE TABLE IF NOT EXISTS sites (
         id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
         customer_id BIGINT UNSIGNED NOT NULL,
@@ -2180,9 +2197,121 @@ function ensure_center_tables(PDO $main): void
         INDEX idx_created_at (created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     $now = now();
+    seed_default_subscription_plans($main, $now);
     $main->exec("INSERT INTO customers (id, name, phone, email, company, status, created_at, updated_at)
         VALUES (1, '默认客户', '', '', '', 'active', '{$now}', '{$now}')
         ON DUPLICATE KEY UPDATE updated_at=VALUES(updated_at)");
+}
+
+function seed_default_subscription_plans(PDO $main, string $now): void
+{
+    $plans = [
+        ['starter', 'Starter', '适合单品牌试运行', 10, 1000, 1024, 0, 10],
+        ['growth', 'Growth', '适合多站点内容增长', 50, 10000, 10240, 0, 20],
+        ['enterprise', 'Enterprise', '适合集群化独立站运营', 500, 100000, 102400, 0, 30],
+    ];
+    $stmt = $main->prepare("INSERT INTO subscription_plans
+        (plan_key, name, description, max_sites, ai_quota, storage_quota_mb, monthly_price, currency, sort_order, status, created_at, updated_at)
+        VALUES (:plan_key, :name, :description, :max_sites, :ai_quota, :storage_quota_mb, :monthly_price, 'CNY', :sort_order, 'active', :created_at, :updated_at)
+        ON DUPLICATE KEY UPDATE updated_at = updated_at");
+    foreach ($plans as $plan) {
+        $stmt->execute([
+            'plan_key' => $plan[0],
+            'name' => $plan[1],
+            'description' => $plan[2],
+            'max_sites' => $plan[3],
+            'ai_quota' => $plan[4],
+            'storage_quota_mb' => $plan[5],
+            'monthly_price' => $plan[6],
+            'sort_order' => $plan[7],
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+    }
+}
+
+function subscription_plan_payload(array $data, array $current = []): array
+{
+    $key = strtolower(trim((string)($data['plan_key'] ?? ($current['plan_key'] ?? ''))));
+    if ($key === '' || !preg_match('/^[a-z0-9][a-z0-9_-]{1,58}[a-z0-9]$/', $key)) {
+        fail('套餐 Key 只能使用 3-60 位小写字母、数字、横线或下划线', 'VALIDATION_ERROR', 422);
+    }
+    $name = trim((string)($data['name'] ?? ($current['name'] ?? '')));
+    if ($name === '') {
+        fail('套餐名称不能为空', 'VALIDATION_ERROR', 422);
+    }
+    $status = (string)($data['status'] ?? ($current['status'] ?? 'active'));
+    if (!in_array($status, ['active', 'disabled'], true)) {
+        $status = 'active';
+    }
+    $currency = strtoupper(trim((string)($data['currency'] ?? ($current['currency'] ?? 'CNY')))) ?: 'CNY';
+    return [
+        'plan_key' => mb_substr($key, 0, 60, 'UTF-8'),
+        'name' => mb_substr($name, 0, 100, 'UTF-8'),
+        'description' => mb_substr(trim((string)($data['description'] ?? ($current['description'] ?? ''))), 0, 500, 'UTF-8'),
+        'max_sites' => max(1, (int)($data['max_sites'] ?? ($current['max_sites'] ?? 1))),
+        'ai_quota' => max(0, (int)($data['ai_quota'] ?? ($current['ai_quota'] ?? 0))),
+        'storage_quota_mb' => max(0, (int)($data['storage_quota_mb'] ?? ($current['storage_quota_mb'] ?? 0))),
+        'monthly_price' => max(0, (float)($data['monthly_price'] ?? ($current['monthly_price'] ?? 0))),
+        'currency' => mb_substr($currency, 0, 10, 'UTF-8'),
+        'sort_order' => (int)($data['sort_order'] ?? ($current['sort_order'] ?? 0)),
+        'status' => $status,
+    ];
+}
+
+function list_subscription_plans(PDO $main, bool $activeOnly = false): array
+{
+    ensure_center_tables($main);
+    $where = $activeOnly ? "WHERE status = 'active'" : '';
+    $items = $main->query("SELECT * FROM subscription_plans {$where} ORDER BY sort_order ASC, id ASC")->fetchAll();
+    return ['items' => array_map('normalize_subscription_plan', $items)];
+}
+
+function normalize_subscription_plan(array $row): array
+{
+    $row['id'] = (int)($row['id'] ?? 0);
+    $row['max_sites'] = (int)($row['max_sites'] ?? 0);
+    $row['ai_quota'] = (int)($row['ai_quota'] ?? 0);
+    $row['storage_quota_mb'] = (int)($row['storage_quota_mb'] ?? 0);
+    $row['monthly_price'] = (float)($row['monthly_price'] ?? 0);
+    $row['sort_order'] = (int)($row['sort_order'] ?? 0);
+    return $row;
+}
+
+function save_subscription_plan(PDO $main, array $data, ?int $id = null): array
+{
+    ensure_center_tables($main);
+    $current = $id ? fetch_one($main, 'subscription_plans', $id) : [];
+    if ($id && !$current) {
+        fail('套餐不存在', 'NOT_FOUND', 404);
+    }
+    $payload = subscription_plan_payload($data, $current ?: []);
+    $now = now();
+    if ($id) {
+        $stmt = $main->prepare('UPDATE subscription_plans SET plan_key=:plan_key, name=:name, description=:description, max_sites=:max_sites, ai_quota=:ai_quota, storage_quota_mb=:storage_quota_mb, monthly_price=:monthly_price, currency=:currency, sort_order=:sort_order, status=:status, updated_at=:updated_at WHERE id=:id');
+        $stmt->execute($payload + ['id' => $id, 'updated_at' => $now]);
+    } else {
+        $stmt = $main->prepare('INSERT INTO subscription_plans (plan_key, name, description, max_sites, ai_quota, storage_quota_mb, monthly_price, currency, sort_order, status, created_at, updated_at)
+            VALUES (:plan_key, :name, :description, :max_sites, :ai_quota, :storage_quota_mb, :monthly_price, :currency, :sort_order, :status, :created_at, :updated_at)');
+        $stmt->execute($payload + ['created_at' => $now, 'updated_at' => $now]);
+        $id = (int)$main->lastInsertId();
+    }
+    return normalize_subscription_plan(fetch_one($main, 'subscription_plans', (int)$id) ?: []);
+}
+
+function delete_subscription_plan(PDO $main, int $id): void
+{
+    ensure_center_tables($main);
+    $plan = fetch_one($main, 'subscription_plans', $id);
+    if (!$plan) {
+        fail('套餐不存在', 'NOT_FOUND', 404);
+    }
+    $stmt = $main->prepare('SELECT COUNT(*) FROM customers WHERE plan_key = ?');
+    $stmt->execute([(string)$plan['plan_key']]);
+    if ((int)$stmt->fetchColumn() > 0) {
+        fail('该套餐已有客户使用，不能删除，可以先停用', 'PLAN_IN_USE', 409);
+    }
+    $main->prepare('DELETE FROM subscription_plans WHERE id = ?')->execute([$id]);
 }
 
 function site_table_count(PDO $pdo, string $table, string $where = ''): int
@@ -9629,6 +9758,25 @@ try {
 
     if ($method === 'PUT' && $path === '/platform/system-settings') {
         ok(save_platform_system_settings(main_pdo(), body_json()), '平台系统设置已保存');
+    }
+
+    if ($method === 'GET' && $path === '/platform/plans') {
+        ok(list_subscription_plans(main_pdo(), (string)($_GET['active'] ?? '') === '1'));
+    }
+
+    if ($method === 'POST' && $path === '/platform/plans') {
+        ok(save_subscription_plan(main_pdo(), body_json()), '套餐已保存');
+    }
+
+    if ($params = route_param('/platform/plans/{id}', $path)) {
+        $id = (int)$params['id'];
+        if ($method === 'PUT') {
+            ok(save_subscription_plan(main_pdo(), body_json(), $id), '套餐已保存');
+        }
+        if ($method === 'DELETE') {
+            delete_subscription_plan(main_pdo(), $id);
+            ok([], '套餐已删除');
+        }
     }
 
     if ($method === 'GET' && $path === '/platform/customers') {
