@@ -668,11 +668,33 @@ function site_for(array $site, string $rootBase): array
     return $site;
 }
 
-function with_urls(array $items, string $prefix): array
+function content_asset_url(string|null $value, string $rootBase): string
 {
-    return array_map(function ($item) use ($prefix) {
+    $url = trim((string)($value ?? ''));
+    if ($url === '' || preg_match('#^(https?:)?//#i', $url) || preg_match('/^(data:|blob:|mailto:|tel:|javascript:|#)/i', $url)) {
+        return $url;
+    }
+    if (str_starts_with($url, '/') || $rootBase === '' || str_starts_with($url, $rootBase)) {
+        return $url;
+    }
+    return $rootBase . ltrim($url, '/');
+}
+
+function with_asset_base(array $item, string $rootBase): array
+{
+    foreach (['cover', 'image'] as $key) {
+        if (isset($item[$key])) {
+            $item[$key] = content_asset_url((string)$item[$key], $rootBase);
+        }
+    }
+    return $item;
+}
+
+function with_urls(array $items, string $prefix, string $assetBase = ''): array
+{
+    return array_map(function ($item) use ($prefix, $assetBase) {
         $item['url'] = $prefix . $item['slug'] . '.html';
-        return $item;
+        return with_asset_base($item, $assetBase);
     }, $items);
 }
 
@@ -898,8 +920,8 @@ function home_modules_html(array $site, array $articles, array $products, string
 {
     $site = site_for($site, $rootBase);
     $sections = $site['home_sections'];
-    $articleItems = with_urls(array_slice($articles, 0, 6), $rootBase . 'news/');
-    $productItems = with_urls(array_slice($products, 0, 6), $rootBase . 'products/');
+    $articleItems = with_urls(array_slice($articles, 0, 6), $rootBase . 'news/', $rootBase);
+    $productItems = with_urls(array_slice($products, 0, 6), $rootBase . 'products/', $rootBase);
     $html = '';
 
     foreach ($site['home_slots'] as $slot) {
@@ -1017,8 +1039,8 @@ function base_context(array $site, array $categories, array $productCategories, 
 {
     return [
         'site' => site_for($site, $rootBase),
-        'articles' => with_urls(array_slice($articles, 0, 6), $rootBase . 'news/'),
-        'products' => with_urls(array_slice($products, 0, 6), $rootBase . 'products/'),
+        'articles' => with_urls(array_slice($articles, 0, 6), $rootBase . 'news/', $rootBase),
+        'products' => with_urls(array_slice($products, 0, 6), $rootBase . 'products/', $rootBase),
         'home_modules' => home_modules_html($site, $articles, $products, $rootBase),
         'floating_actions' => floating_actions_html($site, $rootBase),
         'breadcrumb_html' => '',
@@ -1058,13 +1080,18 @@ if (!is_dir($templateRoot) || !is_file($templateRoot . DIRECTORY_SEPARATOR . 'te
     $templateRoot = $root . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . $templateKey;
 }
 $templateMeta = read_json($templateRoot . DIRECTORY_SEPARATOR . 'template.json');
+$staticMirrorMode = false;
 if (($templateMeta['clone_mode'] ?? '') === 'static_mirror' && is_dir($templateRoot . DIRECTORY_SEPARATOR . 'mirror')) {
     reset_generated_output($publicRoot);
     copy_dir($templateRoot . DIRECTORY_SEPARATOR . 'mirror', $publicRoot);
     promote_static_mirror_entry($templateMeta, $publicRoot);
     apply_static_mirror_region_overrides($templateRoot, $publicRoot, $templateKey, $site);
     echo "Generated static mirror template {$templateKey}: {$publicRoot}\n";
-    exit;
+    $staticMirrorMode = true;
+    $systemTemplateRoot = $root . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . 'business-clean';
+    if (is_dir($systemTemplateRoot) && is_file($systemTemplateRoot . DIRECTORY_SEPARATOR . 'template.json')) {
+        $templateRoot = $systemTemplateRoot;
+    }
 }
 
 $categoryMap = [];
@@ -1077,16 +1104,20 @@ foreach ($articles as &$article) {
 unset($article);
 
 $engine = new HuajianTemplateEngine($templateRoot);
-reset_generated_output($publicRoot);
+if (!$staticMirrorMode) {
+    reset_generated_output($publicRoot);
+}
 copy_dir($templateRoot . DIRECTORY_SEPARATOR . 'assets', $publicRoot . DIRECTORY_SEPARATOR . 'assets');
 
-write_file($publicRoot . DIRECTORY_SEPARATOR . 'index.html', $engine->renderFile('pages/index.html', base_context($site, $categories, $productCategories, $articles, $products) + [
-    'seo' => [
-        'title' => ($site['name'] ?? '') . ' - ' . ($site['slogan'] ?? ''),
-        'description' => $site['description'] ?? '',
-        'keywords' => $site['keywords'] ?? '',
-    ],
-]));
+if (!$staticMirrorMode) {
+    write_file($publicRoot . DIRECTORY_SEPARATOR . 'index.html', $engine->renderFile('pages/index.html', base_context($site, $categories, $productCategories, $articles, $products) + [
+        'seo' => [
+            'title' => ($site['name'] ?? '') . ' - ' . ($site['slogan'] ?? ''),
+            'description' => $site['description'] ?? '',
+            'keywords' => $site['keywords'] ?? '',
+        ],
+    ]));
+}
 
 write_file($publicRoot . DIRECTORY_SEPARATOR . 'contact.html', $engine->renderFile('pages/contact.html', base_context($site, $categories, $productCategories, $articles, $products) + [
     'seo' => [
@@ -1129,7 +1160,7 @@ write_file($publicRoot . DIRECTORY_SEPARATOR . '404.html', $engine->renderFile('
 ]));
 
 write_file($publicRoot . DIRECTORY_SEPARATOR . 'news' . DIRECTORY_SEPARATOR . 'index.html', $engine->renderFile('pages/article-list.html', base_context($site, $categories, $productCategories, $articles, $products, '../', '../') + [
-    'articles' => with_urls($articles, ''),
+    'articles' => with_urls($articles, '', '../'),
     'seo' => [
         'title' => '行业资讯 - ' . ($site['name'] ?? ''),
         'description' => '行业资讯、产品知识和解决方案内容。',
@@ -1143,7 +1174,7 @@ foreach ($categories as $category) {
         continue;
     }
     write_file($publicRoot . DIRECTORY_SEPARATOR . 'category' . DIRECTORY_SEPARATOR . $category['slug'] . DIRECTORY_SEPARATOR . 'index.html', $engine->renderFile('pages/article-list.html', base_context($site, $categories, $productCategories, $categoryArticles, $products, '../../', '../../') + [
-        'articles' => with_urls($categoryArticles, '../../news/'),
+        'articles' => with_urls($categoryArticles, '../../news/', '../../'),
         'seo' => [
             'title' => ($category['seo_title'] ?? $category['name']) . ' - ' . ($site['name'] ?? ''),
             'description' => $category['seo_description'] ?? ($category['description'] ?? ''),
@@ -1159,7 +1190,7 @@ foreach ($tags as $tag) {
         continue;
     }
     write_file($publicRoot . DIRECTORY_SEPARATOR . 'tag' . DIRECTORY_SEPARATOR . $tag['slug'] . DIRECTORY_SEPARATOR . 'index.html', $engine->renderFile('pages/article-list.html', base_context($site, $categories, $productCategories, $tagArticles, $products, '../../', '../../') + [
-        'articles' => with_urls($tagArticles, '../../news/'),
+        'articles' => with_urls($tagArticles, '../../news/', '../../'),
         'seo' => [
             'title' => $tag['name'] . ' - 文章标签 - ' . ($site['name'] ?? ''),
             'description' => $tag['description'] ?: ('浏览标签“' . $tag['name'] . '”下的文章内容。'),
@@ -1169,6 +1200,7 @@ foreach ($tags as $tag) {
 }
 
 foreach ($articles as $article) {
+    $article = with_asset_base($article, '../');
     $relatedArticles = array_values(array_filter($articles, fn($item) => (int)$item['id'] !== (int)$article['id']));
     $relatedArticles = array_map(fn($item) => [
         'title' => $item['title'] ?? '',
@@ -1193,7 +1225,7 @@ foreach ($articles as $article) {
 }
 
 write_file($publicRoot . DIRECTORY_SEPARATOR . 'products' . DIRECTORY_SEPARATOR . 'index.html', $engine->renderFile('pages/product-list.html', base_context($site, $categories, $productCategories, $articles, $products, '../', '../') + [
-    'products' => with_urls($products, ''),
+    'products' => with_urls($products, '', '../'),
     'seo' => [
         'title' => '产品中心 - ' . ($site['name'] ?? ''),
         'description' => '产品中心、商品展示和采购下单入口。',
@@ -1207,7 +1239,7 @@ foreach ($productCategories as $category) {
         continue;
     }
     write_file($publicRoot . DIRECTORY_SEPARATOR . 'product-category' . DIRECTORY_SEPARATOR . $category['slug'] . DIRECTORY_SEPARATOR . 'index.html', $engine->renderFile('pages/product-list.html', base_context($site, $categories, $productCategories, $articles, $categoryProducts, '../../', '../../') + [
-        'products' => with_urls($categoryProducts, '../../products/'),
+        'products' => with_urls($categoryProducts, '../../products/', '../../'),
         'seo' => [
             'title' => ($category['seo_title'] ?? $category['name']) . ' - ' . ($site['name'] ?? ''),
             'description' => $category['seo_description'] ?? ($category['description'] ?? ''),
@@ -1217,6 +1249,7 @@ foreach ($productCategories as $category) {
 }
 
 foreach ($products as $product) {
+    $product = with_asset_base($product, '../');
     $relatedProducts = array_values(array_filter($products, fn($item) => (int)$item['id'] !== (int)$product['id']));
     $relatedProducts = array_map(fn($item) => [
         'title' => $item['title'] ?? '',
