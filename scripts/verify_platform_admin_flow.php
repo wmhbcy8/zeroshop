@@ -112,6 +112,15 @@ try {
         throw new RuntimeException('No platform customer found for quota verification.');
     }
 
+    $impersonated = api_request($baseUrl, 'POST', '/api/platform/customers/' . $customerId . '/impersonate', $token);
+    $rows[] = [
+        'name' => 'customer impersonation token',
+        'ok' => (string)($impersonated['token'] ?? '') !== ''
+            && (int)($impersonated['current_site_id'] ?? 0) > 0
+            && (int)($impersonated['user']['customer_id'] ?? 0) === $customerId,
+        'message' => 'site=' . (string)($impersonated['current_site_id'] ?? '-'),
+    ];
+
     $quota = api_request($baseUrl, 'GET', '/api/platform/customers/' . $customerId . '/quota', $token);
     $originalPlan = customer_plan_from_quota($quota);
     $beforeAiQuota = (int)($originalPlan['ai_quota'] ?? 0);

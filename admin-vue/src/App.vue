@@ -176,11 +176,12 @@
                   <el-table-column label="状态" width="100">
                     <template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'info'">{{ row.status }}</el-tag></template>
                   </el-table-column>
-                  <el-table-column label="操作" width="210">
+                  <el-table-column label="操作" width="280">
                     <template #default="{ row }">
                       <el-button link type="primary" @click="editPlatformCustomer(row)">编辑</el-button>
                       <el-button link type="primary" @click="openCustomerQuota(row)">配额</el-button>
                       <el-button link type="success" @click="openCustomerAdminUser(row)">中台账号</el-button>
+                      <el-button link type="success" :disabled="!(row.site_count || 0)" @click="impersonatePlatformCustomer(row)">进入中台</el-button>
                       <el-button link type="danger" @click="deletePlatformCustomer(row)">删除</el-button>
                     </template>
                   </el-table-column>
@@ -4840,6 +4841,22 @@ async function impersonatePlatformSite(item: any) {
   localStorage.setItem(TOKEN_KEY, data.token)
   currentUser.value = data.user
   currentSiteId.value = data.current_site_id || item.id
+  view.value = 'dashboard'
+  syncCurrentScopedWorkflows()
+  ElMessage.success(`已进入客户中台：${data.site?.name || item.name}`)
+  if (isSuperAdminApp) {
+    window.location.href = '/admin-vue/'
+    return
+  }
+  await loadAll()
+}
+
+async function impersonatePlatformCustomer(item: any) {
+  const data = await request(`/api/platform/customers/${item.id}/impersonate`, { method: 'POST' })
+  token.value = data.token
+  localStorage.setItem(TOKEN_KEY, data.token)
+  currentUser.value = data.user
+  currentSiteId.value = data.current_site_id || data.site?.id || 10001
   view.value = 'dashboard'
   syncCurrentScopedWorkflows()
   ElMessage.success(`已进入客户中台：${data.site?.name || item.name}`)

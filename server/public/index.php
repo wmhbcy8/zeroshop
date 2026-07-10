@@ -3614,6 +3614,25 @@ function platform_impersonate_site(PDO $sitePdo, PDO $main, int $siteId, array $
     ];
 }
 
+function platform_impersonate_customer(PDO $sitePdo, PDO $main, int $customerId, array $platformUser): array
+{
+    ensure_center_tables($main);
+    $customer = fetch_one($main, 'customers', $customerId);
+    if (!$customer) {
+        fail('客户不存在', 'NOT_FOUND', 404);
+    }
+    if ((string)($customer['status'] ?? '') !== 'active') {
+        fail('客户未启用，不能进入中台', 'CUSTOMER_DISABLED', 422);
+    }
+    $stmt = $main->prepare("SELECT id FROM sites WHERE customer_id = :customer_id AND status <> 'archived' ORDER BY status = 'active' DESC, id ASC LIMIT 1");
+    $stmt->execute(['customer_id' => $customerId]);
+    $siteId = (int)$stmt->fetchColumn();
+    if ($siteId <= 0) {
+        fail('客户名下还没有可进入的站点', 'CUSTOMER_SITE_MISSING', 422);
+    }
+    return platform_impersonate_site($sitePdo, $main, $siteId, $platformUser);
+}
+
 function deploy_node_payload(array $data, array $current = []): array
 {
     $name = trim((string)($data['name'] ?? ($current['name'] ?? '')));
@@ -9847,6 +9866,12 @@ try {
     if ($params = route_param('/platform/customers/{id}/plan-adjust', $path)) {
         if ($method === 'POST') {
             ok(adjust_platform_customer_plan($pdo, main_pdo(), (int)$params['id'], body_json()), '客户套餐配额已更新');
+        }
+    }
+
+    if ($params = route_param('/platform/customers/{id}/impersonate', $path)) {
+        if ($method === 'POST') {
+            ok(platform_impersonate_customer($pdo, main_pdo(), (int)$params['id'], $user), '已进入客户中台');
         }
     }
 
