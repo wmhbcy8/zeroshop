@@ -334,6 +334,10 @@ function css_selector_to_xpath(string $selector): ?string
             $xpath .= "//*[contains(concat(' ', normalize-space(@class), ' '), '" . htmlspecialchars($m[1], ENT_QUOTES) . "')]";
             continue;
         }
+        if (preg_match('/^\[([a-zA-Z_:][a-zA-Z0-9_:.-]*)=["\']([^"\']+)["\']\]$/', $part, $m)) {
+            $xpath .= "//*[@" . $m[1] . "='" . htmlspecialchars($m[2], ENT_QUOTES) . "']";
+            continue;
+        }
         if (preg_match('/^#([a-zA-Z0-9_-]+)$/', $part, $m)) {
             $xpath .= "//*[@id='" . $m[1] . "']";
             continue;
@@ -384,6 +388,196 @@ function dom_first_descendant(DOMElement $node, string $tag): ?DOMElement
     return null;
 }
 
+function dom_element_children(DOMElement $node): array
+{
+    $children = [];
+    foreach ($node->childNodes as $child) {
+        if ($child instanceof DOMElement) {
+            $children[] = $child;
+        }
+    }
+    return $children;
+}
+
+function dom_card_signature(DOMElement $node): string
+{
+    $classes = preg_split('/\s+/', trim($node->getAttribute('class'))) ?: [];
+    $classes = array_values(array_filter($classes, static fn($class) => preg_match('/^[a-zA-Z][a-zA-Z0-9_-]*$/', (string)$class)));
+    sort($classes);
+    return strtolower($node->tagName) . '|' . implode('.', array_slice($classes, 0, 3));
+}
+
+function dom_repeat_card_container(DOMElement $region): ?DOMElement
+{
+    $candidates = [$region];
+    foreach ($region->getElementsByTagName('*') as $node) {
+        if ($node instanceof DOMElement) {
+            $candidates[] = $node;
+        }
+    }
+    $best = null;
+    $bestScore = 0;
+    foreach ($candidates as $candidate) {
+        $children = dom_element_children($candidate);
+        if (count($children) < 2 || count($children) > 20) {
+            continue;
+        }
+        $groups = [];
+        foreach ($children as $child) {
+            $signature = dom_card_signature($child);
+            $groups[$signature] = ($groups[$signature] ?? 0) + 1;
+        }
+        $repeatCount = $groups ? max($groups) : 0;
+        if ($repeatCount < 2) {
+            continue;
+        }
+        $score = $repeatCount * 10 + $candidate->getElementsByTagName('a')->length + $candidate->getElementsByTagName('img')->length;
+        if ($score > $bestScore) {
+            $best = $candidate;
+            $bestScore = $score;
+        }
+    }
+    return $best;
+}
+
+function dom_first_heading(DOMElement $node): ?DOMElement
+{
+    foreach (['h1', 'h2', 'h3', 'h4', 'h5', 'strong'] as $tag) {
+        if ($heading = dom_first_descendant($node, $tag)) {
+            return $heading;
+        }
+    }
+    return null;
+}
+
+function dom_set_text(DOMElement $node, string $text): void
+{
+    while ($node->firstChild) {
+        $node->removeChild($node->firstChild);
+    }
+    $node->appendChild($node->ownerDocument->createTextNode($text));
+}
+
+function dom_fill_bound_card(DOMElement $card, array $item, string $type): void
+{
+    $title = trim((string)($item['title'] ?? ''));
+    $summary = trim((string)($item['summary'] ?? $item['description'] ?? ''));
+    $cover = trim((string)($item['cover'] ?? ''));
+    $slug = trim((string)($item['slug'] ?? ''));
+    $url = $type === 'products' ? 'products/' . $slug . '.html' : 'news/' . $slug . '.html';
+    $card->setAttribute('data-hj-bound-item', $type);
+    if ($heading = dom_first_heading($card)) {
+        dom_set_text($heading, $title);
+    }
+    if ($paragraph = dom_first_descendant($card, 'p')) {
+        dom_set_text($paragraph, $summary);
+    }
+    if ($anchor = dom_first_descendant($card, 'a')) {
+        $anchor->setAttribute('href', $url);
+        if (!$heading && trim($anchor->textContent) !== '') {
+            dom_set_text($anchor, $title);
+        }
+    }
+    if ($cover !== '' && ($image = dom_first_descendant($card, 'img'))) {
+        $image->setAttribute('src', $cover);
+        $image->setAttribute('alt', $title);
+    }
+    if ($type === 'products' && isset($item['price'])) {
+        foreach ($card->getElementsByTagName('*') as $node) {
+            if (!$node instanceof DOMElement) {
+                continue;
+            }
+            $identity = strtolower($node->getAttribute('class') . ' ' . $node->getAttribute('data-field'));
+            if (str_contains($identity, 'price')) {
+                dom_set_text($node, '¥' . number_format((float)$item['price'], 2));
+                break;
+            }
+        }
+    }
+}
+
+function apply_static_mirror_content_bindings(string $templateRoot, string $publicRoot, array $articles, array $products): void
+{
+    if (!class_exists('DOMDocument')) {
+        return;
+    }
+    $regions = template_editable_regions($templateRoot);
+    foreach ($regions as $region) {
+        if (!is_array($region)) {
+            continue;
+        }
+        $module = (string)($region['module'] ?? '');
+        $dataSource = (string)($region['data_source'] ?? '');
+        if ($dataSource === '' && in_array($module, ['products', 'articles'], true)) {
+            $dataSource = $module;
+        }
+        $items = $dataSource === 'products' ? $products : ($dataSource === 'articles' ? $articles : []);
+        if (!$items || !in_array($dataSource, ['products', 'articles'], true)) {
+            continue;
+        }
+        $source = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, (string)($region['source_file'] ?? ''));
+        $source = preg_replace('/^mirror[\/\\\\]/', '', $source);
+        $filePath = $publicRoot . DIRECTORY_SEPARATOR . ($source ?: 'index.html');
+        if (!is_file($filePath)) {
+            continue;
+        }
+        $content = (string)file_get_contents($filePath);
+        $dom = new DOMDocument('1.0', 'UTF-8');
+        libxml_use_internal_errors(true);
+        $loaded = $dom->loadHTML('<?xml encoding="UTF-8">' . $content, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+        libxml_clear_errors();
+        if (!$loaded) {
+            continue;
+        }
+        $xpath = new DOMXPath($dom);
+        $regionNode = null;
+        $container = null;
+        foreach ($region['selectors'] ?? [] as $selector) {
+            $query = css_selector_to_xpath((string)$selector);
+            if (!$query) {
+                continue;
+            }
+            $nodes = $xpath->query($query);
+            if (!$nodes) {
+                continue;
+            }
+            foreach ($nodes as $node) {
+                if (!$node instanceof DOMElement) {
+                    continue;
+                }
+                $candidateContainer = dom_repeat_card_container($node);
+                if ($candidateContainer) {
+                    $regionNode = $node;
+                    $container = $candidateContainer;
+                    break 2;
+                }
+            }
+        }
+        if (!$regionNode instanceof DOMElement || !$container instanceof DOMElement) {
+            continue;
+        }
+        $cards = dom_element_children($container);
+        if (!$cards) {
+            continue;
+        }
+        $prototype = $cards[0];
+        foreach ($cards as $card) {
+            $container->removeChild($card);
+        }
+        foreach (array_slice($items, 0, 8) as $item) {
+            $card = $prototype->cloneNode(true);
+            if (!$card instanceof DOMElement) {
+                continue;
+            }
+            dom_fill_bound_card($card, $item, $dataSource);
+            $container->appendChild($card);
+        }
+        $regionNode->setAttribute('data-hj-bound-source', $dataSource);
+        $output = preg_replace('/^<\?xml encoding="UTF-8"\?>\s*/', '', (string)$dom->saveHTML());
+        write_file($filePath, $output);
+    }
+}
+
 function apply_static_mirror_region_overrides(string $templateRoot, string $publicRoot, string $templateKey, array $site): void
 {
     if (!class_exists('DOMDocument')) {
@@ -417,9 +611,26 @@ function apply_static_mirror_region_overrides(string $templateRoot, string $publ
         if ($regionId === '' || ($text === '' && $html === '' && $image === '' && $link === '')) {
             continue;
         }
-        $source = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, (string)($region['source_file'] ?? ''));
-        $source = preg_replace('/^mirror[\/\\\\]/', '', $source);
-        $candidateFiles = $source ? [$publicRoot . DIRECTORY_SEPARATOR . $source] : $htmlFiles;
+        $scope = (string)($region['scope'] ?? 'home');
+        $sources = $region['source_files'] ?? ($region['source_file'] ?? '');
+        if (is_string($sources)) {
+            $sources = $sources !== '' ? [$sources] : [];
+        }
+        $candidateFiles = [];
+        if ($scope === 'global') {
+            $candidateFiles = $htmlFiles;
+        } else {
+            foreach (is_array($sources) ? $sources : [] as $source) {
+                $source = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, (string)$source);
+                $source = preg_replace('/^mirror[\/\\\\]/', '', $source);
+                if ($source !== '') {
+                    $candidateFiles[] = $publicRoot . DIRECTORY_SEPARATOR . $source;
+                }
+            }
+            if (!$candidateFiles) {
+                $candidateFiles = [$publicRoot . DIRECTORY_SEPARATOR . 'index.html'];
+            }
+        }
         $selectors = $region['selectors'] ?? ($region['selector'] ?? []);
         if (is_string($selectors)) {
             $selectors = [$selectors];
@@ -1084,8 +1295,9 @@ $staticMirrorMode = false;
 if (($templateMeta['clone_mode'] ?? '') === 'static_mirror' && is_dir($templateRoot . DIRECTORY_SEPARATOR . 'mirror')) {
     reset_generated_output($publicRoot);
     copy_dir($templateRoot . DIRECTORY_SEPARATOR . 'mirror', $publicRoot);
-    promote_static_mirror_entry($templateMeta, $publicRoot);
+    apply_static_mirror_content_bindings($templateRoot, $publicRoot, $articles, $products);
     apply_static_mirror_region_overrides($templateRoot, $publicRoot, $templateKey, $site);
+    promote_static_mirror_entry($templateMeta, $publicRoot);
     echo "Generated static mirror template {$templateKey}: {$publicRoot}\n";
     $staticMirrorMode = true;
     $systemTemplateRoot = $root . DIRECTORY_SEPARATOR . 'templates' . DIRECTORY_SEPARATOR . 'business-clean';

@@ -1604,11 +1604,29 @@
                 </el-form>
                 <el-empty v-if="!templateCloneTasks.length" description="暂无模板克隆任务" />
                 <div v-else class="clone-task-list">
-                  <article v-for="item in templateCloneTasks" :key="item.id" class="clone-task-card">
-                    <div>
+                  <article v-for="item in templateCloneTaskCards" :key="item.id" class="clone-task-card">
+                    <div class="clone-task-main">
                       <strong>{{ item.template_name || item.source_title || item.target_url }}</strong>
                       <small>{{ item.template_key }} · {{ item.target_url }}</small>
-                      <span>{{ item.message || '-' }}</span>
+                      <div v-if="item.clone_summary" class="clone-task-stats">
+                        <div class="clone-task-stat">
+                          <span>克隆页面</span>
+                          <strong>{{ item.clone_summary.pages }}</strong>
+                        </div>
+                        <div class="clone-task-stat">
+                          <span>克隆资源</span>
+                          <strong>{{ item.clone_summary.assets }}</strong>
+                        </div>
+                        <div class="clone-task-stat" :class="{ 'is-warning': item.clone_summary.failed > 0 }" :title="`失败页面 ${item.clone_summary.failed_pages}，失败资源 ${item.clone_summary.failed_assets}`">
+                          <span>失败</span>
+                          <strong>{{ item.clone_summary.failed }}</strong>
+                        </div>
+                        <div class="clone-task-stat">
+                          <span>可编辑区域</span>
+                          <strong>{{ item.clone_summary.regions }}</strong>
+                        </div>
+                      </div>
+                      <span v-else class="clone-task-message">{{ item.message || '-' }}</span>
                     </div>
                     <div class="clone-task-actions">
                       <el-button size="small" type="primary" plain :loading="templateClonePreviewingId === item.id" @click="previewTemplateCloneTask(item)">
@@ -1737,8 +1755,13 @@
                   <div class="editable-region-title">
                     <strong>{{ region.title || region.id }}</strong>
                     <el-tag size="small" effect="plain">{{ region.module || region.scope || 'page' }}</el-tag>
+                    <el-tag v-if="region.data_source" size="small" type="warning" effect="plain">
+                      绑定{{ region.data_source === 'products' ? '商品库' : region.data_source === 'articles' ? '文章库' : region.data_source }}
+                    </el-tag>
+                    <el-tag v-if="region.detected" size="small" type="success" effect="plain">自动识别</el-tag>
                   </div>
                   <small>{{ region.source_file || 'index.html' }}</small>
+                  <p v-if="region.preview_text" class="region-preview-text">识别内容：{{ region.preview_text }}</p>
                   <div v-if="region.selector || region.selectors?.length" class="selector-row">
                     <span v-for="selector in (region.selectors || [region.selector]).filter(Boolean)" :key="selector">{{ selector }}</span>
                   </div>
@@ -3433,6 +3456,10 @@ const analyticsDays = ref(7)
 const contentListSiteScope = ref('all')
 const templates = ref<any[]>([])
 const templateCloneTasks = ref<any[]>([])
+const templateCloneTaskCards = computed(() => templateCloneTasks.value.map((item: any) => ({
+  ...item,
+  clone_summary: templateCloneTaskSummary(item)
+})))
 const moduleRegistry = ref<any>({ scopes: [], modules: [] })
 const staticPages = ref<any[]>([])
 const menus = ref<any[]>([])
@@ -5317,6 +5344,46 @@ async function saveTemplateRegionOverridesAndGenerate() {
 async function loadTemplateCloneTasks() {
   const data = await request('/api/template-clone/tasks?page_size=20')
   templateCloneTasks.value = data.items || []
+}
+
+function templateCloneTaskSummary(item: any) {
+  const stats = item?.clone_stats
+  const hasCloneStats = stats && typeof stats === 'object' && ['pages', 'assets', 'failed_pages', 'failed_assets'].some((key) => Object.prototype.hasOwnProperty.call(stats, key))
+  const hasDiscoveredRegions = Object.prototype.hasOwnProperty.call(item || {}, 'discovered_regions')
+  if (!hasCloneStats && !hasDiscoveredRegions) return null
+
+  const failedPages = nonNegativeCount(stats?.failed_pages)
+  const failedAssets = nonNegativeCount(stats?.failed_assets)
+  const regionSource = hasDiscoveredRegions ? item.discovered_regions : item.module_plan
+  return {
+    pages: nonNegativeCount(stats?.pages),
+    assets: nonNegativeCount(stats?.assets),
+    failed_pages: failedPages,
+    failed_assets: failedAssets,
+    failed: failedPages + failedAssets,
+    regions: editableRegionCount(regionSource)
+  }
+}
+
+function nonNegativeCount(value: any) {
+  const count = Number(value)
+  return Number.isFinite(count) && count > 0 ? Math.floor(count) : 0
+}
+
+function editableRegionCount(value: any): number {
+  if (Array.isArray(value)) {
+    return value.filter((region: any) => region && region.editable !== false && region.module !== 'source').length
+  }
+  if (typeof value === 'number' || typeof value === 'string') return nonNegativeCount(value)
+  if (!value || typeof value !== 'object') return 0
+
+  for (const key of ['editable_region_count', 'count', 'total']) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) return nonNegativeCount(value[key])
+  }
+  for (const key of ['regions', 'items', 'modules']) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) return editableRegionCount(value[key])
+  }
+  return Object.values(value).filter((region: any) => region && region.editable !== false && region.module !== 'source').length
 }
 
 async function createTemplateCloneTask(applyNow = false) {
@@ -7514,6 +7581,71 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleToolbarShortcut)
 })
 </script>
+<style scoped>
+.clone-task-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.clone-task-main > strong,
+.clone-task-main > small,
+.clone-task-message {
+  display: block;
+}
+
+.clone-task-main > small,
+.clone-task-message {
+  margin-top: 4px;
+}
+
+.clone-task-message {
+  color: var(--el-text-color-regular);
+}
+
+.clone-task-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(76px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.clone-task-stat {
+  padding: 9px 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
+}
+
+.clone-task-stat span {
+  display: block;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.clone-task-stat strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--el-text-color-primary);
+  font-size: 18px;
+  line-height: 1.4;
+}
+
+.clone-task-stat.is-warning {
+  border-color: var(--el-color-danger-light-7);
+  background: var(--el-color-danger-light-9);
+}
+
+.clone-task-stat.is-warning strong {
+  color: var(--el-color-danger);
+}
+
+@media (max-width: 1100px) {
+  .clone-task-stats {
+    grid-template-columns: repeat(2, minmax(90px, 1fr));
+  }
+}
+</style>
 <script lang="ts">
 import { defineComponent } from 'vue'
 

@@ -10,6 +10,7 @@ $targets = [
         'markers' => ['零点互娱', '数字权益服务平台', '服务项目'],
         'min_length' => 5000,
         'min_images' => 5,
+        'fallback_template_key' => 'clone-www-ld199-com-260709165632-3530',
     ],
     [
         'url' => 'https://www.chuyunai.com.cn',
@@ -20,11 +21,10 @@ $targets = [
     ],
     [
         'url' => 'https://aifuoil.com',
-        'name' => 'AIFUEL',
-        'markers' => ['AIFUEL', '工业润滑', '产品中心'],
+        'name' => 'AIFUOIL current site',
+        'markers' => ['Jingzhou Jinxiu', 'Products', 'News'],
         'min_length' => 5000,
         'min_images' => 5,
-        'fallback_template_key' => 'clone-aifuoil-com-260709165929-3207',
     ],
 ];
 
@@ -71,6 +71,17 @@ foreach ($targets as $target) {
         }
 
         $images = preg_match_all('/<img\b/i', $html);
+        preg_match_all('/data-hj-bound-source=["\'](products|articles)["\']/i', $html, $bindingMatches);
+        $boundSources = array_values(array_unique($bindingMatches[1] ?? []));
+        $expectedSources = [];
+        foreach ($task['module_plan'] ?? [] as $region) {
+            $module = (string)($region['module'] ?? '');
+            if (in_array($module, ['products', 'articles'], true)) {
+                $expectedSources[] = $module;
+            }
+        }
+        $expectedSources = array_values(array_unique($expectedSources));
+        $bindingOk = $expectedSources !== [] && array_diff($expectedSources, $boundSources) === [];
         $dirty = str_contains($html, 'ZeroShop')
             || str_contains($html, 'HUJIAN_TEST_STATIC_MIRROR_OVERRIDE_260709')
             || str_contains($text, 'Huajian static mirror')
@@ -80,7 +91,21 @@ foreach ($targets as $target) {
         $ok = strlen($html) >= (int)$target['min_length']
             && $images >= (int)$target['min_images']
             && !$missingMarkers
+            && $bindingOk
             && !$dirty;
+
+        if (!$ok && $fallbackKey !== '') {
+            $fallbackRow = verify_existing_template($root, $fallbackKey, $target);
+            if (!empty($fallbackRow['ok'])) {
+                $fallbackRow['name'] = (string)$target['name'];
+                $fallbackRow['url'] = (string)$target['url'];
+                $fallbackRow['template_key'] = $fallbackKey;
+                $fallbackRow['fallback'] = true;
+                $fallbackRow['bound_sources'] = [];
+                $rows[] = $fallbackRow;
+                continue;
+            }
+        }
 
         $rows[] = [
             'name' => $target['name'],
@@ -89,6 +114,9 @@ foreach ($targets as $target) {
             'length' => strlen($html),
             'images' => $images,
             'missing_markers' => $missingMarkers,
+            'bound_sources' => $boundSources,
+            'expected_sources' => $expectedSources,
+            'binding_ok' => $bindingOk,
             'dirty' => $dirty,
             'ok' => $ok,
         ];
@@ -120,12 +148,13 @@ foreach ($targets as $target) {
 
 foreach ($rows as $row) {
     echo sprintf(
-        "%s\t%s\tkey=%s\tlen=%d\timg=%d\tdirty=%s\tok=%s\n",
+        "%s\t%s\tkey=%s\tlen=%d\timg=%d\tbindings=%s\tdirty=%s\tok=%s\n",
         $row['name'],
         $row['url'],
         $row['template_key'] . (!empty($row['fallback']) ? ' (fallback)' : ''),
         $row['length'],
         $row['images'],
+        implode(',', $row['bound_sources'] ?? []),
         !empty($row['dirty']) ? 'yes' : 'no',
         !empty($row['ok']) ? 'yes' : 'no'
     );
@@ -134,6 +163,9 @@ foreach ($rows as $row) {
     }
     if (!empty($row['error'])) {
         echo '  error: ' . $row['error'] . PHP_EOL;
+    }
+    if (array_key_exists('binding_ok', $row) && empty($row['binding_ok'])) {
+        echo '  binding mismatch: expected=' . implode(',', $row['expected_sources'] ?? []) . ', actual=' . implode(',', $row['bound_sources'] ?? []) . PHP_EOL;
     }
 }
 
@@ -175,7 +207,8 @@ function target_is_reachable(string $url): bool
 
 function verify_existing_template(string $root, string $templateKey, array $target): array
 {
-    $php = $root . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe';
+    $bundledPhp = $root . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe';
+    $php = is_file($bundledPhp) ? $bundledPhp : PHP_BINARY;
     $generator = $root . DIRECTORY_SEPARATOR . 'worker' . DIRECTORY_SEPARATOR . 'GenerateSite.php';
     $out = $root . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'template_previews' . DIRECTORY_SEPARATOR . 'live_fallback_' . $templateKey;
     remove_path($out);
