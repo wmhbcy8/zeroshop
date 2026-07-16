@@ -180,6 +180,22 @@ function env_value(string $key, ?string $default = null): string
     return $value;
 }
 
+function php_cli_binary(): string
+{
+    $configured = trim(env_value('HJ_PHP_BINARY', ''));
+    if ($configured !== '') {
+        return $configured;
+    }
+    $bundled = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe';
+    if (is_file($bundled)) {
+        return $bundled;
+    }
+    if (in_array(PHP_SAPI, ['cli', 'cli-server'], true) && is_file(PHP_BINARY)) {
+        return PHP_BINARY;
+    }
+    return 'php';
+}
+
 function site_pdo(): PDO
 {
     $host = env_value('HJ_DB_HOST');
@@ -236,6 +252,12 @@ function request_raw_body(): string
 function now(): string
 {
     return date('Y-m-d H:i:s');
+}
+
+function unique_version_no(string $siteKey, string $action): string
+{
+    $microseconds = sprintf('%06d', (int)((microtime(true) - floor(microtime(true))) * 1000000));
+    return $siteKey . '_' . $action . '_' . date('Ymd_His') . '_' . $microseconds . '_' . strtoupper(substr(bin2hex(random_bytes(2)), 0, 4));
 }
 
 function client_ip(): string
@@ -296,6 +318,7 @@ function template_registry(): array
             'status' => (string)($states[$key]['status'] ?? 'enabled'),
             'updated_at' => (string)($states[$key]['updated_at'] ?? ''),
             'editable_region_count' => count($editableRegions),
+            'clone_stats' => is_array($data['clone_stats'] ?? null) ? $data['clone_stats'] : [],
         ];
     }
     usort($items, fn($a, $b) => strcmp((string)$a['key'], (string)$b['key']));
@@ -4407,10 +4430,12 @@ function clone_fetch_url(string $url, int $timeout = 12): array
             CURLOPT_MAXREDIRS => 5,
             CURLOPT_TIMEOUT => $timeout,
             CURLOPT_USERAGENT => 'HuajianTemplateClone/0.2',
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_SSL_VERIFYHOST => 0,
             CURLOPT_HEADER => false,
         ]);
+        if (env_value('HJ_CLONE_INSECURE_SSL', '0') === '1') {
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        }
         $body = curl_exec($ch);
         $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $contentType = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
@@ -4508,16 +4533,23 @@ function clone_html_local_path(string $url): string
     $path = rawurldecode((string)(parse_url($url, PHP_URL_PATH) ?: '/'));
     $path = trim((preg_replace('#/+#', '/', $path) ?: '/'), '/');
     if ($path === '') {
-        return 'index.html';
+        $localPath = 'index.html';
+    } else {
+        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        if ($extension === '') {
+            $localPath = clone_safe_relative_path($path . '/index.html');
+        } elseif (in_array($extension, ['html', 'htm', 'shtml'], true)) {
+            $localPath = clone_safe_relative_path((preg_replace('/\.(s?html?)$/i', '.html', $path) ?: $path));
+        } else {
+            $localPath = clone_safe_relative_path($path . '/index.html');
+        }
     }
-    $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-    if ($extension === '') {
-        return clone_safe_relative_path($path . '/index.html');
+    $query = (string)(parse_url($url, PHP_URL_QUERY) ?: '');
+    if ($query !== '') {
+        $suffix = '-' . substr(sha1($query), 0, 10) . '.html';
+        $localPath = preg_replace('/\.html$/i', $suffix, $localPath) ?: $localPath;
     }
-    if (in_array($extension, ['html', 'htm', 'shtml'], true)) {
-        return clone_safe_relative_path((preg_replace('/\.(s?html?)$/i', '.html', $path) ?: $path));
-    }
-    return clone_safe_relative_path($path . '/index.html');
+    return $localPath;
 }
 
 function clone_asset_local_path(string $url, string $contentType = ''): string
@@ -4575,19 +4607,33 @@ function clone_download_asset(string $assetUrl, string $rootUrl, string $mirrorR
         return '';
     }
     if (!isset($assetMap[$assetUrl])) {
-        $fetch = clone_fetch_url($assetUrl, 15);
+        if ((microtime(true) - (float)($stats['started_at'] ?? microtime(true))) >= (int)($stats['max_seconds'] ?? 80)) {
+            $stats['deadline_reached'] = true;
+            return $assetUrl;
+        }
+        if ((int)($stats['assets'] ?? 0) >= 250) {
+            $stats['failed_assets']++;
+            return $assetUrl;
+        }
+        $fetch = clone_fetch_url($assetUrl, 10);
         if (!($fetch['ok'] ?? false)) {
             $stats['failed_assets']++;
             return $assetUrl;
         }
         $local = clone_asset_local_path($fetch['url'] ?: $assetUrl, (string)($fetch['content_type'] ?? ''));
         $body = (string)$fetch['body'];
+        $bodySize = strlen($body);
+        if ($bodySize > 4 * 1024 * 1024 || (int)($stats['asset_bytes'] ?? 0) + $bodySize > 30 * 1024 * 1024) {
+            $stats['failed_assets']++;
+            return $assetUrl;
+        }
+        $assetMap[$assetUrl] = $local;
         if (str_ends_with(strtolower($local), '.css')) {
             $body = clone_rewrite_css($body, $fetch['url'] ?: $assetUrl, $rootUrl, $mirrorRoot, $local, $assetMap, $stats);
         }
         clone_write_file($mirrorRoot, $local, $body);
-        $assetMap[$assetUrl] = $local;
         $stats['assets']++;
+        $stats['asset_bytes'] = (int)($stats['asset_bytes'] ?? 0) + $bodySize;
     }
     return clone_relative_url($fromFile, $assetMap[$assetUrl]);
 }
@@ -4696,10 +4742,15 @@ function build_static_mirror_template(string $url, string $templateDir): array
     $assetMap = [];
     $seenPages = [];
     $pageQueue = [$url];
-    $stats = ['pages' => 0, 'assets' => 0, 'failed_pages' => 0, 'failed_assets' => 0];
+    $stats = ['pages' => 0, 'assets' => 0, 'asset_bytes' => 0, 'failed_pages' => 0, 'failed_assets' => 0, 'started_at' => microtime(true), 'max_seconds' => 80, 'deadline_reached' => false];
     $firstHtml = '';
     $firstTitle = '';
+    $firstEntry = '';
     while ($pageQueue && $stats['pages'] < 30) {
+        if ((microtime(true) - (float)$stats['started_at']) >= (int)$stats['max_seconds']) {
+            $stats['deadline_reached'] = true;
+            break;
+        }
         $pageUrl = array_shift($pageQueue);
         if (!$pageUrl || isset($seenPages[$pageUrl]) || !clone_same_host($pageUrl, $url)) {
             continue;
@@ -4716,6 +4767,7 @@ function build_static_mirror_template(string $url, string $templateDir): array
         if ($firstHtml === '') {
             $firstHtml = $html;
             $firstTitle = extract_html_title($html, (string)(parse_url($url, PHP_URL_HOST) ?: $url));
+            $firstEntry = $localFile;
         }
         $rewritten = clone_rewrite_html($html, $effective, $url, $mirrorRoot, $localFile, $assetMap, $pageQueue, $seenPages, $stats);
         clone_write_file($mirrorRoot, $localFile, $rewritten);
@@ -4727,7 +4779,11 @@ function build_static_mirror_template(string $url, string $templateDir): array
     foreach (['pages', 'partials', 'assets'] as $dir) {
         ensure_dir($templateDir . DIRECTORY_SEPARATOR . $dir);
     }
-    $mirrorEntry = clone_select_mirror_entry($mirrorRoot);
+    $firstEntryPath = $firstEntry !== '' ? $mirrorRoot . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $firstEntry) : '';
+    $firstEntryHtml = $firstEntryPath !== '' && is_file($firstEntryPath) ? (string)file_get_contents($firstEntryPath) : '';
+    $mirrorEntry = $firstEntryHtml !== '' && !clone_html_looks_like_redirect($firstEntryHtml)
+        ? $firstEntry
+        : clone_select_mirror_entry($mirrorRoot);
     $entryPath = $mirrorRoot . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $mirrorEntry);
     $indexHtml = is_file($entryPath) ? (string)file_get_contents($entryPath) : (is_file($mirrorRoot . DIRECTORY_SEPARATOR . 'index.html') ? (string)file_get_contents($mirrorRoot . DIRECTORY_SEPARATOR . 'index.html') : $firstHtml);
     foreach (['index', 'article', 'product', 'article-list', 'product-list', 'contact', 'page', 'search', 'order', 'cart', '404'] as $page) {
@@ -4735,6 +4791,7 @@ function build_static_mirror_template(string $url, string $templateDir): array
     }
     file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'partials' . DIRECTORY_SEPARATOR . 'header.html', '<!-- static mirror template header is embedded in pages -->');
     file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'partials' . DIRECTORY_SEPARATOR . 'footer.html', '<!-- static mirror template footer is embedded in pages -->');
+    unset($stats['started_at'], $stats['max_seconds']);
     return ['html' => $firstHtml, 'title' => $firstTitle, 'stats' => $stats, 'mirror_entry' => 'mirror/' . $mirrorEntry];
 }
 
@@ -4752,7 +4809,135 @@ function template_clone_module_plan(string $title, string $url, bool $fetched): 
     ];
 }
 
-function template_clone_editable_regions(array $modulePlan, string $sourceFile = 'mirror/index.html'): array
+function clone_region_selector(DOMElement $node): string
+{
+    $id = trim($node->getAttribute('id'));
+    if ($id !== '' && preg_match('/^[a-zA-Z][a-zA-Z0-9_-]*$/', $id)) {
+        return '#' . $id;
+    }
+    $classes = preg_split('/\s+/', trim($node->getAttribute('class'))) ?: [];
+    $classes = array_values(array_filter($classes, static fn($class) => preg_match('/^[a-zA-Z][a-zA-Z0-9_-]*$/', (string)$class)));
+    if ($classes) {
+        return strtolower($node->tagName) . '.' . implode('.', array_slice($classes, 0, 2));
+    }
+    return strtolower($node->tagName);
+}
+
+function clone_region_score(DOMElement $node, string $module): int
+{
+    $tag = strtolower($node->tagName);
+    $identity = strtolower(trim($node->getAttribute('id') . ' ' . $node->getAttribute('class') . ' ' . $node->getAttribute('role')));
+    $tokens = [
+        'header' => ['header', 'head', 'nav', 'menu', 'topbar'],
+        'hero' => ['hero', 'banner', 'slider', 'carousel', 'masthead'],
+        'advantages' => ['advantage', 'feature', 'benefit', 'capability', 'strength', 'service'],
+        'products' => ['product', 'goods', 'shop', 'catalog', 'solution', 'portfolio'],
+        'articles' => ['article', 'news', 'blog', 'post', 'insight'],
+        'contact' => ['contact', 'inquiry', 'enquiry', 'consult', 'message', 'form'],
+        'footer' => ['footer', 'foot', 'copyright'],
+    ];
+    $score = 0;
+    foreach ($tokens[$module] ?? [] as $token) {
+        if (str_contains($identity, $token)) {
+            $score += 12;
+        }
+    }
+    $tagScores = [
+        'header' => ['header' => 40, 'nav' => 28],
+        'hero' => ['main' => 8, 'section' => 4],
+        'advantages' => ['section' => 5],
+        'products' => ['section' => 5],
+        'articles' => ['article' => 18, 'section' => 5],
+        'contact' => ['form' => 35, 'section' => 5],
+        'footer' => ['footer' => 45],
+    ];
+    $score += (int)($tagScores[$module][$tag] ?? 0);
+    $textLength = mb_strlen(trim(preg_replace('/\s+/u', ' ', $node->textContent) ?? ''), 'UTF-8');
+    if ($textLength >= 20) {
+        $score += min(8, (int)floor($textLength / 100));
+    }
+    if ($module === 'hero' && $node->getElementsByTagName('h1')->length > 0) {
+        $score += 18;
+    }
+    if ($module === 'products' && $node->getElementsByTagName('img')->length >= 2) {
+        $score += 5;
+    }
+    if ($module === 'articles' && $node->getElementsByTagName('article')->length > 0) {
+        $score += 10;
+    }
+    return $score;
+}
+
+function clone_discover_editable_regions(string $entryPath, array $modulePlan, string $sourceFile): array
+{
+    $fallback = template_clone_editable_regions($modulePlan, $sourceFile, []);
+    if (!class_exists('DOMDocument') || !is_file($entryPath)) {
+        return $fallback;
+    }
+    $html = (string)file_get_contents($entryPath);
+    if (trim($html) === '') {
+        return $fallback;
+    }
+    $dom = new DOMDocument('1.0', 'UTF-8');
+    libxml_use_internal_errors(true);
+    $loaded = $dom->loadHTML('<?xml encoding="UTF-8">' . $html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+    libxml_clear_errors();
+    if (!$loaded) {
+        return $fallback;
+    }
+    $nodes = [];
+    foreach ($dom->getElementsByTagName('*') as $node) {
+        if ($node instanceof DOMElement && !in_array(strtolower($node->tagName), ['html', 'head', 'body', 'script', 'style', 'meta', 'link'], true)) {
+            $nodes[] = $node;
+        }
+    }
+    $detected = [];
+    $usedNodes = [];
+    foreach ($modulePlan as $module) {
+        $key = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($module['module'] ?? ''));
+        if ($key === '' || $key === 'source') {
+            continue;
+        }
+        $bestNode = null;
+        $bestScore = 0;
+        foreach ($nodes as $node) {
+            $objectId = spl_object_id($node);
+            if (isset($usedNodes[$objectId])) {
+                continue;
+            }
+            $score = clone_region_score($node, $key);
+            if ($score > $bestScore) {
+                $bestNode = $node;
+                $bestScore = $score;
+            }
+        }
+        if (!$bestNode || $bestScore < 12) {
+            continue;
+        }
+        $regionId = 'clone-' . $key;
+        $bestNode->setAttribute('data-hj-region', $regionId);
+        $usedNodes[spl_object_id($bestNode)] = true;
+        $previewText = trim(preg_replace('/\s+/u', ' ', $bestNode->textContent) ?? '');
+        $previewImage = '';
+        $images = $bestNode->getElementsByTagName('img');
+        if ($images->length > 0 && $images->item(0) instanceof DOMElement) {
+            $previewImage = (string)$images->item(0)->getAttribute('src');
+        }
+        $detected[$key] = [
+            'selector' => clone_region_selector($bestNode),
+            'score' => $bestScore,
+            'preview_text' => mb_substr($previewText, 0, 180, 'UTF-8'),
+            'preview_image' => $previewImage,
+        ];
+    }
+    if ($detected) {
+        $output = preg_replace('/^<\?xml encoding="UTF-8"\?>\s*/', '', (string)$dom->saveHTML());
+        file_put_contents($entryPath, $output);
+    }
+    return template_clone_editable_regions($modulePlan, $sourceFile, $detected);
+}
+
+function template_clone_editable_regions(array $modulePlan, string $sourceFile = 'mirror/index.html', array $detected = []): array
 {
     $selectors = [
         'header' => ['header', '.b-head', '.hj-header', 'nav'],
@@ -4773,6 +4958,14 @@ function template_clone_editable_regions(array $modulePlan, string $sourceFile =
         if ($key === '' || $key === 'source') {
             continue;
         }
+        $detection = is_array($detected[$key] ?? null) ? $detected[$key] : [];
+        $regionSelectors = $selectors[$key] ?? ['[data-module="' . $key . '"]'];
+        if ($detection) {
+            $regionSelectors = array_values(array_unique(array_filter(array_merge(
+                ['[data-hj-region="clone-' . $key . '"]', (string)($detection['selector'] ?? '')],
+                $regionSelectors
+            ))));
+        }
         $regions[] = [
             'id' => 'clone-' . $key,
             'module' => $key,
@@ -4780,13 +4973,22 @@ function template_clone_editable_regions(array $modulePlan, string $sourceFile =
             'description' => (string)($module['description'] ?? ''),
             'scope' => in_array($key, ['header', 'footer'], true) ? 'global' : 'home',
             'source_file' => $sourceFile,
-            'selectors' => $selectors[$key] ?? ['[data-module="' . $key . '"]'],
+            'selectors' => $regionSelectors,
+            'detected' => (bool)$detection,
+            'detection_score' => (int)($detection['score'] ?? 0),
+            'preview_text' => (string)($detection['preview_text'] ?? ''),
+            'preview_image' => (string)($detection['preview_image'] ?? ''),
+            'data_source' => match ($key) {
+                'products' => 'products',
+                'articles' => 'articles',
+                default => '',
+            },
+            'binding_mode' => in_array($key, ['products', 'articles'], true) ? 'repeat_card' : '',
             'editable_fields' => [
                 'text',
+                'html',
                 'image',
                 'link',
-                'visibility',
-                'sort_order',
             ],
             'sort_order' => $order,
         ];
@@ -4795,18 +4997,18 @@ function template_clone_editable_regions(array $modulePlan, string $sourceFile =
     return $regions;
 }
 
-function write_template_editable_regions(string $templateDir, array $modulePlan, string $sourceFile = 'mirror/index.html'): void
+function write_template_editable_regions(string $templateDir, array $regions): void
 {
     $payload = [
         'version' => '0.1',
         'mode' => 'static_mirror',
         'description' => 'Editable region hints generated from the cloned static template. The admin can use these selectors to map cloned HTML into Huajian modules.',
-        'regions' => template_clone_editable_regions($modulePlan, $sourceFile),
+        'regions' => $regions,
     ];
     file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'editable-regions.json', json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 }
 
-function write_template_clone_metadata(string $templateDir, string $key, string $name, string $url, array $modulePlan, string $mirrorEntry = 'mirror/index.html'): void
+function write_template_clone_metadata(string $templateDir, string $key, string $name, string $url, array $modulePlan, array $cloneStats, array $regions, string $mirrorEntry = 'mirror/index.html'): void
 {
     $meta = [
         'name' => $name,
@@ -4820,15 +5022,21 @@ function write_template_clone_metadata(string $templateDir, string $key, string 
         'mirror_entry' => $mirrorEntry,
         'source_url' => $url,
         'module_plan' => $modulePlan,
+        'clone_stats' => $cloneStats,
+        'editable_region_count' => count($regions),
+        'detected_region_count' => count(array_filter($regions, static fn($region) => !empty($region['detected']))),
     ];
     file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'template.json', json_encode($meta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-    write_template_editable_regions($templateDir, $modulePlan, $mirrorEntry);
+    write_template_editable_regions($templateDir, $regions);
     $readme = "# {$name}\n\n来源：{$url}\n\n这是化简根据目标 URL 生成的标准化模板草稿，已转换为可编辑的 header、hero、内容模块、商品、文章、表单和 footer 结构。\n";
     file_put_contents($templateDir . DIRECTORY_SEPARATOR . 'CLONE_SOURCE.md', $readme);
 }
 
 function create_template_clone_task(PDO $main, array $data): array
 {
+    if (function_exists('set_time_limit')) {
+        set_time_limit(180);
+    }
     ensure_center_tables($main);
     require_fields($data, ['target_url']);
     $url = normalize_template_clone_url((string)$data['target_url']);
@@ -4842,9 +5050,12 @@ function create_template_clone_task(PDO $main, array $data): array
     $mirrorEntry = (string)($mirror['mirror_entry'] ?? 'mirror/index.html');
     $sourceTitle = (string)($mirror['title'] ?: $host);
     $name = '静态克隆 - ' . $sourceTitle;
-    $message = sprintf('已真实克隆目标网站：%d 个页面、%d 个资源；失败页面 %d、失败资源 %d。', (int)$stats['pages'], (int)$stats['assets'], (int)$stats['failed_pages'], (int)$stats['failed_assets']);
     $modulePlan = template_clone_module_plan($sourceTitle, $url, true);
-    write_template_clone_metadata($templateDir, $key, $name, $url, $modulePlan, $mirrorEntry);
+    $entryPath = $templateDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $mirrorEntry);
+    $regions = clone_discover_editable_regions($entryPath, $modulePlan, $mirrorEntry);
+    $detectedRegionCount = count(array_filter($regions, static fn($region) => !empty($region['detected'])));
+    $message = sprintf('已真实克隆目标网站：%d 个页面、%d 个资源；自动识别 %d 个可编辑区域；失败页面 %d、失败资源 %d。', (int)$stats['pages'], (int)$stats['assets'], $detectedRegionCount, (int)$stats['failed_pages'], (int)$stats['failed_assets']);
+    write_template_clone_metadata($templateDir, $key, $name, $url, $modulePlan, $stats, $regions, $mirrorEntry);
     $now = now();
     $taskNo = 'TC' . date('YmdHis') . strtoupper(substr(bin2hex(random_bytes(3)), 0, 6));
     $stmt = $main->prepare("INSERT INTO template_clone_tasks (task_no, target_url, template_key, template_name, source_title, status, module_plan_json, source_excerpt, message, created_at, updated_at)
@@ -4869,6 +5080,14 @@ function normalize_template_clone_task(array $row): array
     $row['id'] = (int)($row['id'] ?? 0);
     $plan = json_decode((string)($row['module_plan_json'] ?? ''), true);
     $row['module_plan'] = is_array($plan) ? $plan : [];
+    $templateKey = (string)($row['template_key'] ?? '');
+    $templateDir = template_root_path() . DIRECTORY_SEPARATOR . $templateKey;
+    $metaPath = $templateDir . DIRECTORY_SEPARATOR . 'template.json';
+    $meta = is_file($metaPath) ? json_decode((string)file_get_contents($metaPath), true) : [];
+    $regions = template_editable_regions_from_dir($templateDir);
+    $row['clone_stats'] = is_array($meta['clone_stats'] ?? null) ? $meta['clone_stats'] : [];
+    $row['editable_region_count'] = count($regions);
+    $row['discovered_regions'] = array_values(array_filter($regions, static fn($region) => !empty($region['detected'])));
     unset($row['module_plan_json']);
     return $row;
 }
@@ -4932,7 +5151,7 @@ function preview_template_clone_task(PDO $main, PDO $sitePdo, int $taskId): arra
     $siteKey = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($site['site_key'] ?? ('site_' . $siteId)));
     $previewRoot = $root . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'template_previews' . DIRECTORY_SEPARATOR . $siteKey . DIRECTORY_SEPARATOR . $key;
     ensure_dir($previewRoot);
-    $php = $root . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe';
+    $php = php_cli_binary();
     $script = $root . DIRECTORY_SEPARATOR . 'worker' . DIRECTORY_SEPARATOR . 'GenerateSite.php';
     putenv('HJ_SITE_KEY=' . $siteKey);
     putenv('HJ_SITE_ID=' . (string)$siteId);
@@ -5342,7 +5561,7 @@ function publish_readiness(PDO $pdo, PDO $main, array $site): array
 function run_static_generator_for_site(array $site, string $failureCode = 'GENERATE_FAILED'): array
 {
     $root = dirname(__DIR__, 2);
-    $php = $root . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe';
+    $php = php_cli_binary();
     $script = $root . DIRECTORY_SEPARATOR . 'worker' . DIRECTORY_SEPARATOR . 'GenerateSite.php';
     $publicPath = site_public_root($site);
     ensure_dir($publicPath);
@@ -6619,7 +6838,7 @@ function rollback_publish_version(PDO $pdo, array $site, int $versionId): array
     }
     remove_dir_contents($publicRoot);
     $fileCount = copy_directory($snapshotRoot, $publicRoot);
-    $rollbackNo = (string)$site['site_key'] . '_rollback_' . date('Ymd_His');
+    $rollbackNo = unique_version_no((string)$site['site_key'], 'rollback');
     $rollbackSummary = [
         'site_id' => (int)$site['id'],
         'site_key' => $site['site_key'],
@@ -6761,7 +6980,7 @@ function restore_site_backup(PDO $pdo, array $site, int $backupId): array
     $fileSize = directory_size($publicRoot);
     $pdo->prepare('UPDATE site_backups SET restored_at = :restored_at WHERE id = :id')
         ->execute(['id' => $backupId, 'restored_at' => now()]);
-    $restoreNo = (string)$site['site_key'] . '_restore_' . date('Ymd_His');
+    $restoreNo = unique_version_no((string)$site['site_key'], 'restore');
     $summary = [
         'site_id' => (int)$site['id'],
         'site_key' => (string)$site['site_key'],
@@ -11371,7 +11590,7 @@ try {
         $main = main_pdo();
         $currentSite = current_site($main, $pdo);
         $root = dirname(__DIR__, 2);
-        $php = $root . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe';
+        $php = php_cli_binary();
         $script = $root . DIRECTORY_SEPARATOR . 'worker' . DIRECTORY_SEPARATOR . 'GenerateSite.php';
         $publicPath = site_public_root($currentSite);
         ensure_dir($publicPath);
@@ -11390,7 +11609,7 @@ try {
         if ($code !== 0) {
             fail('生成失败', 'GENERATE_FAILED', 500, ['output' => $output]);
         }
-        $versionNo = (string)$currentSite['site_key'] . '_version_' . date('Ymd_His');
+        $versionNo = unique_version_no((string)$currentSite['site_key'], 'version');
         $summary = create_publish_snapshot($pdo, $currentSite, $versionNo, $publicPath, $output);
         $summary['message'] = '静态站已生成并创建发布版本。';
         $summary['mode'] = 'generate';
@@ -11435,7 +11654,7 @@ try {
             ok($summary + ['version_no' => $package['version_no']], '发布包已生成');
         }
         $root = dirname(__DIR__, 2);
-        $php = $root . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe';
+        $php = php_cli_binary();
         $script = $root . DIRECTORY_SEPARATOR . 'worker' . DIRECTORY_SEPARATOR . 'GenerateSite.php';
         $publicPath = site_public_root($currentSite);
         ensure_dir($publicPath);
@@ -11454,7 +11673,7 @@ try {
         if ($code !== 0) {
             fail('发布失败', 'PUBLISH_FAILED', 500, ['output' => $output]);
         }
-        $versionNo = (string)$currentSite['site_key'] . '_version_' . date('Ymd_His');
+        $versionNo = unique_version_no((string)$currentSite['site_key'], 'version');
         $summary = create_publish_snapshot($pdo, $currentSite, $versionNo, $publicPath, $output);
         ok($summary + ['version_no' => $versionNo, 'preview_url' => site_preview_url($currentSite)], '站点已发布');
     }
@@ -11494,7 +11713,7 @@ try {
             VALUES (:site_id, :version_no, 'deploy-check', :file_path, :status, :summary, :created_at)");
         $stmt->execute([
             'site_id' => (int)$currentSite['id'],
-            'version_no' => (string)$currentSite['site_key'] . '_deploy_' . date('Ymd_His'),
+            'version_no' => unique_version_no((string)$currentSite['site_key'], 'deploy'),
             'file_path' => str_replace(DIRECTORY_SEPARATOR, '/', site_public_path($currentSite)),
             'status' => $status,
             'summary' => json_encode($summary, JSON_UNESCAPED_UNICODE),

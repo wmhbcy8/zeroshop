@@ -2,7 +2,8 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__);
-$php = $root . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe';
+$bundledPhp = $root . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe';
+$php = is_file($bundledPhp) ? $bundledPhp : PHP_BINARY;
 $generator = $root . DIRECTORY_SEPARATOR . 'worker' . DIRECTORY_SEPARATOR . 'GenerateSite.php';
 $templates = [
     'clone-www-ld199-com-260709165632-3530' => ['min_length' => 5000, 'min_images' => 5, 'min_pages' => 5],
@@ -10,7 +11,7 @@ $templates = [
     'clone-aifuoil-com-260709165929-3207' => ['min_length' => 5000, 'min_images' => 5, 'min_pages' => 5],
 ];
 
-if (!is_file($php) || !is_file($generator)) {
+if ((!is_file($php) && $php !== PHP_BINARY) || !is_file($generator)) {
     fwrite(STDERR, "Missing PHP runtime or generator.\n");
     exit(1);
 }

@@ -23,7 +23,7 @@
 tools/php/php.exe
 ```
 
-如果本机已经安装 PHP，也可以把下面命令里的 `tools/php/php.exe` 换成 `php`。推荐使用启动脚本：
+项目要求 PHP 8.0 或更高版本，并启用 `PDO MySQL`、`cURL`、`DOM`、`mbstring` 扩展。如果本机已经安装兼容版本，也可以把下面命令里的 `tools/php/php.exe` 换成 `php`。推荐使用启动脚本：
 
 ```powershell
 scripts/start-api.ps1
@@ -63,6 +63,16 @@ admin / admin123456
 
 ## MySQL 初始化
 
+推荐使用仓库内置的 MySQL 8.4 Docker 环境，默认监听本机 `3307` 端口，避免与 PHPStudy 冲突：
+
+```bash
+chmod +x scripts/bootstrap-local.sh scripts/start-local-api.sh
+scripts/bootstrap-local.sh
+scripts/start-local-api.sh
+```
+
+数据库数据保存在 Compose 管理的 `huajian-mysql-data` volume 中；Docker 实际名称会自动带上当前 Compose 项目前缀。
+
 ```powershell
 $env:HJ_DB_HOST="192.168.2.6"
 $env:HJ_DB_PORT="3306"
@@ -75,11 +85,12 @@ $env:HJ_ADMIN_PASSWORD="admin123456"
 tools/php/php.exe scripts/db_bootstrap.php
 ```
 
-初始化会创建：
+初始化会创建主库和两个演示站点库，其中 `10001`、`10002` 共享同一份内容库，用于验证多站点分发：
 
 ```text
 huajian_main
 huajian_site_10001
+huajian_site_10002
 ```
 
 并导入演示站点、分类、文章、商品、媒体、留言、发布记录、后台账号和登录会话表。
@@ -96,6 +107,12 @@ tools/php/php.exe worker/GenerateSite.php
 
 ```text
 http://127.0.0.1:8000/
+```
+
+没有 PHP 环境时，可以先用纯 Node 校验所有模板和静态镜像结构：
+
+```bash
+node scripts/verify_clone_templates.mjs
 ```
 
 ## 当前后台能力
@@ -139,7 +156,8 @@ http://127.0.0.1:8000/
 - AI 草稿生成已接入后端 `/api/ai/generate`，配置真实模型后可切换到 OpenAI-compatible 远程调用；未配置时自动使用本地草稿
 - AI 页面搭建支持根据一句话生成首页草案、查看差异预览，并可一键应用、保存和生成静态站
 - AI 页面搭建会先从用户指令中提炼页面主题，避免把“帮我搭一个……”这类操作指令直接写进首页标题或案例标题
-- 目标网站转模板草稿会生成可选主题模板，应用后同步更新中台站点模板并自动生成当前站点静态预览
+- 目标网站转模板草稿会真实抓取同域页面和静态资源，自动识别并标记 header、hero、优势、产品、文章、联系和 footer 可编辑区域；应用后同步更新中台站点模板并自动生成当前站点静态预览
+- URL 克隆模板会为识别区域生成稳定的 `data-hj-region` 标记，并把商品库、文章库自动绑定到原页面的重复卡片结构；后台区域抽屉可查看识别状态、绑定来源和内容预览
 - AI 任务记录支持生成结构化草稿、查看任务结果，并在确认后保存为草稿、直接发布或丢弃
 - 文章支持 AI 批量生成草稿，可一次生成多篇不同角度的 SEO 内容
 - 商品支持 AI 批量生成草稿，可一次生成多个不同定位的商品页

@@ -2,7 +2,8 @@
 declare(strict_types=1);
 
 $root = dirname(__DIR__);
-$php = $root . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe';
+$bundledPhp = $root . DIRECTORY_SEPARATOR . 'tools' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe';
+$php = is_file($bundledPhp) ? $bundledPhp : PHP_BINARY;
 $baseUrl = rtrim((string)($argv[1] ?? 'http://127.0.0.1:8000'), '/');
 $includeLiveClone = in_array('--include-live-clone', $argv, true);
 
@@ -19,7 +20,7 @@ if ($includeLiveClone) {
     $checks[] = ['script' => 'verify_live_clone_flow.php', 'args' => [$baseUrl]];
 }
 
-if (!is_file($php)) {
+if (!is_file($php) && $php !== PHP_BINARY) {
     fwrite(STDERR, "PHP runtime not found: {$php}\n");
     exit(1);
 }
